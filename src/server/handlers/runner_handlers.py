@@ -6,6 +6,7 @@ from datetime import datetime
 
 from ao.server.database_manager import DB
 from ao.server.handlers.handler_utils import send_json, logger
+from ao.runner.string_matching import clear_matching_data
 
 
 def _find_sessions_with_node(server, node_id: str) -> set:
@@ -140,6 +141,7 @@ def handle_deregister_message(server, msg: dict) -> None:
     session = server.sessions.get(session_id)
     if session:
         session.status = "finished"
+        clear_matching_data(session_id)
         server.broadcast_experiment_list_to_uis()
 
 

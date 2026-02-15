@@ -262,7 +262,6 @@ STRING_MATCH_EXCLUDE_PATTERNS = [
     r".*max_output_tokens$",
     r".*max_tokens$",
     r".*max_tool_calls$",
-    r".*n$",
     r".*service_tier$",
     r".*store$",
     r".*truncation$",
@@ -283,8 +282,8 @@ STRING_MATCH_EXCLUDE_PATTERNS = [
     # Other metadata
     r".*error$",
     r".*incomplete_details$",
-    r".*instructions$",
-    r".*reasoning$",
+    # r".*instructions$",  # May contain legitimate content
+    # r".*reasoning$",  # May contain chain-of-thought content
     r".*metadata$",
     r".*user$",
     r".*index$",
@@ -294,14 +293,13 @@ STRING_MATCH_EXCLUDE_PATTERNS = [
     r".*verbosity$",
     r".*format$",
     r".*effort$",
-    r".*summary$",
+    # r".*summary$",  # May contain legitimate summary content
     # Cache-related
     r".*prompt_cache_retention$",
     r".*cache_creation$",
     r".*cache_creation_input_tokens$",
     r".*cache_read_input_tokens$",
     # Additional patterns
-    r".*url$",
     r".*reasoning_effort$",
     r".*native_finish_reason$",
     r".*provider$",
