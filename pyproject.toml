@@ -16,7 +16,8 @@ packages = [
     "ao.runner.monkey_patching.api_parsers",
     "ao.runner.monkey_patching.patches",
     "ao.server",
-    "ao.server.database_backends"
+    "ao.server.database_backends",
+    "ao.server.handlers"
 ]
 
 [project.scripts]
@@ -36,7 +37,7 @@ line-length = 100
 
 [project]
 name = "ao-dev"
-version = "0.0.8"
+version = "0.1.0"
 description = "A development tool for LLM call visualization and debugging"
 readme = "docs/release/PYPI_DESC.md"
 requires-python = ">=3.10"
