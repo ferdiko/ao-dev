@@ -33,9 +33,10 @@ Once set up, Claude Code can use these commands:
 ### Record an Agent Run
 
 ```bash
-ao-tool record agent.py                    # Start recording, return immediately
-ao-tool record --wait agent.py             # Block until script completes
-ao-tool record --wait --timeout 60 agent.py  # Wait with 60s timeout
+ao-tool record agent.py                    # Record and block until complete
+ao-tool record --timeout 60 agent.py       # With 60s timeout
+ao-tool record -m module_name              # Run as Python module
+ao-tool record --run-name "my run" agent.py  # With custom name
 ```
 
 ### Query Session State
@@ -44,11 +45,14 @@ ao-tool record --wait --timeout 60 agent.py  # Wait with 60s timeout
 # List recent experiments
 ao-tool experiments --range :10
 
-# Get graph topology (nodes and edges, no content)
-ao-tool probe <session_id> --topology
+# Get session overview (graph topology with nodes and edges)
+ao-tool probe <session_id>
 
 # Get full node details
 ao-tool probe <session_id> --node <node_id>
+
+# Get multiple nodes
+ao-tool probe <session_id> --nodes <id1,id2,id3>
 
 # Get truncated preview (20 char strings)
 ao-tool probe <session_id> --node <node_id> --preview
@@ -63,46 +67,55 @@ ao-tool probe <session_id> --node <node_id> --output
 
 ### Edit and Rerun
 
+Edit commands use flattened key notation (e.g., `messages.0.content`) and always create a new run:
+
 ```bash
-# Edit output and rerun
-ao-tool edit-and-rerun <session_id> <node_id> --output '{"content": "new response"}'
+# Edit an output key and rerun
+ao-tool edit-and-rerun <session_id> <node_id> --output <key> <value>
 
-# Edit input and rerun
-ao-tool edit-and-rerun <session_id> <node_id> --input '{"messages": [...]}'
+# Edit an input key and rerun
+ao-tool edit-and-rerun <session_id> <node_id> --input <key> <value>
 
-# Create a new run instead of modifying in place
-ao-tool edit-and-rerun <session_id> <node_id> --output '...' --as-new-run
+# With custom run name
+ao-tool edit-and-rerun <session_id> <node_id> --output <key> <value> --run-name "variant A"
 
-# Wait for rerun to complete
-ao-tool edit-and-rerun <session_id> <node_id> --output '...' --wait
+# With timeout
+ao-tool edit-and-rerun <session_id> <node_id> --output <key> <value> --timeout 60
 ```
 
-### Other Commands
+**Examples:**
 
 ```bash
-ao-tool terminate <pid>          # Stop a running process
+# Change the model's response content
+ao-tool edit-and-rerun abc-123 node-1 --output "choices.0.message.content" "New response text"
+
+# Modify a prompt message
+ao-tool edit-and-rerun abc-123 node-1 --input "messages.0.content" "Updated prompt"
+
+# Value can also be a path to a file
+ao-tool edit-and-rerun abc-123 node-1 --output "choices.0.message.content" ./new_response.txt
 ```
 
 ## Workflow Examples
 
 ### Debug a Failing Agent
 
-1. Claude records the agent: `ao-tool record agent.py --wait`
-2. Inspects the graph: `ao-tool probe <session_id> --topology`
+1. Claude records the agent: `ao-tool record agent.py`
+2. Inspects the graph: `ao-tool probe <session_id>`
 3. Examines the failing node: `ao-tool probe <session_id> --node <failing_node>`
-4. Fixes and reruns: `ao-tool edit-and-rerun <session_id> <node_id> --output '...' --wait`
+4. Fixes and reruns: `ao-tool edit-and-rerun <session_id> <node_id> --output <key> <new_value>`
 
 ### A/B Test a Prompt Change
 
-1. Run original: `ao-tool record agent.py --wait`
+1. Run original: `ao-tool record agent.py`
 2. Inspect the node to edit: `ao-tool probe <session_id> --node <node_id>`
-3. Create variant: `ao-tool edit-and-rerun <session_id> <node_id> --input '...' --as-new-run --wait`
+3. Create variant: `ao-tool edit-and-rerun <session_id> <node_id> --input <key> <value> --run-name "variant"`
 4. Compare the two sessions
 
 ### Iterate on LLM Output
 
 1. Run agent and find a suboptimal response
-2. Edit the output to what you want: `ao-tool edit-and-rerun <session_id> <node_id> --output '...'`
+2. Edit the output to what you want: `ao-tool edit-and-rerun <session_id> <node_id> --output <key> <value>`
 3. See how downstream nodes react to the improved output
 4. Use insights to improve your prompts
 
@@ -120,10 +133,13 @@ All `ao-tool` commands output JSON for easy parsing. Examples:
 }
 ```
 
-**Probe topology:**
+**Probe session:**
 ```json
 {
   "session_id": "abc-123",
+  "name": "Run 42",
+  "status": "finished",
+  "node_count": 5,
   "nodes": [
     {"node_id": "node-1", "label": "GPT-4", "parent_ids": [], "child_ids": ["node-2"]}
   ],

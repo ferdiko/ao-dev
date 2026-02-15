@@ -7,9 +7,9 @@ import time
 import uuid
 import shlex
 import signal
-import multiprocessing
+import shutil
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional
 
 from ao.common.logger import create_file_logger
 from ao.common.constants import (
@@ -20,20 +20,37 @@ from ao.common.constants import (
     SERVER_INACTIVITY_TIMEOUT,
     PLAYBOOK_SERVER_URL,
     PLAYBOOK_API_KEY,
+    GIT_DIR,
 )
 from ao.server.database_manager import DB
-from ao.server.file_watcher import run_file_watcher_process
+from ao.server.handlers import (
+    send_json,
+    # UI handlers
+    handle_restart_message,
+    handle_edit_input,
+    handle_edit_output,
+    handle_update_node,
+    handle_update_run_name,
+    handle_update_result,
+    handle_update_notes,
+    handle_get_graph,
+    handle_erase,
+    handle_get_all_experiments,
+    # Runner handlers
+    handle_add_node,
+    handle_add_subrun,
+    handle_deregister_message,
+    handle_update_command,
+    handle_log,
+    # Lesson handlers
+    handle_get_lessons,
+    handle_add_lesson,
+    handle_update_lesson,
+    handle_delete_lesson,
+    handle_get_lesson,
+)
 
 logger = create_file_logger(MAIN_SERVER_LOG)
-
-
-def send_json(conn: socket.socket, msg: dict) -> None:
-    try:
-        msg_type = msg.get("type", "unknown")
-        logger.debug(f"Sent message type: {msg_type}")
-        conn.sendall((json.dumps(msg) + "\n").encode("utf-8"))
-    except Exception as e:
-        logger.error(f"Error sending JSON: {e}")
 
 
 class Session:
@@ -50,70 +67,141 @@ class MainServer:
     """Manages the development server for LLM call visualization."""
 
     def __init__(self):
-        _init_start = time.time()
-        logger.info(f"__init__ starting...")
+        logger.info("__init__ starting...")
         self.server_sock = None
         self.lock = threading.Lock()
         self.conn_info = {}  # conn -> {role, session_id}
         self.session_graphs = {}  # session_id -> graph_data
         self.ui_connections = set()
         self.sessions = {}  # session_id -> Session (only for agent runner connections)
-        self.file_watcher_process = None  # Child process for file watching
-        self.file_watch_queue = multiprocessing.Queue()  # MainServer → FileWatcher
-        self.file_watch_response_queue = multiprocessing.Queue()  # FileWatcher → MainServer
-        # self.current_user_id = None  # Store the current authenticated user_id (auth disabled)
         self.rerun_sessions = set()  # Track sessions being rerun to avoid clearing llm_calls
         self._last_activity_time = time.time()  # Track last message received for inactivity timeout
         self._project_root = None  # Workspace root from VS Code UI
+        # Git versioning state
+        self._git_available: Optional[bool] = None
+        self._git_initialized = False
+        self._git_dir = os.path.abspath(GIT_DIR)
+        # Git versioning executor (runs commits in background)
+        from concurrent.futures import ThreadPoolExecutor
+
+        self._git_executor = ThreadPoolExecutor(max_workers=1)
 
     # ============================================================
-    # File Watcher Management
+    # Git Versioning
     # ============================================================
 
-    def start_file_watcher(self) -> None:
-        """Start the file watcher process."""
-        if self.file_watcher_process and self.file_watcher_process.is_alive():
-            logger.warning("File watcher process is already running")
-            return
+    def _is_git_available(self) -> bool:
+        """Check if git is installed on the system."""
+        if self._git_available is None:
+            self._git_available = shutil.which("git") is not None
+            if not self._git_available:
+                logger.warning("git not found in PATH, code versioning disabled")
+        return self._git_available
+
+    def _run_git(self, *args, check: bool = True) -> subprocess.CompletedProcess:
+        """Run git command with GIT_DIR and GIT_WORK_TREE set."""
+        project_root = self._project_root or os.getcwd()
+        env = os.environ.copy()
+        env["GIT_DIR"] = self._git_dir
+        env["GIT_WORK_TREE"] = project_root
+
+        cmd = ["git"] + list(args)
+        return subprocess.run(
+            cmd,
+            env=env,
+            cwd=project_root,
+            check=check,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def _ensure_git_initialized(self) -> bool:
+        """Ensure the git repository is initialized. Returns True on success."""
+        if self._git_initialized:
+            return True
+
+        if not self._is_git_available():
+            return False
 
         try:
-            # Use workspace root from VS Code UI, or fall back to config
-            from ao.common.constants import AO_PROJECT_ROOT
+            # Check if already initialized
+            if os.path.exists(os.path.join(self._git_dir, "HEAD")):
+                self._git_initialized = True
+                return True
 
-            project_root = self._project_root or AO_PROJECT_ROOT
+            # Create git directory
+            os.makedirs(self._git_dir, exist_ok=True)
 
-            self.file_watcher_process = multiprocessing.Process(
-                target=run_file_watcher_process,
-                args=(project_root, self.file_watch_queue, self.file_watch_response_queue),
-                daemon=True,  # Dies when parent process dies
-            )
-            self.file_watcher_process.start()
+            # Initialize repository
+            self._run_git("init")
 
-            # Give it a moment to start
-            time.sleep(0.1)
-            if not self.file_watcher_process.is_alive():
-                logger.error(f"File watcher process died immediately")
+            # Configure user for commits (required by git)
+            self._run_git("config", "user.name", "AO Code Versioner")
+            self._run_git("config", "user.email", "ao@localhost")
 
-        except Exception as e:
-            logger.error(f"✗ Failed to start file watcher process: {e}")
-            import traceback
+            logger.info(f"Initialized git repository at {self._git_dir}")
+            self._git_initialized = True
+            return True
 
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except subprocess.SubprocessError as e:
+            logger.error(f"Failed to initialize git repository: {e}")
+            return False
+        except OSError as e:
+            logger.error(f"Failed to create git directory: {e}")
+            return False
 
-    def stop_file_watcher(self) -> None:
-        """Stop the file watcher process if it's running."""
-        if self.file_watcher_process and self.file_watcher_process.is_alive():
-            try:
-                self.file_watcher_process.terminate()
-                self.file_watcher_process.join(timeout=2)  # Wait up to 2 seconds
-                if self.file_watcher_process.is_alive():
-                    # Force kill if it doesn't terminate gracefully
-                    self.file_watcher_process.kill()
-                    self.file_watcher_process.join()
-            except Exception as e:
-                logger.error(f"Error stopping file watcher process: {e}")
-            finally:
-                self.file_watcher_process = None
+    def _commit_and_get_version(self) -> Optional[str]:
+        """
+        Commit all files in project root and return version string.
+
+        Returns:
+            Human-readable version string like "Version Dec 12, 8:45", or None if unavailable.
+        """
+        if not self._ensure_git_initialized():
+            return None
+
+        try:
+            # Stage all files in project root
+            self._run_git("add", ".")
+
+            # Check if there are staged changes
+            result = self._run_git("diff", "--cached", "--quiet", check=False)
+
+            if result.returncode == 0:
+                # No changes - return timestamp of current HEAD if it exists
+                try:
+                    result = self._run_git("log", "-1", "--format=%cI", "HEAD")
+                    timestamp_str = result.stdout.strip()
+                    dt = datetime.fromisoformat(timestamp_str)
+                    return f"Version {dt.strftime('%b')} {dt.day}, {dt.hour}:{dt.strftime('%M')}"
+                except subprocess.SubprocessError:
+                    # No commits yet and no changes
+                    return None
+
+            # There are changes - commit them
+            now = datetime.now()
+            commit_message = now.isoformat(timespec="seconds")
+            self._run_git("commit", "-m", commit_message)
+
+            version_str = f"Version {now.strftime('%b')} {now.day}, {now.hour}:{now.strftime('%M')}"
+            logger.info(f"Created git commit: {version_str}")
+            return version_str
+
+        except subprocess.SubprocessError as e:
+            stderr = getattr(e, "stderr", None)
+            logger.error(f"Git operation failed: {e}, stderr: {stderr}")
+            return None
+        except subprocess.TimeoutExpired:
+            logger.error("Git operation timed out")
+            return None
+
+    def _do_git_version(self, session_id: str) -> None:
+        """Background thread: commit files and update experiment version_date."""
+        version_date = self._commit_and_get_version()
+        if version_date:
+            DB.update_experiment_version_date(session_id, version_date)
+        self.broadcast_experiment_list_to_uis()
 
     # ============================================================
     # Inactivity Monitor
@@ -134,34 +222,8 @@ class MainServer:
         thread = threading.Thread(target=monitor_inactivity, daemon=True)
         thread.start()
 
-    def _start_response_queue_monitor(self) -> None:
-        """Start a daemon thread that polls the FileWatcher response queue."""
-        import queue
-
-        def monitor_response_queue():
-            while True:
-                try:
-                    msg = self.file_watch_response_queue.get(timeout=1.0)
-                    msg_type = msg.get("type")
-                    if msg_type == "version_result":
-                        # FileWatcher completed git commit, update DB and broadcast
-                        session_id = msg.get("session_id")
-                        version_date = msg.get("version_date")
-                        if session_id and version_date:
-                            DB.update_experiment_version_date(session_id, version_date)
-                        self.broadcast_experiment_list_to_uis()
-                    else:
-                        logger.warning(f"Unknown response queue message type: {msg_type}")
-                except queue.Empty:
-                    continue
-                except Exception as e:
-                    logger.error(f"Error processing response queue: {e}")
-
-        thread = threading.Thread(target=monitor_response_queue, daemon=True)
-        thread.start()
-
     # ============================================================
-    # Utils
+    # Broadcasting Utils
     # ============================================================
 
     def broadcast_to_all_uis(self, msg: dict) -> None:
@@ -195,7 +257,6 @@ class MainServer:
     def broadcast_experiment_list_to_uis(self, conn=None) -> None:
         """Only broadcast to one UI (conn) or, if conn is None, to all."""
 
-        # If a specific conn is provided, send experiments filtered by that conn's user
         def build_and_send(target_conn, db_rows):
             session_map = {session.session_id: session for session in self.sessions.values()}
             experiment_list = []
@@ -343,17 +404,12 @@ class MainServer:
         except Exception as e:
             logger.error(f"Failed to rerun finished session: {e}")
 
-    # ============================================================
-    # Handle message types.
-    # ============================================================
-
     def load_finished_runs(self):
-        # Load only session_id and timestamp for finished runs
+        """Load finished runs from database into sessions dict."""
         try:
             rows = DB.get_finished_runs()
             for row in rows:
                 session_id = row["session_id"]
-                # Mark as finished (not running)
                 session = self.sessions.get(session_id)
                 if not session:
                     session = Session(session_id)
@@ -362,585 +418,25 @@ class MainServer:
         except Exception as e:
             logger.warning(f"Failed to load finished runs from database: {e}")
 
-    def handle_graph_request(self, conn, session_id):
-        # Check if we have in-memory graph first (most up-to-date)
-        if session_id in self.session_graphs:
-            graph = self.session_graphs[session_id]
-            send_json(conn, {"type": "graph_update", "session_id": session_id, "payload": graph})
-            return
-
-        # Fall back to database if no in-memory graph
-        row = DB.get_graph(session_id)
-        if row and row["graph_topology"]:
-            graph = json.loads(row["graph_topology"])
-            self.session_graphs[session_id] = graph
-            send_json(conn, {"type": "graph_update", "session_id": session_id, "payload": graph})
-
-    def _find_sessions_with_node(self, node_id: str) -> set:
-        """Find all sessions containing a specific node ID. Returns empty set if not found."""
-        sessions = set()
-        for session_id, graph in self.session_graphs.items():
-            if any(node["id"] == node_id for node in graph.get("nodes", [])):
-                sessions.add(session_id)
-        return sessions
-
-    def handle_add_node(self, msg: dict) -> None:
-        sid = msg["session_id"]
-        node = msg["node"]
-        incoming_edges = msg.get("incoming_edges", [])
-
-        # Check if any incoming edges reference nodes from other sessions
-        cross_session_sources = []
-        target_sessions = set()
-
-        for source in incoming_edges:
-            # Find which session contains this source node
-            source_sessions = self._find_sessions_with_node(source)
-            if source_sessions:
-                for source_session in source_sessions:
-                    target_sessions.add(source_session)
-                    cross_session_sources.append(source)
-
-        # If we have cross-session references, add the node to those sessions instead of current session
-        if target_sessions:
-            for target_sid in target_sessions:
-                self._add_node_to_session(target_sid, node, cross_session_sources)
-        else:
-            # No cross-session references, add to current session as normal
-            self._add_node_to_session(sid, node, incoming_edges)
-
-    def _add_node_to_session(self, sid: str, node: dict, incoming_edges: list) -> None:
-        """Add a node to a specific session's graph"""
-        # Add or update the node
-        graph = self.session_graphs.setdefault(sid, {"nodes": [], "edges": []})
-
-        # Check for duplicate node
-        node_exists = False
-        for n in graph["nodes"]:
-            if n["id"] == node["id"]:
-                node_exists = True
-                break
-        if not node_exists:
-            graph["nodes"].append(node)
-
-        # Build set of existing edge IDs for duplicate checking
-        existing_edge_ids = {e["id"] for e in graph["edges"]}
-        existing_node_ids = {n["id"] for n in graph["nodes"]}
-
-        # Add incoming edges (only if source nodes exist and edge doesn't already exist)
-        for source in incoming_edges:
-            if source in existing_node_ids:
-                target = node["id"]
-                edge_id = f"e{source}-{target}"
-                if edge_id not in existing_edge_ids:
-                    full_edge = {"id": edge_id, "source": source, "target": target}
-                    graph["edges"].append(full_edge)
-                    existing_edge_ids.add(edge_id)  # Track newly added edge
-                    logger.info(f"Added edge {edge_id} in session {sid}")
-                else:
-                    logger.debug(f"Skipping duplicate edge {edge_id}")
-            else:
-                logger.debug(f"Skipping edge from non-existent node {source} to {node['id']}")
-
-        # Update color preview in database
-        node_colors = [n["border_color"] for n in graph["nodes"]]
-        color_preview = node_colors[-6:]  # Only display last 6 colors
-        DB.update_color_preview(sid, color_preview)
-        # Broadcast color preview update to all UIs
-        self.broadcast_to_all_uis(
-            {"type": "color_preview_update", "session_id": sid, "color_preview": color_preview}
-        )
-        self.broadcast_graph_update(sid)
-        DB.update_graph_topology(sid, graph)
-
-    def handle_edit_input(self, msg: dict) -> None:
-        session_id = msg["session_id"]
-        node_id = msg["node_id"]
-        new_input = msg["value"]
-
-        logger.info(f"[EditIO] edit input msg keys {[*msg.keys()]}")
-        logger.info(f"[EditIO] edit input msg: {msg}")
-
-        DB.set_input_overwrite(session_id, node_id, new_input)
-        if session_id in self.session_graphs:
-            for node in self.session_graphs[session_id]["nodes"]:
-                if node["id"] == node_id:
-                    node["input"] = new_input
-                    break
-            DB.update_graph_topology(session_id, self.session_graphs[session_id])
-            self.broadcast_graph_update(session_id)
-
-    def handle_edit_output(self, msg: dict) -> None:
-        session_id = msg["session_id"]
-        node_id = msg["node_id"]
-        new_output = msg["value"]
-
-        logger.info(f"[EditIO] edit output msg: {msg}")
-
-        DB.set_output_overwrite(session_id, node_id, new_output)
-        if session_id in self.session_graphs:
-            for node in self.session_graphs[session_id]["nodes"]:
-                if node["id"] == node_id:
-                    node["output"] = new_output
-                    break
-            DB.update_graph_topology(session_id, self.session_graphs[session_id])
-            self.broadcast_graph_update(session_id)
-
-    def handle_update_node(self, msg: dict) -> None:
-        """Handle updateNode message for updating node properties like label"""
-        session_id = msg.get("session_id")
-        node_id = msg.get("node_id")
-        field = msg.get("field")
-        value = msg.get("value")
-
-        if not all([session_id, node_id, field]):
-            logger.error(f"Missing required fields in updateNode message: {msg}")
-            return
-
-        if session_id in self.session_graphs:
-            for node in self.session_graphs[session_id]["nodes"]:
-                if node["id"] == node_id:
-                    # Update the specified field
-                    node[field] = value
-                    break
-
-            # Update the graph topology and broadcast the change
-            DB.update_graph_topology(session_id, self.session_graphs[session_id])
-            self.broadcast_graph_update(session_id)
-        else:
-            logger.warning(f"Session {session_id} not found in session_graphs")
-
-    def handle_log(self, msg: dict) -> None:
-        session_id = msg["session_id"]
-        success = msg["success"]
-        entry = msg["entry"]
-        DB.add_log(session_id, success, entry)
-
-        self.broadcast_experiment_list_to_uis()
-
-    def handle_update_run_name(self, msg: dict) -> None:
-        session_id = msg.get("session_id")
-        run_name = msg.get("run_name")
-        if session_id and run_name is not None:
-            DB.update_run_name(session_id, run_name)
-            self.broadcast_experiment_list_to_uis()
-        else:
-            logger.error(
-                f"handle_update_run_name: Missing required fields: session_id={session_id}, run_name={run_name}"
-            )
-
-    def handle_update_result(self, msg: dict) -> None:
-        session_id = msg.get("session_id")
-        result = msg.get("result")
-        if session_id and result is not None:
-            DB.update_result(session_id, result)
-            self.broadcast_experiment_list_to_uis()
-        else:
-            logger.error(
-                f"handle_update_result: Missing required fields: session_id={session_id}, result={result}"
-            )
-
-    def handle_update_notes(self, msg: dict) -> None:
-        session_id = msg.get("session_id")
-        notes = msg.get("notes")
-        if session_id and notes is not None:
-            DB.update_notes(session_id, notes)
-            self.broadcast_experiment_list_to_uis()
-        else:
-            logger.error(
-                f"handle_update_notes: Missing required fields: session_id={session_id}, notes={notes}"
-            )
-
-    def handle_update_command(self, msg: dict) -> None:
-        """Update the restart command for a session (sent async after handshake)."""
-        session_id = msg.get("session_id")
-        command = msg.get("command")
-        if session_id and command:
-            session = self.sessions.get(session_id)
-            if session:
-                session.command = command
-                DB.update_command(session_id, command)
-
-    def handle_get_graph(self, msg: dict, conn: socket.socket) -> None:
-        session_id = msg["session_id"]
-
-        self.handle_graph_request(conn, session_id)
-
-    def handle_get_all_experiments(self, conn: socket.socket) -> None:
-        """Handle request to refresh the experiment list (e.g., when VS Code window regains focus)."""
-        # First, send current session_id and database_mode to ensure UI state is synced
-        # This handles the case where the webview was recreated (e.g., tab switch) and needs state restoration
-        send_json(
-            conn,
-            {
-                "type": "session_id",
-                "session_id": None,
-                "config_path": AO_CONFIG,
-                "database_mode": DB.get_current_mode(),
-                "playbook_url": PLAYBOOK_SERVER_URL,
-                "playbook_api_key": PLAYBOOK_API_KEY,
-            },
-        )
-        # Then send the experiment list
-        self.broadcast_experiment_list_to_uis(conn)
-
     # ============================================================
-    # Lessons (proxied to ao-playbook API)
+    # Admin Handlers (remain in main_server.py)
     # ============================================================
-
-    def _playbook_request(self, method: str, endpoint: str, data: dict = None) -> dict:
-        """Make HTTP request to ao-playbook server."""
-        import urllib.request
-        import urllib.error
-
-        url = f"{PLAYBOOK_SERVER_URL}/api/v1{endpoint}"
-        headers = {"Content-Type": "application/json"}
-        if PLAYBOOK_API_KEY:
-            headers["X-API-Key"] = PLAYBOOK_API_KEY
-
-        logger.info(f"[Playbook] {method} {url} (API key: {'set' if PLAYBOOK_API_KEY else 'NOT SET'})")
-
-        body = json.dumps(data).encode("utf-8") if data else None
-        req = urllib.request.Request(url, data=body, headers=headers, method=method)
-
-        try:
-            with urllib.request.urlopen(req, timeout=30) as response:
-                result = json.loads(response.read().decode("utf-8"))
-                if isinstance(result, dict):
-                    logger.info(f"[Playbook] Response status: {result.get('status', 'ok')}")
-                else:
-                    logger.info(f"[Playbook] Response: list with {len(result)} items")
-                return result
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode("utf-8") if e.fp else ""
-            logger.error(f"Playbook API error {e.code}: {error_body}")
-            return {"error": f"API error: {e.code}", "detail": error_body}
-        except urllib.error.URLError as e:
-            logger.warning(f"Playbook server unavailable: {e.reason}")
-            return {"error": "Playbook server unavailable"}
-        except Exception as e:
-            logger.error(f"Playbook request failed: {e}")
-            return {"error": str(e)}
-
-    def _merge_lessons_with_applied(self, lessons: list) -> list:
-        """Merge ao-playbook lessons with local applied data."""
-        # Get all applied records grouped by lesson_id
-        applied_records = DB.get_all_lessons_applied()
-        applied_by_lesson = {}
-        for record in applied_records:
-            lid = record["lesson_id"]
-            if lid not in applied_by_lesson:
-                applied_by_lesson[lid] = []
-            applied_by_lesson[lid].append({
-                "sessionId": record["session_id"],
-                "nodeId": record["node_id"],
-                "runName": record["run_name"],
-            })
-
-        # Merge applied data into lessons
-        for lesson in lessons:
-            lesson_id = lesson.get("id")
-            if lesson_id and lesson_id in applied_by_lesson:
-                lesson["appliedTo"] = applied_by_lesson[lesson_id]
-
-        return lessons
-
-    def handle_get_lessons(self, conn: socket.socket) -> None:
-        """Fetch lessons from ao-playbook and merge with local applied data."""
-        result = self._playbook_request("GET", "/lessons")
-
-        if "error" in result:
-            send_json(conn, {"type": "lessons_list", "lessons": [], "error": result["error"]})
-            return
-
-        # Handle both list response and dict with "lessons" key
-        lessons = result if isinstance(result, list) else result.get("lessons", [])
-        merged = self._merge_lessons_with_applied(lessons)
-        send_json(conn, {"type": "lessons_list", "lessons": merged})
-
-    def handle_add_lesson(self, msg: dict, conn: socket.socket) -> None:
-        """Create lesson via ao-playbook API with validation feedback."""
-        data = {
-            "name": msg.get("name", ""),
-            "summary": msg.get("summary", ""),
-            "content": msg.get("content", ""),
-            "path": msg.get("path", ""),
-        }
-
-        if not data["name"] or not data["content"]:
-            logger.error("add_lesson: Missing required fields (name, content)")
-            send_json(conn, {"type": "lesson_error", "error": "Missing required fields (name, content)"})
-            return
-
-        # Use force query param to skip server-side validation
-        force = msg.get("force", False)
-        endpoint = "/lessons" + ("?force=true" if force else "")
-
-        result = self._playbook_request("POST", endpoint, data)
-
-        if result.get("status") == "rejected":
-            # Validation rejection - keep modal open, include hint if present
-            reason = result.get("reason", "Validation failed")
-            hint = result.get("hint")
-            if hint:
-                reason = f"{reason}\n\nHint: {hint}"
-            send_json(conn, {
-                "type": "lesson_rejected",
-                "reason": reason,
-                "severity": "error",
-                "conflicting_lesson_ids": result.get("conflicting_lesson_ids", []),
-            })
-        elif "error" in result:
-            send_json(conn, {"type": "lesson_error", "error": result.get("error", "Unknown error")})
-        elif result.get("status") == "created":
-            # Success - include validation feedback
-            validation = result.get("validation")
-            send_json(conn, {
-                "type": "lesson_created",
-                "lesson": result,
-                "validation": validation,
-            })
-            self._broadcast_lessons_to_uis()
-        else:
-            logger.warning(f"Unexpected add_lesson response: {result}")
-            send_json(conn, {"type": "lesson_error", "error": "Unexpected server response"})
-
-    def handle_update_lesson(self, msg: dict, conn: socket.socket) -> None:
-        """Update lesson via ao-playbook API with validation feedback."""
-        lesson_id = msg.get("lesson_id")
-        if not lesson_id:
-            logger.error("update_lesson: Missing lesson_id")
-            send_json(conn, {"type": "lesson_error", "error": "Missing lesson_id"})
-            return
-
-        # Only include fields that were provided
-        data = {}
-        for field in ["name", "summary", "content", "path"]:
-            if field in msg:
-                data[field] = msg[field]
-
-        if not data:
-            logger.error("update_lesson: No fields to update")
-            send_json(conn, {"type": "lesson_error", "error": "No fields to update"})
-            return
-
-        # Use force query param to skip server-side validation
-        force = msg.get("force", False)
-        endpoint = f"/lessons/{lesson_id}" + ("?force=true" if force else "")
-
-        result = self._playbook_request("PUT", endpoint, data)
-
-        if result.get("status") == "rejected":
-            # Validation rejection - keep modal open, include hint if present
-            reason = result.get("reason", "Validation failed")
-            hint = result.get("hint")
-            if hint:
-                reason = f"{reason}\n\nHint: {hint}"
-            send_json(conn, {
-                "type": "lesson_rejected",
-                "reason": reason,
-                "severity": "error",
-                "conflicting_lesson_ids": result.get("conflicting_lesson_ids", []),
-            })
-        elif "error" in result:
-            send_json(conn, {"type": "lesson_error", "error": result.get("error", "Unknown error")})
-        elif result.get("status") == "updated":
-            # Success - include validation feedback
-            validation = result.get("validation")
-            send_json(conn, {
-                "type": "lesson_updated",
-                "lesson": result,
-                "validation": validation,
-            })
-            self._broadcast_lessons_to_uis()
-        else:
-            logger.warning(f"Unexpected update_lesson response: {result}")
-            send_json(conn, {"type": "lesson_error", "error": "Unexpected server response"})
-
-    def handle_delete_lesson(self, msg: dict, conn: socket.socket) -> None:
-        """Delete lesson via ao-playbook API and clean up local applied records."""
-        lesson_id = msg.get("lesson_id")
-        if not lesson_id:
-            logger.error("delete_lesson: Missing lesson_id")
-            send_json(conn, {"type": "lesson_error", "error": "Missing lesson_id"})
-            return
-
-        result = self._playbook_request("DELETE", f"/lessons/{lesson_id}")
-        if "error" in result:
-            send_json(conn, {"type": "lesson_error", "error": result.get("error", "Unknown error")})
-        else:
-            # Clean up local applied records
-            DB.delete_lessons_applied_for_lesson(lesson_id)
-            self._broadcast_lessons_to_uis()
-
-    def handle_get_lesson(self, msg: dict, conn: socket.socket) -> None:
-        """Fetch a single lesson's full content via ao-playbook API."""
-        lesson_id = msg.get("lesson_id")
-        if not lesson_id:
-            logger.error("get_lesson: Missing lesson_id")
-            send_json(conn, {"type": "lesson_error", "error": "Missing lesson_id"})
-            return
-
-        result = self._playbook_request("GET", f"/lessons/{lesson_id}")
-        if "error" in result:
-            send_json(conn, {"type": "lesson_error", "error": result.get("error", "Unknown error")})
-        else:
-            # Result contains the full lesson with content
-            lesson = result.get("lesson", result)
-            send_json(conn, {"type": "lesson_content", "lesson": lesson})
-
-    def _broadcast_lessons_to_uis(self) -> None:
-        """Broadcast updated lessons list to all UI connections."""
-        result = self._playbook_request("GET", "/lessons")
-        lessons = result if isinstance(result, list) else result.get("lessons", [])
-        if "error" not in result:
-            merged = self._merge_lessons_with_applied(lessons)
-            self.broadcast_to_all_uis({"type": "lessons_list", "lessons": merged})
-
-    # NOTE: Auth disabled - handle_auth method commented out
-    # def handle_auth(self, msg: dict, conn: socket.socket) -> None:
-    #     """Handle auth messages from UI clients: attach user_id to connection and store current user."""
-    #     try:
-    #         user_id = msg.get("user_id")
-    #         # Store the current authenticated user_id on the server
-    #         self.current_user_id = user_id
-    #         info = self.conn_info.get(conn)
-    #         if info is None:
-    #             self.conn_info[conn] = {"role": "ui", "session_id": None, "user_id": user_id}
-    #         else:
-    #             info["user_id"] = user_id
-    #         # Send filtered list to this connection
-    #         self.broadcast_experiment_list_to_uis(conn)
-    #     except Exception as e:
-    #         logger.error(f"Error handling auth message: {e}")
-
-    def handle_add_subrun(self, msg: dict, conn: socket.socket) -> None:
-        # If rerun, use previous session_id. Else, assign new one.
-        prev_session_id = msg.get("prev_session_id")
-        if prev_session_id:
-            session_id = prev_session_id
-        else:
-            session_id = str(uuid.uuid4())
-            # Insert new experiment into DB.
-            cwd = msg.get("cwd")
-            command = msg.get("command")
-            environment = msg.get("environment")
-            timestamp = datetime.now()
-            name = msg.get("name")
-            if not name:
-                run_index = DB.get_next_run_index()
-                name = f"Run {run_index}"
-            parent_session_id = msg.get("parent_session_id")
-            # NOTE: Auth disabled - user_id handling commented out
-            # user_id = msg.get("user_id")
-            # if user_id is None:
-            #     user_id = self.current_user_id
-
-            # Create experiment with version_date=None, request async versioning
-            DB.add_experiment(
-                session_id,
-                name,
-                timestamp,
-                cwd,
-                command,
-                environment,
-                parent_session_id,
-                None,  # user_id disabled
-                None,  # version_date will be set async by FileWatcher
-            )
-            # Request async git versioning from FileWatcher
-            self.file_watch_queue.put({"type": "request_version", "session_id": session_id})
-        # Insert session if not present.
-        with self.lock:
-            if session_id not in self.sessions:
-                self.sessions[session_id] = Session(session_id)
-            session = self.sessions[session_id]
-        with session.lock:
-            session.shim_conn = conn
-        session.status = "running"
-        self.broadcast_experiment_list_to_uis()
-        self.conn_info[conn] = {"role": "agent-runner", "session_id": session_id}
-        send_json(conn, {"type": "session_id", "session_id": session_id})
-
-    def handle_erase(self, msg):
-        session_id = msg.get("session_id")
-
-        DB.erase(session_id)
-        # Clear color preview in database
-        DB.update_color_preview(session_id, [])
-
-        # Broadcast color preview clearing to all UIs
-        self.broadcast_to_all_uis(
-            {"type": "color_preview_update", "session_id": session_id, "color_preview": []}
-        )
-
-        self.handle_restart_message({"session_id": session_id})
-
-    def handle_restart_message(self, msg: dict) -> bool:
-        session_id = msg.get("session_id")
-        parent_session_id = DB.get_parent_session_id(session_id)
-        if not parent_session_id:
-            logger.error("Restart message missing session_id. Ignoring.")
-            return
-        # Clear UI state (updates both memory and database atomically)
-        self._clear_session_ui(session_id)
-
-        session = self.sessions.get(parent_session_id)
-
-        if session and session.status == "running":
-            # Send graceful restart signal to existing session if still connected
-            if session.shim_conn:
-                restart_msg = {"type": "restart", "session_id": parent_session_id}
-                logger.debug(
-                    f"Session running...Sending restart for session_id: {parent_session_id}"
-                )
-                try:
-                    send_json(session.shim_conn, restart_msg)
-                except Exception as e:
-                    logger.error(f"Error sending restart: {e}")
-                return
-            else:
-                logger.warning(f"No shim_conn for session_id: {parent_session_id}")
-        elif session and session.status == "finished":
-            # Rerun for finished session: spawn new process with same session_id
-            self._spawn_session_process(parent_session_id, session_id)
-
-    def handle_deregister_message(self, msg: dict) -> bool:
-        session_id = msg["session_id"]
-        session = self.sessions.get(session_id)
-        if session:
-            session.status = "finished"
-            self.broadcast_experiment_list_to_uis()
 
     def handle_shutdown(self) -> None:
         """Handle shutdown command by closing all connections."""
         logger.info("Shutdown command received. Closing all connections.")
-        # Stop file watcher process first
-        self.stop_file_watcher()
-        # Close the multiprocessing queues to release semaphores
-        try:
-            self.file_watch_queue.close()
-            self.file_watch_queue.join_thread()
-        except Exception as e:
-            logger.debug(f"Error closing file_watch_queue: {e}")
-        try:
-            self.file_watch_response_queue.close()
-            self.file_watch_response_queue.join_thread()
-        except Exception as e:
-            logger.debug(f"Error closing file_watch_response_queue: {e}")
+        # Shutdown git executor
+        self._git_executor.shutdown(wait=False)
         # Close all client sockets
         for s in list(self.conn_info.keys()):
             try:
                 s.close()
             except Exception as e:
                 logger.error(f"Error closing socket: {e}")
-        # TODO: os._exit(0) bypasses Python's resource tracker, causing
-        # "leaked semaphore" warnings from the 2 multiprocessing.Queue objects.
-        # Fix: close server_sock here to break accept() loop, move cleanup to
-        # run_server()'s finally block, and let the process exit normally.
         os._exit(0)
 
     def handle_clear(self):
+        """Clear all experiments and graphs."""
         DB.clear_db()
         self.session_graphs.clear()
         self.sessions.clear()
@@ -977,57 +473,61 @@ class MainServer:
     def process_message(self, msg: dict, conn: socket.socket) -> None:
         self._last_activity_time = time.time()  # Reset inactivity timer
         msg_type = msg.get("type")
-        # NOTE: Auth disabled - auth message handling commented out
-        # if msg_type == "auth":
-        #     self.handle_auth(msg, conn)
+
+        # Admin handlers (stay in main_server.py)
         if msg_type == "shutdown":
             self.handle_shutdown()
-        elif msg_type == "restart":
-            self.handle_restart_message(msg)
-        elif msg_type == "deregister":
-            self.handle_deregister_message(msg)
-        elif msg_type == "add_node":
-            self.handle_add_node(msg)
-        elif msg_type == "edit_input":
-            self.handle_edit_input(msg)
-        elif msg_type == "edit_output":
-            self.handle_edit_output(msg)
-        elif msg_type == "update_node":
-            self.handle_update_node(msg)
-        elif msg_type == "log":
-            self.handle_log(msg)
-        elif msg_type == "update_run_name":
-            self.handle_update_run_name(msg)
-        elif msg_type == "update_result":
-            self.handle_update_result(msg)
-        elif msg_type == "update_notes":
-            self.handle_update_notes(msg)
-        elif msg_type == "add_subrun":
-            self.handle_add_subrun(msg, conn)
-        elif msg_type == "get_graph":
-            self.handle_get_graph(msg, conn)
-        elif msg_type == "erase":
-            self.handle_erase(msg)
         elif msg_type == "clear":
             self.handle_clear()
         elif msg_type == "set_database_mode":
             self.handle_set_database_mode(msg)
+
+        # UI handlers
+        elif msg_type == "restart":
+            handle_restart_message(self, msg)
+        elif msg_type == "edit_input":
+            handle_edit_input(self, msg)
+        elif msg_type == "edit_output":
+            handle_edit_output(self, msg)
+        elif msg_type == "update_node":
+            handle_update_node(self, msg)
+        elif msg_type == "update_run_name":
+            handle_update_run_name(self, msg)
+        elif msg_type == "update_result":
+            handle_update_result(self, msg)
+        elif msg_type == "update_notes":
+            handle_update_notes(self, msg)
+        elif msg_type == "get_graph":
+            handle_get_graph(self, msg, conn)
+        elif msg_type == "erase":
+            handle_erase(self, msg)
         elif msg_type == "get_all_experiments":
-            self.handle_get_all_experiments(conn)
+            handle_get_all_experiments(self, conn)
+
+        # Runner handlers
+        elif msg_type == "add_node":
+            handle_add_node(self, msg)
+        elif msg_type == "add_subrun":
+            handle_add_subrun(self, msg, conn)
+        elif msg_type == "deregister":
+            handle_deregister_message(self, msg)
         elif msg_type == "update_command":
-            self.handle_update_command(msg)
-        elif msg_type == "watch_file":
-            self.handle_watch_file(msg)
+            handle_update_command(self, msg)
+        elif msg_type == "log":
+            handle_log(self, msg)
+
+        # Lesson handlers
         elif msg_type == "get_lessons":
-            self.handle_get_lessons(conn)
+            handle_get_lessons(self, conn)
         elif msg_type == "add_lesson":
-            self.handle_add_lesson(msg, conn)
+            handle_add_lesson(self, msg, conn)
         elif msg_type == "update_lesson":
-            self.handle_update_lesson(msg, conn)
+            handle_update_lesson(self, msg, conn)
         elif msg_type == "delete_lesson":
-            self.handle_delete_lesson(msg, conn)
+            handle_delete_lesson(self, msg, conn)
         elif msg_type == "get_lesson":
-            self.handle_get_lesson(msg, conn)
+            handle_get_lesson(self, msg, conn)
+
         else:
             logger.error(f"Unknown message type. Message:\n{msg}")
 
@@ -1072,10 +572,10 @@ class MainServer:
                         environment,
                         None,
                         None,  # user_id disabled
-                        None,  # version_date will be set async by FileWatcher
+                        None,  # version_date will be set async
                     )
-                    # Request async git versioning from FileWatcher
-                    self.file_watch_queue.put({"type": "request_version", "session_id": session_id})
+                    # Request async git versioning
+                    self._git_executor.submit(self._do_git_version, session_id)
                 # Insert session if not present.
                 with self.lock:
                     if session_id not in self.sessions:
@@ -1099,19 +599,12 @@ class MainServer:
                 # Always reload finished runs from the DB before sending experiment list
                 self.load_finished_runs()
                 self.ui_connections.add(conn)
-                # NOTE: Auth disabled - user_id handling commented out
-                # user_id = handshake.get("user_id") if isinstance(handshake, dict) else None
-                # if user_id is not None:
-                #     self.current_user_id = user_id
 
-                # Extract workspace_root from VS Code and update FileWatcher
+                # Extract workspace_root from VS Code for git versioning
                 workspace_root = handshake.get("workspace_root")
                 if workspace_root and workspace_root != self._project_root:
                     logger.info(f"Setting workspace root to: {workspace_root}")
                     self._project_root = workspace_root
-                    # Restart file watcher with new project root
-                    self.stop_file_watcher()
-                    self.start_file_watcher()
 
                 # Send session_id and config_path to this UI connection (None for UI)
                 self.conn_info[conn] = {"role": role, "session_id": None}
@@ -1203,15 +696,8 @@ class MainServer:
         self.server_sock.listen()
         logger.info(f"Develop server listening on {HOST}:{PORT} ({time.time() - _run_start:.2f}s)")
 
-        # Start file watcher process for AST recompilation
-        logger.info(f"Starting file watcher... ({time.time() - _run_start:.2f}s)")
-        self.start_file_watcher()
-
         # Start inactivity monitor (shuts down after 1 hour of no messages)
         self._start_inactivity_monitor()
-
-        # Start response queue monitor (handles FileWatcher responses)
-        self._start_response_queue_monitor()
 
         # Load finished runs on startup
         logger.info(f"Loading finished runs... ({time.time() - _run_start:.2f}s)")
@@ -1226,8 +712,7 @@ class MainServer:
             # This will be triggered when server_sock is closed (on shutdown)
             pass
         finally:
-            # Stop file watcher process
-            self.stop_file_watcher()
+            self._git_executor.shutdown(wait=False)
             self.server_sock.close()
             logger.info("Develop server stopped.")
 

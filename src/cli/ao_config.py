@@ -1,21 +1,10 @@
 import argparse
 import os
-from ao.common.config import (
-    Config,
-    _ask_field,
-    _convert_to_valid_path,
-)
-from ao.common.constants import AO_CONFIG, AO_PROJECT_ROOT
+from ao.common.config import Config, _ask_field
+from ao.common.constants import AO_CONFIG
 
 
 def get_user_input() -> Config:
-    project_root = _ask_field(
-        f"What is the root directory of your project? [{AO_PROJECT_ROOT}]\n> ",
-        _convert_to_valid_path,
-        default=AO_PROJECT_ROOT,
-        error_message="Please enter a valid path to a directory.",
-    )
-
     database_url = _ask_field(
         "Database URL (leave empty for SQLite)\n> ",
         str,
@@ -23,10 +12,7 @@ def get_user_input() -> Config:
         error_message="Please enter a valid database URL or leave empty.",
     )
 
-    config = Config(
-        project_root=project_root,
-        database_url=database_url,
-    )
+    config = Config(database_url=database_url)
     return config
 
 

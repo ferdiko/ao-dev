@@ -12,11 +12,11 @@ import importlib
 
 
 def _get_all_patch_functions():
-    """Dynamically load all patch functions from LAZY_PATCHES."""
-    from ao.runner.monkey_patching.apply_monkey_patches import LAZY_PATCHES
+    """Dynamically load all patch functions from PATCHES."""
+    from ao.runner.monkey_patching.apply_monkey_patches import PATCHES
 
     patch_functions = []
-    for module_prefix, (patch_module, patch_func_name) in LAZY_PATCHES.items():
+    for module_prefix, (patch_module, patch_func_name) in PATCHES.items():
         try:
             mod = importlib.import_module(patch_module)
             patch_func = getattr(mod, patch_func_name)
@@ -62,7 +62,7 @@ class TestOptionalDependencies:
             # Apply the comprehensive mock
             builtins.__import__ = mock_import
 
-            # Get all patch functions dynamically from LAZY_PATCHES
+            # Get all patch functions dynamically from PATCHES
             patch_functions = _get_all_patch_functions()
 
             for patch_func in patch_functions:
@@ -90,7 +90,7 @@ class TestOptionalDependencies:
         print("\nTesting import with API dependencies...")
 
         try:
-            # Get all patch functions dynamically from LAZY_PATCHES
+            # Get all patch functions dynamically from PATCHES
             patch_functions = _get_all_patch_functions()
 
             # Test each patch function

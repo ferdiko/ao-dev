@@ -27,6 +27,12 @@ from ao.runner.monkey_patching.api_parsers.genai_api_parser import (
     json_str_to_api_obj_genai,
     json_str_to_original_inp_dict_genai,
 )
+from ao.runner.monkey_patching.api_parsers.claude_sdk_api_parser import (
+    func_kwargs_to_json_str_claude_sdk,
+    api_obj_to_json_str_claude_sdk,
+    json_str_to_api_obj_claude_sdk,
+    json_str_to_original_inp_dict_claude_sdk,
+)
 from ao.common.constants import EDIT_IO_EXCLUDE_PATTERNS
 
 
@@ -127,6 +133,8 @@ def func_kwargs_to_json_str(input_dict: Dict[str, Any], api_type: str) -> Tuple[
         complete_json_str, metadata = func_kwargs_to_json_str_mcp(input_dict)
     elif api_type == "genai.BaseApiClient.async_request":
         complete_json_str, metadata = func_kwargs_to_json_str_genai(input_dict)
+    elif api_type == "claude_agent_sdk.parse_message":
+        complete_json_str, metadata = func_kwargs_to_json_str_claude_sdk(input_dict)
     else:
         raise ValueError(f"Unknown API type {api_type}")
 
@@ -177,6 +185,8 @@ def json_str_to_original_inp_dict(json_str: str, input_dict: dict, api_type: str
         return json_str_to_original_inp_dict_mcp(merged_json_str, input_dict)
     elif api_type == "genai.BaseApiClient.async_request":
         return json_str_to_original_inp_dict_genai(merged_json_str, input_dict)
+    elif api_type == "claude_agent_sdk.parse_message":
+        return json_str_to_original_inp_dict_claude_sdk(merged_json_str, input_dict)
     else:
         return merged_dict
 
@@ -201,6 +211,8 @@ def api_obj_to_json_str(response_obj: Any, api_type: str) -> str:
         complete_json_str = api_obj_to_json_str_mcp(response_obj)
     elif api_type == "genai.BaseApiClient.async_request":
         complete_json_str = api_obj_to_json_str_genai(response_obj)
+    elif api_type == "claude_agent_sdk.parse_message":
+        complete_json_str = api_obj_to_json_str_claude_sdk(response_obj)
     else:
         raise ValueError(f"Unknown API type {api_type}")
 
@@ -244,6 +256,8 @@ def json_str_to_api_obj(new_output_text: str, api_type: str) -> Any:
         return json_str_to_api_obj_mcp(merged_json_str)
     elif api_type == "genai.BaseApiClient.async_request":
         return json_str_to_api_obj_genai(merged_json_str)
+    elif api_type == "claude_agent_sdk.parse_message":
+        return json_str_to_api_obj_claude_sdk(merged_json_str)
     else:
         raise ValueError(f"Unknown API type {api_type}")
 

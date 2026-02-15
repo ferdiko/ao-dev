@@ -131,7 +131,6 @@ AO respects the following environment variables:
 | Variable | Description |
 |----------|-------------|
 | `AO_SESSION_ID` | Current session identifier |
-| `AO_ENABLE_TRACING` | Enable/disable tracing |
 | `AO_SEED` | Random seed for reproducibility |
 
 ### Server Configuration

@@ -23,7 +23,6 @@ from ao.runner.monkey_patching.api_parser import (
     json_str_to_original_inp_dict,
     api_obj_to_response_ok,
 )
-from ao.common.utils import get_raw_model_name
 
 
 @dataclass
@@ -189,16 +188,13 @@ class DatabaseManager:
     #     return self.backend.get_user_by_id_query(user_id)
 
     def set_input_overwrite(self, session_id, node_id, new_input):
-        # Make sure string repr. is uniform
+        # Normalize JSON representation
         new_input = json.dumps(json.loads(new_input), sort_keys=True)
         row = self.backend.get_llm_call_input_api_type_query(session_id, node_id)
-        input_overwrite = json.loads(row["input"])
-        # Maybe what the UI gave us is the same (user didn't change anything).
-        # In this case, don't remove the output (this is what set_input_overwrite_query does)
-        if input_overwrite["input"] != new_input:
-            input_overwrite["input"] = new_input
-            input_overwrite = json.dumps(input_overwrite, sort_keys=True)
-            self.backend.set_input_overwrite_query(input_overwrite, session_id, node_id)
+        original_input = json.dumps(json.loads(row["input"]), sort_keys=True)
+        # Only clear output if input actually changed
+        if original_input != new_input:
+            self.backend.set_input_overwrite_query(new_input, session_id, node_id)
 
     def set_output_overwrite(self, session_id, node_id, new_output: str):
         # Overwrite output for node.
@@ -427,16 +423,8 @@ class DatabaseManager:
         # Capture stack trace early (before any internal calls pollute it)
         stack_trace = capture_stack_trace()
 
-        # Pickle input object.
-        api_json_str, attachments = func_kwargs_to_json_str(input_dict, api_type)
-        model = get_raw_model_name(input_dict, api_type)
-
-        cacheable_input = {
-            "input": api_json_str,
-            "attachments": attachments,
-            "model": model,
-        }
-        input_pickle = json.dumps(cacheable_input, sort_keys=True)
+        # Cache key is the serialized input (URL + body for HTTP APIs)
+        input_pickle, _ = func_kwargs_to_json_str(input_dict, api_type)
         input_hash = hash_input(input_pickle)
 
         # Check if API call with same session_id & input has been made before.
@@ -466,13 +454,7 @@ class DatabaseManager:
             logger.debug(
                 f"Cache hit (input overwritten): session_id {str(session_id)[:4]}, input_hash {str(input_hash)[:4]}"
             )
-            overwrite_json_str = row["input_overwrite"]
-            overwrite_text = json.loads(overwrite_json_str)["input"]
-            # the format of the input is not always a JSON dict.
-            # sometimes, you need to parse the JSON dict into a
-            # specific input format. To do that, API libraries often
-            # provide helper functions
-            input_dict = json_str_to_original_inp_dict(overwrite_text, input_dict, api_type)
+            input_dict = json_str_to_original_inp_dict(row["input_overwrite"], input_dict, api_type)
 
         # Here, no matter if we made an edit to the input or not, the input dict should
         # be a valid input to the underlying function
