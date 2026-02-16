@@ -2,4 +2,7 @@
 
 
 ## Test plan
-- [ ] Run billable tests: Maintainer must comment `/run-billable-tests` on PR
+- [ ] Run billable tests. Maintainer must comment this on PR:
+```
+/run-billable-tests
+```
