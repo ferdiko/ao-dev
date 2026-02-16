@@ -7,7 +7,7 @@ def setup_logging():
     if root.handlers:
         root.handlers.clear()
 
-    root.setLevel(logging.DEBUG)  # NOTE: Displayed in user terminal, set to CRITICAL when deploying
+    root.setLevel(logging.DEBUG)  # NOTE: Set to CRITICAL in releases (prints to terminal)
 
     # Create a console handler
     handler = logging.StreamHandler()
