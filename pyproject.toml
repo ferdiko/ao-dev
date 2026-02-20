@@ -16,7 +16,8 @@ packages = [
     "ao.runner.monkey_patching.api_parsers",
     "ao.runner.monkey_patching.patches",
     "ao.server",
-    "ao.server.database_backends"
+    "ao.server.database_backends",
+    "ao.onboarding"
 ]
 
 [project.scripts]
@@ -76,6 +77,10 @@ examples = [
     "anthropic",
     "openai-agents",
     "google-genai"
+]
+
+onboard = [
+    "claude-agent-sdk",
 ]
 
 docs = [

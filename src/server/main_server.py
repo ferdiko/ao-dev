@@ -622,6 +622,77 @@ class MainServer:
             logger.error(f"Playbook request failed: {e}")
             return {"error": str(e)}
 
+    def _parse_sse_stream(self, response) -> dict:
+        """Read an SSE stream and return the result/error data."""
+        current_event = None
+        for raw_line in response:
+            line = raw_line.decode("utf-8", errors="replace").rstrip("\n").rstrip("\r")
+
+            if line.startswith("event: "):
+                current_event = line[7:]
+            elif line.startswith("data: "):
+                data_str = line[6:]
+                try:
+                    data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    data = {"raw": data_str}
+
+                if current_event == "waiting":
+                    msg = data.get("message", "Waiting for lock...")
+                    logger.info(f"[Playbook] SSE waiting: {msg}")
+                elif current_event == "acquired":
+                    msg = data.get("message", "Acquired lock")
+                    logger.info(f"[Playbook] SSE acquired: {msg}")
+                elif current_event == "result":
+                    return data
+                elif current_event == "error":
+                    code = data.get("code", 500)
+                    error_msg = data.get("error", "Unknown error")
+                    return {"error": error_msg, "code": code}
+
+                current_event = None
+
+        return {"error": "SSE stream ended unexpectedly"}
+
+    def _playbook_request_sse(self, method: str, endpoint: str, data: dict = None) -> dict:
+        """Make HTTP request to ao-playbook server expecting an SSE stream."""
+        import urllib.request
+        import urllib.error
+
+        url = f"{PLAYBOOK_SERVER_URL}/api/v1{endpoint}"
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+        if PLAYBOOK_API_KEY:
+            headers["X-API-Key"] = PLAYBOOK_API_KEY
+
+        logger.info(f"[Playbook] SSE {method} {url}")
+
+        body = json.dumps(data).encode("utf-8") if data else None
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+
+        try:
+            with urllib.request.urlopen(req, timeout=120) as response:
+                content_type = response.headers.get("Content-Type", "")
+                if "text/event-stream" in content_type:
+                    return self._parse_sse_stream(response)
+                # Fallback: plain JSON
+                result = json.loads(response.read().decode("utf-8"))
+                if isinstance(result, dict):
+                    logger.info(f"[Playbook] Response status: {result.get('status', 'ok')}")
+                return result
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8") if e.fp else ""
+            logger.error(f"Playbook API error {e.code}: {error_body}")
+            return {"error": f"API error: {e.code}", "detail": error_body}
+        except urllib.error.URLError as e:
+            logger.warning(f"Playbook server unavailable: {e.reason}")
+            return {"error": "Playbook server unavailable"}
+        except Exception as e:
+            logger.error(f"Playbook request failed: {e}")
+            return {"error": str(e)}
+
     def _merge_lessons_with_applied(self, lessons: list) -> list:
         """Merge ao-playbook lessons with local applied data."""
         # Get all applied records grouped by lesson_id
@@ -676,7 +747,7 @@ class MainServer:
         force = msg.get("force", False)
         endpoint = "/lessons" + ("?force=true" if force else "")
 
-        result = self._playbook_request("POST", endpoint, data)
+        result = self._playbook_request_sse("POST", endpoint, data)
 
         if result.get("status") == "rejected":
             # Validation rejection - keep modal open, include hint if present
@@ -728,7 +799,7 @@ class MainServer:
         force = msg.get("force", False)
         endpoint = f"/lessons/{lesson_id}" + ("?force=true" if force else "")
 
-        result = self._playbook_request("PUT", endpoint, data)
+        result = self._playbook_request_sse("PUT", endpoint, data)
 
         if result.get("status") == "rejected":
             # Validation rejection - keep modal open, include hint if present
@@ -765,7 +836,7 @@ class MainServer:
             send_json(conn, {"type": "lesson_error", "error": "Missing lesson_id"})
             return
 
-        result = self._playbook_request("DELETE", f"/lessons/{lesson_id}")
+        result = self._playbook_request_sse("DELETE", f"/lessons/{lesson_id}")
         if "error" in result:
             send_json(conn, {"type": "lesson_error", "error": result.get("error", "Unknown error")})
         else:

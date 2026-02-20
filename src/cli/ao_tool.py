@@ -798,6 +798,98 @@ def _playbook_request(method: str, path: str, data: dict | None = None) -> dict:
         return {"status": "error", "error": f"Invalid JSON response: {e}"}
 
 
+def _parse_sse_stream(response) -> dict:
+    """Read an SSE stream from *response* and return the result/error data.
+
+    Handles ``waiting``, ``result``, and ``error`` events.  On ``waiting``,
+    prints a message to stderr so the CLI user sees feedback.
+    """
+    current_event = None
+    for raw_line in response:
+        line = raw_line.decode("utf-8", errors="replace").rstrip("\n").rstrip("\r")
+
+        if line.startswith("event: "):
+            current_event = line[7:]
+        elif line.startswith("data: "):
+            data_str = line[6:]
+            try:
+                data = json.loads(data_str)
+            except json.JSONDecodeError:
+                data = {"raw": data_str}
+
+            if current_event == "waiting":
+                msg = data.get("message", "Waiting for lock...")
+                print(f"[playbook] {msg}", file=sys.stderr)
+            elif current_event == "acquired":
+                msg = data.get("message", "Acquired lock")
+                print(f"[playbook] {msg}", file=sys.stderr)
+            elif current_event == "result":
+                return data
+            elif current_event == "error":
+                code = data.get("code", 500)
+                error_msg = data.get("error", "Unknown error")
+                return {"status": "error", "error": error_msg, "code": code}
+
+            current_event = None
+
+    # Stream ended without result/error
+    return {"status": "error", "error": "SSE stream ended unexpectedly"}
+
+
+def _playbook_request_sse(method: str, path: str, data: dict | None = None) -> dict:
+    """Make an HTTP request to the playbook server expecting an SSE stream.
+
+    Returns the parsed result/error data dict.
+    """
+    import urllib.request
+    import urllib.error
+
+    url = f"{PLAYBOOK_SERVER_URL}{path}"
+
+    if data is not None:
+        body = json.dumps(data).encode("utf-8")
+    else:
+        body = None
+
+    headers = {"Accept": "text/event-stream"}
+    if body:
+        headers["Content-Type"] = "application/json"
+
+    api_key = os.environ.get("AO_API_KEY")
+    if api_key:
+        headers["X-API-Key"] = api_key
+
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers=headers,
+        method=method,
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=120) as response:
+            content_type = response.headers.get("Content-Type", "")
+            if "text/event-stream" in content_type:
+                return _parse_sse_stream(response)
+            # Fallback: plain JSON response
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8") if e.fp else str(e)
+        try:
+            server_error = json.loads(error_body)
+            if "detail" in server_error:
+                return {"status": "error", "error": server_error["detail"]}
+            if "error" in server_error:
+                return {"status": "error", "error": server_error["error"]}
+        except json.JSONDecodeError:
+            pass
+        return {"status": "error", "error": error_body}
+    except urllib.error.URLError as e:
+        return {"status": "error", "error": f"Connection failed: {e.reason}"}
+    except json.JSONDecodeError as e:
+        return {"status": "error", "error": f"Invalid JSON response: {e}"}
+
+
 def playbook_lessons_list_command(args) -> None:
     """List all lessons, optionally filtered by folder path."""
     endpoint = "/api/v1/lessons"
@@ -833,7 +925,7 @@ def playbook_lessons_create_command(args) -> None:
     if args.force:
         endpoint += "?force=true"
 
-    result = _playbook_request("POST", endpoint, data)
+    result = _playbook_request_sse("POST", endpoint, data)
 
     # Handle validation rejection
     if result.get("status") == "rejected":
@@ -883,7 +975,7 @@ def playbook_lessons_update_command(args) -> None:
     if args.force:
         endpoint += "?force=true"
 
-    result = _playbook_request("PUT", endpoint, data)
+    result = _playbook_request_sse("PUT", endpoint, data)
 
     # Handle validation rejection
     if result.get("status") == "rejected":
@@ -917,7 +1009,7 @@ def playbook_lessons_update_command(args) -> None:
 
 def playbook_lessons_delete_command(args) -> None:
     """Delete a lesson."""
-    result = _playbook_request("DELETE", f"/api/v1/lessons/{args.lesson_id}")
+    result = _playbook_request_sse("DELETE", f"/api/v1/lessons/{args.lesson_id}")
     if "status" in result and result["status"] == "error":
         output_json(result)
     output_json({"status": "success", "deleted": args.lesson_id})
@@ -1156,6 +1248,29 @@ def create_parser() -> ArgumentParser:
         help="Name for the new run. Defaults to 'Edit of <original name>'",
     )
 
+    # onboard subcommand
+    onboard = subparsers.add_parser(
+        "onboard",
+        help="Run onboarding agent to extract domain knowledge",
+        description="Analyze a repository's agent and dataset, run the agent on samples, "
+                    "diagnose failures, and create lessons automatically.",
+    )
+    onboard.add_argument("repo_path", help="Path to the target repository")
+    onboard.add_argument(
+        "--max-parallel", type=int, default=4,
+        help="Maximum sub-agents running concurrently (default: 4)",
+    )
+    onboard.add_argument(
+        "--model", default="sonnet",
+        choices=["opus", "sonnet", "haiku"],
+        help="Model for sub-agents (default: sonnet). Orchestrator always uses opus.",
+    )
+    onboard.add_argument(
+        "--instructions",
+        default=None,
+        help="Additional instructions for the orchestrator agent",
+    )
+
     # install-skill subcommand
     subparsers.add_parser(
         "install-skill",
@@ -1336,6 +1451,9 @@ def main():
         experiments_command(args)
     elif args.command == "edit-and-rerun":
         edit_and_rerun_command(args)
+    elif args.command == "onboard":
+        from ao.onboarding.orchestrator import run_onboarding
+        run_onboarding(args)
     elif args.command == "install-skill":
         install_skill_command()
     elif args.command == "playbook":
