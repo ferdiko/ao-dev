@@ -789,13 +789,30 @@ class MainServer:
             lesson = result.get("lesson", result)
             send_json(conn, {"type": "lesson_content", "lesson": lesson})
 
+    def handle_folder_ls(self, msg: dict, conn: socket.socket) -> None:
+        """List folder contents via ao-playbook POST /lessons/folders/ls."""
+        path = msg.get("path", "")
+        result = self._playbook_request("POST", "/lessons/folders/ls", {"path": path})
+
+        if "error" in result:
+            send_json(conn, {"type": "lesson_error", "error": result.get("error", "Unknown error")})
+            return
+
+        # Merge appliedTo data into the returned lessons
+        lessons = result.get("lessons", [])
+        merged = self._merge_lessons_with_applied(lessons)
+
+        send_json(conn, {
+            "type": "folder_ls_result",
+            "path": path,
+            "folders": result.get("folders", []),
+            "lessons": merged,
+            "lesson_count": result.get("lesson_count", 0),
+        })
+
     def _broadcast_lessons_to_uis(self) -> None:
-        """Broadcast updated lessons list to all UI connections."""
-        result = self._playbook_request("GET", "/lessons")
-        lessons = result if isinstance(result, list) else result.get("lessons", [])
-        if "error" not in result:
-            merged = self._merge_lessons_with_applied(lessons)
-            self.broadcast_to_all_uis({"type": "lessons_list", "lessons": merged})
+        """Signal all UIs to refresh their expanded folders."""
+        self.broadcast_to_all_uis({"type": "lessons_refresh"})
 
     # NOTE: Auth disabled - handle_auth method commented out
     # def handle_auth(self, msg: dict, conn: socket.socket) -> None:
@@ -858,9 +875,13 @@ class MainServer:
         with session.lock:
             session.shim_conn = conn
         session.status = "running"
-        self.broadcast_experiment_list_to_uis()
         self.conn_info[conn] = {"role": "agent-runner", "session_id": session_id}
-        send_json(conn, {"type": "session_id", "session_id": session_id})
+        response = {"type": "session_id", "session_id": session_id}
+        request_id = msg.get("request_id")
+        if request_id:
+            response["request_id"] = request_id
+        send_json(conn, response)
+        self.broadcast_experiment_list_to_uis()
 
     def handle_erase(self, msg):
         session_id = msg.get("session_id")
@@ -915,30 +936,19 @@ class MainServer:
     def handle_shutdown(self) -> None:
         """Handle shutdown command by closing all connections."""
         logger.info("Shutdown command received. Closing all connections.")
-        # Stop file watcher process first
-        self.stop_file_watcher()
-        # Close the multiprocessing queues to release semaphores
-        try:
-            self.file_watch_queue.close()
-            self.file_watch_queue.join_thread()
-        except Exception as e:
-            logger.debug(f"Error closing file_watch_queue: {e}")
-        try:
-            self.file_watch_response_queue.close()
-            self.file_watch_response_queue.join_thread()
-        except Exception as e:
-            logger.debug(f"Error closing file_watch_response_queue: {e}")
         # Close all client sockets
         for s in list(self.conn_info.keys()):
             try:
                 s.close()
             except Exception as e:
                 logger.error(f"Error closing socket: {e}")
-        # TODO: os._exit(0) bypasses Python's resource tracker, causing
-        # "leaked semaphore" warnings from the 2 multiprocessing.Queue objects.
-        # Fix: close server_sock here to break accept() loop, move cleanup to
-        # run_server()'s finally block, and let the process exit normally.
-        os._exit(0)
+        # Close server socket to break the accept() loop in run_server.
+        # Cleanup (file watcher, queues) happens in run_server's finally block.
+        if self.server_sock:
+            try:
+                self.server_sock.close()
+            except Exception:
+                pass
 
     def handle_clear(self):
         DB.clear_db()
@@ -1028,6 +1038,8 @@ class MainServer:
             self.handle_delete_lesson(msg, conn)
         elif msg_type == "get_lesson":
             self.handle_get_lesson(msg, conn)
+        elif msg_type == "folder_ls":
+            self.handle_folder_ls(msg, conn)
         else:
             logger.error(f"Unknown message type. Message:\n{msg}")
 
@@ -1084,7 +1096,6 @@ class MainServer:
                 with session.lock:
                     session.shim_conn = conn
                 session.status = "running"
-                self.broadcast_experiment_list_to_uis()
                 self.conn_info[conn] = {"role": role, "session_id": session_id}
                 send_json(
                     conn,
@@ -1094,6 +1105,7 @@ class MainServer:
                         "database_mode": DB.get_current_mode(),
                     },
                 )
+                self.broadcast_experiment_list_to_uis()
 
             elif role == "ui":
                 # Always reload finished runs from the DB before sending experiment list
@@ -1226,9 +1238,17 @@ class MainServer:
             # This will be triggered when server_sock is closed (on shutdown)
             pass
         finally:
-            # Stop file watcher process
             self.stop_file_watcher()
-            self.server_sock.close()
+            for q in [self.file_watch_queue, self.file_watch_response_queue]:
+                try:
+                    q.close()
+                    q.join_thread()
+                except Exception:
+                    pass
+            try:
+                self.server_sock.close()
+            except Exception:
+                pass
             logger.info("Develop server stopped.")
 
 

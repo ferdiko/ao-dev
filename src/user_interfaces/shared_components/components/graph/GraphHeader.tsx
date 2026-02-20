@@ -7,6 +7,7 @@ interface GraphHeaderProps {
   sessionId?: string;
   lessons?: Lesson[];
   onNavigateToLessons?: () => void;
+  onNavigateToAppliedLessons?: () => void;
 }
 
 export const GraphHeader: React.FC<GraphHeaderProps> = ({
@@ -15,6 +16,7 @@ export const GraphHeader: React.FC<GraphHeaderProps> = ({
   sessionId,
   lessons = [],
   onNavigateToLessons,
+  onNavigateToAppliedLessons,
 }) => {
   // Count lessons extracted from this graph
   const lessonsExtractedFrom = sessionId
@@ -80,28 +82,45 @@ export const GraphHeader: React.FC<GraphHeaderProps> = ({
               display: 'inline-flex',
               alignItems: 'center',
               gap: '8px',
-              cursor: onNavigateToLessons ? 'pointer' : 'default',
               fontSize: '15px',
-              color: isDarkTheme ? '#4da6ff' : '#007acc',
               fontWeight: 400,
-              transition: 'color 0.2s',
             }}
-            onClick={onNavigateToLessons}
-            onMouseEnter={(e) => {
-              if (onNavigateToLessons) {
-                e.currentTarget.style.color = isDarkTheme ? '#6bb8ff' : '#005a9e';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (onNavigateToLessons) {
-                e.currentTarget.style.color = isDarkTheme ? '#4da6ff' : '#007acc';
-              }
-            }}
-            title="View lessons"
           >
-            <span>{lessonsExtractedFrom} lesson{lessonsExtractedFrom !== 1 ? 's' : ''} extracted</span>
+            <span
+              style={{
+                cursor: onNavigateToLessons ? 'pointer' : 'default',
+                color: isDarkTheme ? '#4da6ff' : '#007acc',
+                transition: 'color 0.2s',
+              }}
+              onClick={onNavigateToLessons}
+              onMouseEnter={(e) => {
+                if (onNavigateToLessons) e.currentTarget.style.color = isDarkTheme ? '#6bb8ff' : '#005a9e';
+              }}
+              onMouseLeave={(e) => {
+                if (onNavigateToLessons) e.currentTarget.style.color = isDarkTheme ? '#4da6ff' : '#007acc';
+              }}
+              title="View all lessons"
+            >
+              {lessonsExtractedFrom} lesson{lessonsExtractedFrom !== 1 ? 's' : ''} extracted
+            </span>
             <span style={{ color: isDarkTheme ? '#3c7ab8' : '#99c9e8' }}>|</span>
-            <span>{lessonsAppliedTo} lesson{lessonsAppliedTo !== 1 ? 's' : ''} applied</span>
+            <span
+              style={{
+                cursor: onNavigateToAppliedLessons ? 'pointer' : 'default',
+                color: isDarkTheme ? '#4da6ff' : '#007acc',
+                transition: 'color 0.2s',
+              }}
+              onClick={onNavigateToAppliedLessons}
+              onMouseEnter={(e) => {
+                if (onNavigateToAppliedLessons) e.currentTarget.style.color = isDarkTheme ? '#6bb8ff' : '#005a9e';
+              }}
+              onMouseLeave={(e) => {
+                if (onNavigateToAppliedLessons) e.currentTarget.style.color = isDarkTheme ? '#4da6ff' : '#007acc';
+              }}
+              title="View applied lessons"
+            >
+              {lessonsAppliedTo} lesson{lessonsAppliedTo !== 1 ? 's' : ''} applied
+            </span>
           </div>
         )}
       </div>

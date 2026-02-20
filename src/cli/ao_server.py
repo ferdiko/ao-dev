@@ -102,7 +102,6 @@ def execute_server_command(args):
 
     elif args.command == "restart":
         # Stop the server if running
-        # TODO: Delete previour server log.
         try:
             sock = socket.create_connection((HOST, PORT), timeout=SOCKET_TIMEOUT)
             handshake = {"type": "hello", "role": "admin", "script": "restarter"}
@@ -113,13 +112,19 @@ def execute_server_command(args):
             time.sleep(SHUTDOWN_WAIT)
         except Exception:
             logger.info("No running server found. Proceeding to start.")
+        # Clear log files before starting fresh
+        for log_path in [MAIN_SERVER_LOG, FILE_WATCHER_LOG]:
+            try:
+                with open(log_path, "w"):
+                    pass
+            except Exception:
+                pass
         # Start the server
         launch_daemon_server()
         logger.info("Main server restarted.")
 
     elif args.command == "clear":
         # Connect to the server and send a clear command
-        # TODO: Delete previour server log.
         try:
             sock = socket.create_connection((HOST, PORT), timeout=SOCKET_TIMEOUT)
             handshake = {"type": "hello", "role": "admin", "script": "clearer"}

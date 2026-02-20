@@ -1,5 +1,9 @@
 """
 SQLite database backend for workflow experiments.
+
+Uses per-thread connections via threading.local() so readers can run concurrently
+under WAL mode. Writers still serialize at the SQLite level (WAL allows only one
+writer at a time), but that's SQLite's own locking — not a Python bottleneck.
 """
 
 import os
@@ -10,46 +14,46 @@ from ao.common.logger import logger
 from ao.common.constants import DB_PATH
 
 
-# Global lock among concurrent threads: Threads within a process share a single
-# DB connection, so they cannot issue DB operations in parallel. Python releases
-# the GIL during DB operations, so we use a global lock to ensure only one thread
-# executes a DB operation at a time. Different processes use different connections
-# and SQLite handles concurrency amongst them.
-# NOTE: Alternatively, we can give each thread its own connection and avoid the
-# global lock. This would improve scalability, which might be important for the
-# server (e.g., 1000s of parallel production runs). However, we need to switch
-# away from SQLite and make larger refactors for that anyways, so we currently
-# stick with this strawman approach.
-_db_lock = threading.RLock()
-_shared_conn = None
+# Per-thread connection storage. Each thread gets its own sqlite3.Connection,
+# avoiding the need for a global lock that serializes all DB operations.
+_local = threading.local()
+
+# One-time schema initialization
+_schema_initialized = False
+_init_lock = threading.Lock()
 
 
 def get_conn():
-    """Get the shared SQLite connection"""
-    global _shared_conn
+    """Get a per-thread SQLite connection, creating one if needed."""
+    global _schema_initialized
 
-    if _shared_conn is None:
-        with _db_lock:
-            # Double-check pattern to avoid race condition during initialization
-            if _shared_conn is None:
-                db_path = os.path.join(DB_PATH, "experiments.sqlite")
-                # Ensure the directory exists with proper permissions
-                os.makedirs(os.path.dirname(db_path), exist_ok=True)
-                _shared_conn = sqlite3.connect(
-                    db_path,
-                    check_same_thread=False,
-                    timeout=30.0,
-                    detect_types=sqlite3.PARSE_DECLTYPES,
-                )
-                _shared_conn.row_factory = sqlite3.Row
-                # Enable WAL mode for better concurrent access
-                _shared_conn.execute("PRAGMA journal_mode=WAL")
-                _shared_conn.execute("PRAGMA synchronous=NORMAL")
-                _shared_conn.execute("PRAGMA busy_timeout=10000")  # 10 second timeout
-                _init_db(_shared_conn)
-                logger.debug(f"Initialized shared DB connection at {db_path}")
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        return conn
 
-    return _shared_conn
+    db_path = os.path.join(DB_PATH, "experiments.sqlite")
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+
+    conn = sqlite3.connect(
+        db_path,
+        timeout=30.0,
+        detect_types=sqlite3.PARSE_DECLTYPES,
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=10000")
+
+    # Initialize schema once (first thread to connect)
+    if not _schema_initialized:
+        with _init_lock:
+            if not _schema_initialized:
+                _init_db(conn)
+                _schema_initialized = True
+
+    _local.conn = conn
+    logger.debug(f"Created per-thread DB connection at {db_path}")
+    return conn
 
 
 def _init_db(conn):
@@ -149,43 +153,39 @@ def _init_db(conn):
 
 
 def query_one(sql, params=()):
-    with _db_lock:
-        conn = get_conn()
-        c = conn.cursor()
-        c.execute(sql, params)
-        return c.fetchone()
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(sql, params)
+    return c.fetchone()
 
 
 def query_all(sql, params=()):
-    with _db_lock:
-        conn = get_conn()
-        c = conn.cursor()
-        c.execute(sql, params)
-        return c.fetchall()
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(sql, params)
+    return c.fetchall()
 
 
 def execute(sql, params=()):
-    """Execute SQL with proper locking to prevent transaction conflicts"""
-    with _db_lock:
-        conn = get_conn()
-        c = conn.cursor()
-        c.execute(sql, params)
-        conn.commit()
-        return c.lastrowid
+    """Execute SQL (each thread uses its own connection)."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(sql, params)
+    conn.commit()
+    return c.lastrowid
 
 
 def clear_connections():
-    """Clear cached SQLite connections to force reconnection."""
-    global _shared_conn
-    with _db_lock:
-        if _shared_conn:
-            try:
-                _shared_conn.close()
-            except Exception as e:
-                logger.warning(f"Error closing SQLite connection: {e}")
-            finally:
-                _shared_conn = None
-            logger.debug("Cleared SQLite connection cache")
+    """Close the calling thread's connection."""
+    conn = getattr(_local, "conn", None)
+    if conn:
+        try:
+            conn.close()
+        except Exception as e:
+            logger.warning(f"Error closing SQLite connection: {e}")
+        finally:
+            _local.conn = None
+        logger.debug("Closed thread-local SQLite connection")
 
 
 def add_experiment_query(

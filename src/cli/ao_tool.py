@@ -746,25 +746,6 @@ def playbook_start_server_command(args) -> None:
         })
 
 
-def playbook_design_guide_query_command(args) -> None:
-    """Query the design guide for agent development techniques."""
-    query = args.query
-
-    data = {"query": query}
-    if args.top_k is not None:
-        data["top_k"] = args.top_k
-
-    result = _playbook_request("POST", "/api/v1/query/design-guide", data)
-    if "error" in result:
-        output_json(result)
-    else:
-        output_json({
-            "status": "success",
-            "query": query,
-            "results": result,
-        })
-
-
 def _playbook_request(method: str, path: str, data: dict | None = None) -> dict:
     """Make an HTTP request to the playbook server.
 
@@ -1186,7 +1167,7 @@ def create_parser() -> ArgumentParser:
     playbook = subparsers.add_parser(
         "playbook",
         help="Design playbook commands",
-        description="Query the ao design guide for agent development techniques.",
+        description="Manage lessons for agent development.",
     )
     playbook_subparsers = playbook.add_subparsers(dest="playbook_command", required=True)
 
@@ -1194,33 +1175,7 @@ def create_parser() -> ArgumentParser:
     playbook_subparsers.add_parser(
         "start-server",
         help="Start the playbook server",
-        description="Start the ao-playbook-server daemon for design guide queries.",
-    )
-
-    # playbook design-guide (nested subcommand)
-    design_guide = playbook_subparsers.add_parser(
-        "design-guide",
-        help="Query the design guide",
-        description="Query the design guide for agent development techniques and best practices.",
-    )
-    design_guide_subparsers = design_guide.add_subparsers(dest="design_guide_command", required=True)
-
-    # playbook design-guide query
-    design_guide_query = design_guide_subparsers.add_parser(
-        "query",
-        help="Query the design guide",
-        description="Search the design guide using semantic similarity.",
-    )
-    design_guide_query.add_argument(
-        "--query", "-q",
-        required=True,
-        help="The problem or question to query the design guide with",
-    )
-    design_guide_query.add_argument(
-        "--top-k", "-k",
-        type=int,
-        default=None,
-        help="Number of results to return (omit for best match)",
+        description="Start the ao-playbook-server daemon.",
     )
 
     # playbook lessons (nested subcommand)
@@ -1386,9 +1341,6 @@ def main():
     elif args.command == "playbook":
         if args.playbook_command == "start-server":
             playbook_start_server_command(args)
-        elif args.playbook_command == "design-guide":
-            if args.design_guide_command == "query":
-                playbook_design_guide_query_command(args)
         elif args.playbook_command == "lessons":
             if args.lessons_command == "list":
                 playbook_lessons_list_command(args)

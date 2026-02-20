@@ -8,6 +8,13 @@ from ao.common.config import (
 from ao.common.constants import AO_CONFIG, AO_PROJECT_ROOT
 
 
+def _convert_playbook_mode(value: str) -> str:
+    value = value.strip().lower()
+    if value not in ("local", "cloud"):
+        raise ValueError("Must be 'local' or 'cloud'")
+    return value
+
+
 def get_user_input() -> Config:
     project_root = _ask_field(
         f"What is the root directory of your project? [{AO_PROJECT_ROOT}]\n> ",
@@ -23,9 +30,28 @@ def get_user_input() -> Config:
         error_message="Please enter a valid database URL or leave empty.",
     )
 
+    # --- Playbook configuration ---
+    playbook_mode = _ask_field(
+        "Where do you want to host lessons? [local/cloud] (default: local)\n> ",
+        _convert_playbook_mode,
+        default="local",
+        error_message="Please enter 'local' or 'cloud'.",
+    )
+
+    playbook_api_key = None
+    if playbook_mode == "cloud":
+        playbook_api_key = _ask_field(
+            "Playbook API key:\n> ",
+            str,
+            default=os.environ.get("AO_API_KEY"),
+            error_message="Please enter your API key.",
+        )
+
     config = Config(
         project_root=project_root,
         database_url=database_url,
+        playbook_mode=playbook_mode,
+        playbook_api_key=playbook_api_key,
     )
     return config
 

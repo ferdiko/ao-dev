@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { LoginScreen } from "./LoginScreen";
 import "./App.css";
 import type { GraphNode, GraphEdge, ProcessInfo } from "../../../shared_components/types";
@@ -6,6 +6,7 @@ import { GraphTabApp } from "../../../shared_components/components/GraphTabApp";
 import { ExperimentsView} from "../../../shared_components/components/experiment/ExperimentsView";
 import type { MessageSender } from "../../../shared_components/types/MessageSender";
 import { LessonsView, type Lesson, type LessonFormData, type ValidationResult } from "../../../shared_components/components/lessons/LessonsView";
+import { AppliedLessonsView } from "../../../shared_components/components/lessons/AppliedLessonsView";
 import { GraphHeader } from "../../../shared_components/components/graph/GraphHeader";
 
 interface Experiment {
@@ -27,7 +28,6 @@ interface WSMessage {
   session_id?: string;
   color_preview? : string[];
   database_mode?: string;
-  lessons?: Lesson[];
 }
 
 
@@ -56,11 +56,19 @@ function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const messageBufferRef = useRef<string>(''); // Buffer for incomplete WebSocket frames
   const [showLessons, setShowLessons] = useState(false);
-  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [showAppliedLessons, setShowAppliedLessons] = useState(false);
   const [lessonError, setLessonError] = useState<string | null>(null);
   const [lessonValidationResult, setLessonValidationResult] = useState<ValidationResult | null>(null);
   const [isLessonValidating, setIsLessonValidating] = useState(false);
   const [lessonApiKeyError, setLessonApiKeyError] = useState(false);
+  const [lessonFolderResult, setLessonFolderResult] = useState<{
+    path: string; folders: { path: string; lesson_count: number }[]; lessons: Lesson[]; lessonCount?: number;
+  } | null>(null);
+  const [lessonContentUpdate, setLessonContentUpdate] = useState<{
+    id: string; content: string;
+  } | null>(null);
+  const expandedFoldersRef = useRef<Set<string>>(new Set(['']));
+  const [allLessons, setAllLessons] = useState<Lesson[]>([]);
 
   // Detect dark theme reactively
   const [isDarkTheme, setIsDarkTheme] = useState(() => {
@@ -167,9 +175,9 @@ function App() {
       // with role: "ui" and user_id from the URL query parameter.
       // We should NOT send our own handshake here.
 
-      // Request the experiment list and lessons
+      // Request the experiment list and root folder listing
       socket.send(JSON.stringify({ type: "get_all_experiments" }));
-      socket.send(JSON.stringify({ type: "get_lessons" }));
+      socket.send(JSON.stringify({ type: "folder_ls", path: "" }));
     };
 
     socket.onmessage = (event: MessageEvent) => {
@@ -211,11 +219,13 @@ function App() {
 
         case "graph_update":
           if (msg.payload) {
-            console.log('[App] graph_update received:', {
-              nodes: msg.payload.nodes?.length,
-              edges: msg.payload.edges?.map((e: any) => e.id)
+            // Only apply graph updates for the currently selected experiment
+            setSelectedExperiment((current) => {
+              if (current && msg.session_id === current.session_id) {
+                setGraphData(msg.payload);
+              }
+              return current;
             });
-            setGraphData(msg.payload);
           }
           break;
 
@@ -254,10 +264,26 @@ function App() {
           break;
 
         case "lessons_list":
-          if (msg.lessons) {
-            setLessons(msg.lessons);
-            setLessonError(null); // Clear any previous error on successful list
-            setLessonApiKeyError(false); // Clear API key error on success
+          setAllLessons((msg as any).lessons || []);
+          break;
+
+        case "folder_ls_result":
+          setLessonFolderResult({
+            path: (msg as any).path ?? '',
+            folders: (msg as any).folders || [],
+            lessons: (msg as any).lessons || [],
+            lessonCount: (msg as any).lesson_count,
+          });
+          setLessonApiKeyError(false);
+          break;
+
+        case "lessons_refresh":
+          // Server signals lessons changed — re-fetch all expanded folders and full list
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: "get_lessons" }));
+            for (const p of expandedFoldersRef.current) {
+              wsRef.current.send(JSON.stringify({ type: "folder_ls", path: p }));
+            }
           }
           break;
 
@@ -265,11 +291,10 @@ function App() {
           // Update the specific lesson with its full content
           if ((msg as any).lesson) {
             const lessonWithContent = (msg as any).lesson;
-            setLessons((prev) =>
-              prev.map((l) =>
-                l.id === lessonWithContent.id ? { ...l, content: lessonWithContent.content } : l
-              )
-            );
+            setLessonContentUpdate({
+              id: lessonWithContent.id,
+              content: lessonWithContent.content,
+            });
           }
           break;
 
@@ -409,10 +434,12 @@ function App() {
     // Clear graph data when switching experiments to avoid showing stale data
     setGraphData(null);
     setSelectedExperiment(experiment);
-    setShowLessons(false); // Hide lessons when viewing an experiment
+    setShowLessons(false);
+    setShowAppliedLessons(false);
 
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "get_graph", session_id: experiment.session_id }));
+      ws.send(JSON.stringify({ type: "get_lessons" }));
     }
   };
 
@@ -421,11 +448,18 @@ function App() {
     setSelectedExperiment(null);
     setGraphData(null);
 
-    // Request lessons from server
+    // Request root folder listing
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "get_lessons" }));
+      ws.send(JSON.stringify({ type: "folder_ls", path: "" }));
     }
   };
+
+  const handleFetchFolder = useCallback((path: string) => {
+    expandedFoldersRef.current.add(path);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "folder_ls", path }));
+    }
+  }, []);
 
   const handleDatabaseModeChange = (mode: 'Local' | 'Remote') => {
     // Update local state immediately for responsive UI
@@ -537,14 +571,30 @@ function App() {
             </button>
           </div>
         )}
-        {showLessons ? (
+        {showAppliedLessons && selectedExperiment ? (
+          <AppliedLessonsView
+            lessons={allLessons.filter((l) =>
+              l.appliedTo?.some((a) => a.sessionId === selectedExperiment.session_id)
+            )}
+            isDarkTheme={isDarkTheme}
+            onBack={() => setShowAppliedLessons(false)}
+            onFetchLessonContent={(id: string) => {
+              if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "get_lesson", lesson_id: id }));
+              }
+            }}
+            lessonContentUpdate={lessonContentUpdate}
+          />
+        ) : showLessons ? (
           <LessonsView
-            lessons={lessons}
             isDarkTheme={isDarkTheme}
             validationResult={lessonValidationResult}
             isValidating={isLessonValidating}
             onClearValidation={() => setLessonValidationResult(null)}
             apiKeyError={lessonApiKeyError}
+            folderResult={lessonFolderResult}
+            lessonContentUpdate={lessonContentUpdate}
+            onFetchFolder={handleFetchFolder}
             onLessonCreate={(data: LessonFormData, force?: boolean) => {
               // Create lesson via WebSocket (proxied to ao-playbook)
               if (ws && ws.readyState === WebSocket.OPEN) {
@@ -605,8 +655,9 @@ function App() {
               runName={selectedExperiment.run_name || ''}
               isDarkTheme={isDarkTheme}
               sessionId={selectedExperiment.session_id}
-              lessons={lessons}
+              lessons={allLessons}
               onNavigateToLessons={() => setShowLessons(true)}
+              onNavigateToAppliedLessons={() => setShowAppliedLessons(true)}
             />
             {/* Graph */}
             <div style={{ flex: 1, minHeight: 0 }}>

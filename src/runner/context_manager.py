@@ -1,4 +1,5 @@
 import contextvars
+import threading
 from contextlib import contextmanager
 import json
 import queue
@@ -21,21 +22,23 @@ response_queue: queue.Queue = None
 
 # Names of all subruns in the process. Used to ensure they are unique.
 run_names = None
+_run_names_lock = threading.Lock()
 
 
 def get_run_name(run_name):
     # Run names must be unique for a given parent_session_id.
-    if run_name not in run_names:
+    with _run_names_lock:
+        if run_name not in run_names:
+            run_names.add(run_name)
+            return run_name
+
+        i = 1
+        while f"{run_name} ({i})" in run_names:
+            i += 1
+
+        run_name = f"{run_name} ({i})"
         run_names.add(run_name)
         return run_name
-
-    i = 1
-    while f"{run_name} ({i})" in run_names:
-        i += 1
-
-    run_name = f"{run_name} ({i})"
-    run_names.add(run_name)
-    return run_name
 
 
 @contextmanager
@@ -94,14 +97,7 @@ def log(entry=None, success=None):
     if success is not None and not isinstance(success, bool):
         raise TypeError(f"`success` must be a boolean or None, got {type(success).__name__}")
 
-    # Send to server.
-    server_file.write(
-        json.dumps(
-            {"type": "log", "session_id": get_session_id(), "success": success, "entry": entry}
-        )
-        + "\n"
-    )
-    server_file.flush()
+    send_to_server({"type": "log", "session_id": get_session_id(), "success": success, "entry": entry})
 
 
 def get_session_id():

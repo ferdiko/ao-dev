@@ -412,9 +412,21 @@ COMPILED_MODEL_NAME_PATTERNS = [
 
 INVALID_LABEL_CHARS = set("{[<>%$#@")
 
-# Playbook server constants
-PLAYBOOK_SERVER_URL = os.environ.get(
-    "PLAYBOOK_SERVER_URL", "https://ao-playbook-732575904722.us-central1.run.app"
-)
+# Playbook server constants (config-aware, env vars override)
+_playbook_mode = getattr(config, "playbook_mode", None) or "cloud"
+
+if _playbook_mode == "local":
+    PLAYBOOK_SERVER_URL = os.environ.get("PLAYBOOK_SERVER_URL", "http://127.0.0.1:5960")
+    PLAYBOOK_API_KEY = os.environ.get("AO_API_KEY", "")
+else:
+    PLAYBOOK_SERVER_URL = os.environ.get(
+        "PLAYBOOK_SERVER_URL",
+        "https://ao-playbook-732575904722.us-central1.run.app",
+    )
+    PLAYBOOK_API_KEY = (
+        os.environ.get("AO_API_KEY", "")
+        or getattr(config, "playbook_api_key", "")
+        or ""
+    )
+
 PLAYBOOK_SERVER_TIMEOUT = 30  # Seconds to wait for server startup
-PLAYBOOK_API_KEY = os.environ.get("AO_API_KEY", "")

@@ -173,6 +173,12 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         this._pythonClient.sendMessage({ type: 'get_lessons' });
                     }
                     break;
+                case 'get_lesson':
+                    // Forward get_lesson request to Python server (for applied lessons content)
+                    if (this._pythonClient) {
+                        this._pythonClient.sendMessage(data);
+                    }
+                    break;
                 case 'openLessonsTab':
                     // Open the lessons tab
                     this.createOrShowLessonsTab();
@@ -290,16 +296,17 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         this._pythonClient = PythonServerClient.getInstance();
                         this._pythonClient.ensureConnected();
                     }
-                    // Request lessons data
+                    // Request root folder listing (lazy-loaded tree)
                     if (this._pythonClient) {
-                        this._pythonClient.sendMessage({ type: 'get_lessons' });
+                        this._pythonClient.sendMessage({ type: 'folder_ls', path: '' });
                     }
                     break;
+                case 'folder_ls':
                 case 'add_lesson':
                 case 'update_lesson':
                 case 'delete_lesson':
                 case 'get_lesson':
-                    // Forward lesson CRUD operations to Python server
+                    // Forward lesson operations to Python server
                     if (this._pythonClient) {
                         this._pythonClient.sendMessage(data);
                     }
@@ -537,6 +544,8 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         const messageHandler = (msg: any) => {
             // Forward lesson-related messages to the lessons panel
             const lessonMessageTypes = [
+                'folder_ls_result',
+                'lessons_refresh',
                 'lessons_list',
                 'lesson_content',
                 'lesson_error',
@@ -835,6 +844,8 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         // Forward lesson responses from server to this panel
         const lessonEditorMessageHandler = (msg: any) => {
             const lessonMessageTypes = [
+                'folder_ls_result',
+                'lessons_refresh',
                 'lessons_list',
                 'lesson_content',
                 'lesson_error',

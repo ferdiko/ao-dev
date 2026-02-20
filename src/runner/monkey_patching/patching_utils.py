@@ -1,6 +1,7 @@
 import inspect
 import os
 import re
+import threading
 import traceback
 from collections import defaultdict
 from ao.runner.context_manager import get_session_id
@@ -16,6 +17,7 @@ from ao.common.logger import logger
 # str -> {str -> set(str)}
 # if we add a -> b, we go through every element. If a is in the set, we add b to the
 _graph_reachable_set = defaultdict(lambda: defaultdict(set))
+_graph_lock = threading.Lock()
 
 def capture_stack_trace() -> str:
     """Capture the current stack trace, showing only user code.
@@ -130,26 +132,28 @@ def send_graph_node_and_edges(node_id, input_dict, output_obj, source_node_ids, 
     label = get_node_label(input_dict, api_type)
     session_id = get_session_id()
 
-    for source_node_id in source_node_ids:
-        _graph_reachable_set[session_id][source_node_id].add(node_id)
-
-    for reachable_by_a in _graph_reachable_set[session_id].values():
-        if any(source_node_id in reachable_by_a for source_node_id in source_node_ids):
-            reachable_by_a.add(node_id)
-
     # Store input for this node (needed for containment checks)
     from ao.runner.string_matching import store_input_strings, output_contained_in_input
     store_input_strings(session_id, node_id, input_dict, api_type)
 
-    # Filter redundant source nodes: if node_b is reachable from node_a and node_a's output
-    # is contained in node_b's input, remove node_a (its content already flows through node_b)
-    nodes_to_remove = set()
-    for node_a in source_node_ids:
-        for node_b in source_node_ids:
-            if node_a != node_b and node_b in _graph_reachable_set[session_id][node_a]:
-                if output_contained_in_input(session_id, node_a, node_b):
-                    nodes_to_remove.add(node_a)
-    source_node_ids = [n for n in source_node_ids if n not in nodes_to_remove]
+    # Update reachability and filter redundant edges under lock
+    with _graph_lock:
+        for source_node_id in source_node_ids:
+            _graph_reachable_set[session_id][source_node_id].add(node_id)
+
+        for reachable_by_a in _graph_reachable_set[session_id].values():
+            if any(source_node_id in reachable_by_a for source_node_id in source_node_ids):
+                reachable_by_a.add(node_id)
+
+        # Filter redundant source nodes: if node_b is reachable from node_a and node_a's output
+        # is contained in node_b's input, remove node_a (its content already flows through node_b)
+        nodes_to_remove = set()
+        for node_a in source_node_ids:
+            for node_b in source_node_ids:
+                if node_a != node_b and node_b in _graph_reachable_set[session_id][node_a]:
+                    if output_contained_in_input(session_id, node_a, node_b):
+                        nodes_to_remove.add(node_a)
+        source_node_ids = [n for n in source_node_ids if n not in nodes_to_remove]
 
     # Send node
     node_msg = {

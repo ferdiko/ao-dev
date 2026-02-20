@@ -9,6 +9,7 @@ Uses word-level longest contiguous match via difflib.SequenceMatcher.
 
 import re
 import json
+import threading
 from difflib import SequenceMatcher
 from typing import List, Dict, Any
 from flatten_json import flatten
@@ -153,6 +154,11 @@ _session_outputs: Dict[str, Dict[str, List[List[str]]]] = {}
 # Structure: {session_id: {node_id: [word_list]}}
 _session_inputs: Dict[str, Dict[str, List[str]]] = {}
 
+# Lock protecting _session_outputs and _session_inputs from concurrent access.
+# find_source_nodes iterates while store_output_strings writes; without this
+# lock, concurrent LLM calls cause RuntimeError during dict iteration.
+_session_lock = threading.Lock()
+
 
 def _get_session_outputs(session_id: str) -> Dict[str, List[List[str]]]:
     """Get or create output storage for a session."""
@@ -170,10 +176,9 @@ def _get_session_inputs(session_id: str) -> Dict[str, List[str]]:
 
 def clear_session_data(session_id: str) -> None:
     """Clear session data when a session is erased or restarted."""
-    if session_id in _session_outputs:
-        del _session_outputs[session_id]
-    if session_id in _session_inputs:
-        del _session_inputs[session_id]
+    with _session_lock:
+        _session_outputs.pop(session_id, None)
+        _session_inputs.pop(session_id, None)
 
 
 # ===========================================================
@@ -246,8 +251,9 @@ def find_source_nodes(
 
     logger.debug(f"[string_matching] input has {len(input_words)} words: {input_words[:10]}...")
 
-    # Find matches
-    session_outputs = _get_session_outputs(session_id)
+    # Find matches — snapshot under lock, then match outside it
+    with _session_lock:
+        session_outputs = dict(_get_session_outputs(session_id))
     matches = []
 
     for node_id, output_word_lists in session_outputs.items():
@@ -287,8 +293,9 @@ def store_input_strings(
 
     input_words = tokenize(input_text)
     if input_words:
-        session_inputs = _get_session_inputs(session_id)
-        session_inputs[node_id] = input_words
+        with _session_lock:
+            session_inputs = _get_session_inputs(session_id)
+            session_inputs[node_id] = input_words
 
 
 def store_output_strings(
@@ -314,7 +321,6 @@ def store_output_strings(
         return
 
     # Split HTML content into separate chunks, then tokenize each
-    session_outputs = _get_session_outputs(session_id)
     word_lists = []
 
     for output_str in output_strings:
@@ -329,7 +335,9 @@ def store_output_strings(
                 )
 
     if word_lists:
-        session_outputs[node_id] = word_lists
+        with _session_lock:
+            session_outputs = _get_session_outputs(session_id)
+            session_outputs[node_id] = word_lists
 
 
 def output_contained_in_input(session_id: str, node_a_id: str, node_b_id: str) -> bool:
@@ -348,11 +356,9 @@ def output_contained_in_input(session_id: str, node_a_id: str, node_b_id: str) -
     Returns:
         True if output_node's output is contained in input_node's input
     """
-    session_outputs = _get_session_outputs(session_id)
-    session_inputs = _get_session_inputs(session_id)
-
-    output_a = session_outputs.get(node_a_id, [])
-    input_b = session_inputs.get(node_b_id, [])
+    with _session_lock:
+        output_a = _get_session_outputs(session_id).get(node_a_id, [])
+        input_b = _get_session_inputs(session_id).get(node_b_id, [])
 
     if not output_a or not input_b:
         return False
