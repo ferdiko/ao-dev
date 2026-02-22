@@ -5,7 +5,7 @@ from ao.runner.monkey_patching.patches.randomness_patch import random_seed_patch
 
 # Lazy patches - these are only applied when the user imports the relevant module
 # Maps module name prefix -> (patch_function_module, patch_function_name)
-LAZY_PATCHES = {
+PATCHES = {
     "mcp": ("ao.runner.monkey_patching.patches.mcp_patches", "mcp_patch"),
     "requests": ("ao.runner.monkey_patching.patches.requests_patch", "requests_patch"),
     "google.genai": ("ao.runner.monkey_patching.patches.genai_patch", "genai_patch"),
@@ -13,6 +13,7 @@ LAZY_PATCHES = {
     "torch": ("ao.runner.monkey_patching.patches.randomness_patch", "torch_seed_patch"),
     "uuid": ("ao.runner.monkey_patching.patches.randomness_patch", "uuid_patch"),
     "httpx": ("ao.runner.monkey_patching.patches.httpx_patch", "httpx_patch"),
+    "claude_agent_sdk": ("ao.runner.monkey_patching.patches.claude_sdk_patch", "claude_sdk_patch"),
 }
 
 # Track which patches have been applied
@@ -28,7 +29,7 @@ def _patching_import(name, globals=None, locals=None, fromlist=(), level=0):
     Patches are applied BEFORE the user's import, ensuring we do a clean import first.
     """
     # Check if any lazy patches should be triggered BEFORE the import
-    for module_prefix, (patch_module, patch_func_name) in list(LAZY_PATCHES.items()):
+    for module_prefix, (patch_module, patch_func_name) in list(PATCHES.items()):
         if module_prefix in _applied_patches:
             continue
 

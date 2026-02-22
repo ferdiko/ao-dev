@@ -26,10 +26,10 @@ AO intercepts LLM calls via HTTP library patches:
 
 ## How Patches Are Applied
 
-Patches are applied lazily when you import the relevant module. The `LAZY_PATCHES` dict in `apply_monkey_patches.py` maps module names to patch functions:
+Patches are applied lazily when you import the relevant module. The `PATCHES` dict in `apply_monkey_patches.py` maps module names to patch functions:
 
 ```python
-LAZY_PATCHES = {
+PATCHES = {
     "httpx": ("ao.runner.monkey_patching.patches.httpx_patch", "httpx_patch"),
     "requests": ("ao.runner.monkey_patching.patches.requests_patch", "requests_patch"),
     "google.genai": ("ao.runner.monkey_patching.patches.genai_patch", "genai_patch"),
@@ -46,6 +46,7 @@ A typical patch follows this pattern (see `httpx_patch.py` for a complete exampl
 
 ```python
 from ao.runner.string_matching import find_source_nodes, store_output_strings
+from ao.runner.context_manager import get_session_id
 
 def patched_function(self, *args, **kwargs):
     api_type = "my_api.method"
@@ -53,17 +54,20 @@ def patched_function(self, *args, **kwargs):
     # 1. Build input dict from args/kwargs
     input_dict = get_input_dict(original_function, *args, **kwargs)
 
-    # 2. Check cache or call the LLM
+    # 2. Find edges using content-based matching (BEFORE cache lookup)
+    session_id = get_session_id()
+    source_node_ids = find_source_nodes(session_id, input_dict, api_type)
+
+    # 3. Check cache or call the LLM
     cache_output = DB.get_in_out(input_dict, api_type)
     if cache_output.output is None:
         result = original_function(**cache_output.input_dict)
         DB.cache_output(cache_result=cache_output, output_obj=result, api_type=api_type)
 
-    # 3. Find edges using content-based matching
-    source_node_ids = find_source_nodes(cache_output.session_id, cache_output.input_dict, api_type)
+    # 4. Store output strings for future matching
     store_output_strings(cache_output.session_id, cache_output.node_id, cache_output.output, api_type)
 
-    # 4. Report node and edges to server
+    # 5. Report node and edges to server
     send_graph_node_and_edges(
         node_id=cache_output.node_id,
         input_dict=cache_output.input_dict,
@@ -139,12 +143,12 @@ def my_api_patch():
     Client.__init__ = create_patched_init(Client.__init__)
 ```
 
-### Step 4: Register in LAZY_PATCHES
+### Step 4: Register in PATCHES
 
-Add your patch to the `LAZY_PATCHES` dict in `apply_monkey_patches.py`:
+Add your patch to the `PATCHES` dict in `apply_monkey_patches.py`:
 
 ```python
-LAZY_PATCHES = {
+PATCHES = {
     "httpx": ("ao.runner.monkey_patching.patches.httpx_patch", "httpx_patch"),
     "my_api": ("ao.runner.monkey_patching.patches.my_api_patch", "my_api_patch"),  # Add here
     ...

@@ -1,11 +1,7 @@
 import argparse
 import os
-from ao.common.config import (
-    Config,
-    _ask_field,
-    _convert_to_valid_path,
-)
-from ao.common.constants import AO_CONFIG, AO_PROJECT_ROOT
+from ao.common.config import Config, _ask_field
+from ao.common.constants import AO_CONFIG
 
 
 def _convert_playbook_mode(value: str) -> str:
@@ -16,13 +12,6 @@ def _convert_playbook_mode(value: str) -> str:
 
 
 def get_user_input() -> Config:
-    project_root = _ask_field(
-        f"What is the root directory of your project? [{AO_PROJECT_ROOT}]\n> ",
-        _convert_to_valid_path,
-        default=AO_PROJECT_ROOT,
-        error_message="Please enter a valid path to a directory.",
-    )
-
     database_url = _ask_field(
         "Database URL (leave empty for SQLite)\n> ",
         str,
@@ -48,7 +37,6 @@ def get_user_input() -> Config:
         )
 
     config = Config(
-        project_root=project_root,
         database_url=database_url,
         playbook_mode=playbook_mode,
         playbook_api_key=playbook_api_key,

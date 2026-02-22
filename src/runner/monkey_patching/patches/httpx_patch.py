@@ -4,7 +4,7 @@ from ao.runner.string_matching import find_source_nodes, store_output_strings
 from ao.runner.context_manager import get_session_id
 from ao.server.database_manager import DB
 from ao.common.logger import logger
-from ao.common.utils import is_whitelisted_endpoint
+from ao.runner.monkey_patching.patching_utils import is_whitelisted_endpoint
 
 
 def httpx_patch():

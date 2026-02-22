@@ -1,6 +1,6 @@
 import re
 import os
-from ao.common.config import Config, derive_project_root
+from ao.common.config import Config
 
 
 # default home directory for configs and temporary/cached files
@@ -30,16 +30,11 @@ AO_CONFIG = os.path.expandvars(
 # Ensure config.yaml exists. Init with defaults if not present.
 os.makedirs(os.path.dirname(AO_CONFIG), exist_ok=True)
 if not os.path.exists(AO_CONFIG):
-    default_config = Config(
-        project_root=derive_project_root(),
-        database_url=None,
-    )
+    default_config = Config()
     default_config.to_yaml_file(AO_CONFIG)
 
 # Load values from config file.
 config = Config.from_yaml_file(AO_CONFIG)
-
-AO_PROJECT_ROOT = config.project_root
 
 # Remote PostgreSQL database URL for "Remote" mode in UI dropdown
 REMOTE_DATABASE_URL = os.environ.get("DB_URL", "Unavailable")
@@ -267,7 +262,6 @@ STRING_MATCH_EXCLUDE_PATTERNS = [
     r".*max_output_tokens$",
     r".*max_tokens$",
     r".*max_tool_calls$",
-    r".*n$",
     r".*service_tier$",
     r".*store$",
     r".*truncation$",
@@ -288,8 +282,8 @@ STRING_MATCH_EXCLUDE_PATTERNS = [
     # Other metadata
     r".*error$",
     r".*incomplete_details$",
-    r".*instructions$",
-    r".*reasoning$",
+    # r".*instructions$",  # May contain legitimate content
+    # r".*reasoning$",  # May contain chain-of-thought content
     r".*metadata$",
     r".*user$",
     r".*index$",
@@ -299,21 +293,18 @@ STRING_MATCH_EXCLUDE_PATTERNS = [
     r".*verbosity$",
     r".*format$",
     r".*effort$",
-    r".*summary$",
+    # r".*summary$",  # May contain legitimate summary content
     # Cache-related
     r".*prompt_cache_retention$",
     r".*cache_creation$",
     r".*cache_creation_input_tokens$",
     r".*cache_read_input_tokens$",
     # Additional patterns
-    r".*url$",
     r".*reasoning_effort$",
     r".*native_finish_reason$",
     r".*provider$",
 ]
-COMPILED_STRING_MATCH_EXCLUDE_PATTERNS = [
-    re.compile(p) for p in STRING_MATCH_EXCLUDE_PATTERNS
-]
+COMPILED_STRING_MATCH_EXCLUDE_PATTERNS = [re.compile(p) for p in STRING_MATCH_EXCLUDE_PATTERNS]
 
 # Regex patterns to look up display names for nodes in the graph
 # Each key is a regex pattern that matches URLs, value is the display name

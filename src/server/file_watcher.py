@@ -19,7 +19,6 @@ from typing import Optional
 from ao.common.logger import create_file_logger
 from ao.common.constants import (
     ORPHAN_POLL_INTERVAL,
-    AO_PROJECT_ROOT,
     FILE_WATCHER_LOG,
     GIT_DIR,
 )
@@ -41,14 +40,14 @@ class FileWatcher:
 
         Args:
             project_root: Root directory of the project to version.
-                         Falls back to AO_PROJECT_ROOT if not provided.
+                         Falls back to cwd if not provided.
             watch_queue: multiprocessing.Queue for receiving messages from MainServer.
             response_queue: multiprocessing.Queue for sending messages back to MainServer.
         """
         self.pid = os.getpid()
         self._parent_pid = os.getppid()
         self._shutdown = False
-        self.project_root = project_root or AO_PROJECT_ROOT
+        self.project_root = project_root or os.getcwd()
         self.watch_queue = watch_queue
         self.response_queue = response_queue
         # Git versioning state (lazy init)

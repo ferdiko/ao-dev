@@ -12,17 +12,17 @@ When an LLM produces output, we store all text strings from the response. When a
 
 ### Content Registry
 
-The content registry lives in `database_manager.py` and stores output strings for each node:
+The content registry lives in `string_matching.py` and stores tokenized output strings for each node:
 
 ```python
-# Maps session_id -> {node_id -> [output_strings]}
-_content_registry: Dict[str, Dict[str, List[str]]] = {}
+# Maps session_id -> {node_id -> [[word_lists]]}
+_session_outputs: Dict[str, Dict[str, List[List[str]]]] = {}
 ```
 
 Key properties:
 1. **Session-scoped:** Outputs are only matched within the same session
 2. **In-memory:** No persistence needed (LLM outputs are already cached in the database)
-3. **Per-string matching:** Each string is checked independently
+3. **Tokenized:** Text is split into words for efficient longest-match computation
 
 ### String Matching Module
 
@@ -63,20 +63,22 @@ response2 = llm(f"Add 1 to {response1}")  # Input contains "42"
 
 ### Matching Algorithm
 
-Currently uses simple exact substring matching:
+Uses word-level longest contiguous match via `difflib.SequenceMatcher`:
 
 ```python
-for node_id, output_strings in content_registry[session_id].items():
-    for output_str in output_strings:
-        if output_str and output_str in input_text:
-            matches.append(node_id)
-            break  # Only add node once
+def is_content_match(output_words, input_words):
+    match_len = compute_longest_match(output_words, input_words)
+    if match_len > 0 and len(output_words) > 0:
+        output_coverage = match_len / len(output_words)
+        if output_coverage > 0.5 and match_len > MIN_MATCH_WORDS:
+            return True
+    return False
 ```
 
-This can be refined later with:
-- Minimum length thresholds (skip very short strings)
-- Rarity weighting (rare strings are stronger matches)
-- Longest common substring instead of exact match
+Key features:
+- **Tokenization:** Text is cleaned (HTML stripped, lowercased) and split into words
+- **Coverage threshold:** Match must cover >50% of the output
+- **Minimum length:** Match must exceed `MIN_MATCH_WORDS` (default: 3)
 
 ## Integration with Monkey Patches
 
@@ -93,18 +95,6 @@ send_graph_node_and_edges(
     ...
 )
 ```
-
-## Advantages Over AST-Based Tracking
-
-The previous system used AST rewrites to track taint through all Python operations. The new content-based approach:
-
-| Aspect | AST-Based | Content-Based |
-|--------|-----------|---------------|
-| User code | Modified at import time | Runs unmodified |
-| Risk of crashes | Many edge cases | None |
-| Complexity | High (AST transforms) | Low (substring match) |
-| Accuracy | Precise | May miss transformed data |
-| Third-party code | Partial support | N/A (matches content) |
 
 ## Caching and Reruns
 

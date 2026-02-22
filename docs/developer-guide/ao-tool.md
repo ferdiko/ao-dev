@@ -5,15 +5,14 @@
 ## Design Principles
 
 1. **Machine-readable output**: All commands output JSON to stdout for easy parsing
-2. **Non-blocking by default**: Long-running operations spawn background processes and return immediately
+2. **Blocking by default**: Commands block until completion and return results
 3. **Idempotent where possible**: Same inputs produce same outputs
-4. **Minimal context pollution**: Script output goes to log files, not stdout
 
 ## Commands
 
 ### `ao-tool record`
 
-Starts recording a script execution and returns session info.
+Records a script execution and blocks until completion.
 
 ```bash
 ao-tool record <script.py> [script_args...]
@@ -26,41 +25,28 @@ ao-tool record -m <module_name> [module_args...]
 |--------|-------------|
 | `-m, --module` | Run as Python module (like `python -m`) |
 | `--run-name <name>` | Human-readable name for this run |
-| `--wait` | Block until execution completes |
-| `--timeout <seconds>` | Max wait time (with `--wait`) |
-
-**Behavior:**
-
-- Spawns `ao-record` as a background process
-- Script stdout/stderr goes to log files (`.out` and `.err`)
-- Returns immediately with session_id (unless `--wait`)
+| `--timeout <seconds>` | Timeout in seconds (terminates script if exceeded) |
 
 **Output:**
-
-```json
-{
-  "status": "started",
-  "session_id": "uuid-here",
-  "pid": 12345,
-  "stdout_file": "/path/to/run.out",
-  "stderr_file": "/path/to/run.err"
-}
-```
-
-With `--wait`:
 
 ```json
 {
   "status": "completed",
   "session_id": "uuid-here",
   "exit_code": 0,
-  "duration_seconds": 45.2,
-  "stdout_file": "/path/to/run.out",
-  "stderr_file": "/path/to/run.err"
+  "duration_seconds": 45.2
 }
 ```
 
-On failure with `--wait`, the `error` field contains the last 2000 characters of stderr.
+On timeout:
+
+```json
+{
+  "status": "timeout",
+  "session_id": "uuid-here",
+  "pid": 12345
+}
+```
 
 ---
 
@@ -70,7 +56,6 @@ Queries session state, graph topology, or specific nodes.
 
 ```bash
 ao-tool probe <session_id>
-ao-tool probe <session_id> --topology
 ao-tool probe <session_id> --node <node_id>
 ao-tool probe <session_id> --nodes <id1,id2,...>
 ```
@@ -79,7 +64,6 @@ ao-tool probe <session_id> --nodes <id1,id2,...>
 
 | Option | Description |
 |--------|-------------|
-| `--topology` | Return only graph structure (no content) |
 | `--node <id>` | Return detailed info for single node |
 | `--nodes <ids>` | Return detailed info for multiple nodes (comma-separated) |
 | `--preview` | Truncate strings to 20 characters |
@@ -95,7 +79,7 @@ The `--key-regex` option filters the input/output dictionaries by matching again
 - `messages.*content` matches content in any message
 - `choices.0.message` matches the first choice's message
 
-**Output (default):**
+**Output (default - session overview):**
 
 ```json
 {
@@ -166,46 +150,45 @@ ao-tool experiments --regex "eval.*"
 
 ### `ao-tool edit-and-rerun`
 
-Edits a node and immediately reruns the session.
+Edits a single key in a node and immediately reruns the session. Always creates a new run.
 
 ```bash
-ao-tool edit-and-rerun <session_id> <node_id> --input '<json>'
-ao-tool edit-and-rerun <session_id> <node_id> --output '<json>'
+ao-tool edit-and-rerun <session_id> <node_id> --input <key> <value>
+ao-tool edit-and-rerun <session_id> <node_id> --output <key> <value>
 ```
 
 **Options:**
 
 | Option | Description |
 |--------|-------------|
-| `--input <json>` | New input value (mutually exclusive with `--output`) |
-| `--output <json>` | New output value (mutually exclusive with `--input`) |
-| `--as-new-run` | Create new session instead of modifying in place |
-| `--run-name <name>` | Name for new run (with `--as-new-run`) |
-| `--wait` | Block until rerun completes |
-| `--timeout <seconds>` | Max wait time (with `--wait`) |
+| `--input <key> <value>` | Edit an input key (mutually exclusive with `--output`) |
+| `--output <key> <value>` | Edit an output key (mutually exclusive with `--input`) |
+| `--run-name <name>` | Name for the new run (default: "Edit of <original name>") |
+| `--timeout <seconds>` | Timeout for the rerun |
 
-**Implementation notes:**
+**Key format:**
 
-- Validates JSON can be parsed and merged with existing structure
-- For output edits, validates result can be converted to API object type
-- The edit is stored as an "overwrite" - original is preserved
-- With `--as-new-run`: copies experiment and LLM calls to new session first
+Keys use flattened dot-notation matching the output from `probe`. Examples:
+- `choices.0.message.content` - First choice's message content
+- `messages.0.content` - First message's content
 
----
+**Value:**
 
-### `ao-tool terminate`
+The value can be a literal string or a path to a file. If the path exists, the file contents are used.
 
-Stops a running process.
+**Output:**
 
-```bash
-ao-tool terminate <pid>
+```json
+{
+  "status": "completed",
+  "session_id": "new-uuid",
+  "node_id": "node-1",
+  "edited_field": "output",
+  "edited_key": "choices.0.message.content",
+  "exit_code": 0,
+  "duration_seconds": 12.5
+}
 ```
-
-**Behavior:**
-
-1. Sends SIGTERM for graceful termination
-2. Waits 5 seconds for process to exit
-3. Sends SIGKILL if still alive
 
 ---
 
@@ -239,8 +222,8 @@ Every node (API call) contains the following metadata:
 | `stack_trace` | string[] | Call stack at invocation (filtered to user code) |
 | `parent_ids` | string[] | IDs of nodes whose output fed into this input |
 | `child_ids` | string[] | IDs of nodes that consume this output |
-| `input` | object | The API call input (the `to_show` structure) |
-| `output` | object | The API call response (the `to_show` structure) |
+| `input` | object | The API call input (flattened `to_show` structure) |
+| `output` | object | The API call response (flattened `to_show` structure) |
 | `has_input_overwrite` | bool | Whether input has been edited |
 
 ## Implementation Details
@@ -249,9 +232,8 @@ Every node (API call) contains the following metadata:
 
 `ao-tool record` uses `subprocess.Popen` with:
 
-- stdout/stderr redirected to separate log files
 - Session file for IPC (agent_runner writes session_id after handshake)
-- `start_new_session=True` for process group isolation
+- Blocking wait for completion
 
 ### Database Access
 
@@ -265,7 +247,7 @@ Most commands query the SQLite database directly via `DatabaseManager`. The data
 
 When editing input/output:
 
-1. Parse JSON and extract `to_show` structure
+1. Parse the flattened key and resolve it in the `to_show` structure
 2. Merge with existing `raw` structure using `merge_filtered_into_raw()`
 3. For outputs, validate conversion to API object type
 4. Store as overwrite (preserves original)

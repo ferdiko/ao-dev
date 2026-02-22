@@ -13,10 +13,10 @@ If you installed with uv, run tests using `uv run`:
 uv run pytest tests/non_billable/ -v
 
 # Run specific test file
-uv run pytest tests/non_billable/taint/test_taint_propagation.py -v
+uv run pytest tests/non_billable/test_string_matching.py -v
 
 # Run tests matching a pattern
-uv run pytest -k "test_taint" -v
+uv run pytest -k "test_edge" -v
 
 # Run with full output
 uv run pytest -v -s tests/non_billable/
@@ -33,10 +33,10 @@ conda activate ao
 pytest tests/non_billable/ -v
 
 # Run specific test file
-pytest tests/non_billable/taint/test_taint_propagation.py -v
+pytest tests/non_billable/test_string_matching.py -v
 
 # Run tests matching a pattern
-pytest -k "test_taint" -v
+pytest -k "test_edge" -v
 ```
 
 ## Test Categories
@@ -51,8 +51,7 @@ uv run pytest tests/non_billable/ -v
 
 Includes:
 
-- **Taint propagation tests** - Verify taint flows correctly through operations
-- **AST transformation tests** - Verify code rewriting works correctly
+- **String matching tests** - Verify content-based edge detection works correctly
 - **Unit tests** - Test individual components in isolation
 
 ### Billable Tests
@@ -77,19 +76,12 @@ uv run pytest tests/billable/ -v -s
     uv run pytest "tests/billable/test_caching.py::test_debug_examples[./example_workflows/debug_examples/anthropic/debate.py]"
     ```
 
-## Taint Propagation Tests
-
-The taint propagation tests verify that taint flows correctly through various operations:
-
-```bash
-uv run pytest -v tests/non_billable/taint/
-```
-
-### Special Setup for General Function Tests
+## Edge Detection Tests
 
 Tests for content-based edge detection verify that dataflow edges are correctly detected when LLM outputs appear in subsequent LLM inputs:
 
 ```bash
+uv run pytest -v tests/non_billable/test_string_matching.py
 python -m pytest tests/billable/ -k "edge"
 ```
 
@@ -185,30 +177,6 @@ def test_my_feature():
     assert result == expected
 ```
 
-### Taint Propagation Test
-
-For taint tests, add a test case file:
-
-```python
-# tests/non_billable/taint/general_functions/my_test_cases.py
-from ao.runner.taint_wrappers import TaintStr, get_taint_origins
-
-def test_my_operation():
-    tainted = TaintStr("hello", taint_origin=["origin1"])
-    result = my_operation(tainted)
-
-    # Verify taint propagated
-    origins = get_taint_origins(result)
-    assert "origin1" in origins
-```
-
-### API Patch Test
-
-```python
-# tests/non_billable/test_api_patches.py
-import pytest
-from unittest.mock import MagicMock
-
 ### Edge Detection Test
 
 To test that edges are correctly detected:
@@ -231,10 +199,6 @@ def test_edge_detection():
 Common test helpers are defined in `tests/utils.py`, including:
 
 ```python
-@pytest.fixture
-def tainted_string():
-    return TaintStr("test", taint_origin=["test_origin"])
-
 @pytest.fixture
 def server_connection():
     # Setup server connection for integration tests
@@ -294,7 +258,7 @@ Key considerations:
 
 - Tests must be deterministic (use fixed random seeds)
 - API tests should use mocks or replay mode when possible
-- Taint tests require the full `ao-record` environment
+- Edge detection tests require the full `ao-record` environment
 
 ## Next Steps
 

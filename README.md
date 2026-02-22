@@ -65,13 +65,7 @@ if __name__ == "__main__":
     main()
 ```
 
-2. Run the script with python to verify it works (keys are set correctly, etc.):
-
-```bash
-python openai_example.py
-```
-
-3. Run the script using `ao-record`.
+2. Run the script using `ao-record`.
 
 ```bash
 ao-record openai_example.py

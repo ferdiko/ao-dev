@@ -1452,8 +1452,21 @@ def main():
     elif args.command == "edit-and-rerun":
         edit_and_rerun_command(args)
     elif args.command == "onboard":
-        from ao.onboarding.orchestrator import run_onboarding
-        run_onboarding(args)
+        from ao.runner.agent_runner import AgentRunner
+        repo_name = os.path.basename(os.path.abspath(args.repo_path))
+        script_args = [args.repo_path]
+        if args.max_parallel != 4:
+            script_args.extend(["--max-parallel", str(args.max_parallel)])
+        if args.model != "sonnet":
+            script_args.extend(["--model", args.model])
+        if args.instructions:
+            script_args.extend(["--instructions", args.instructions])
+        AgentRunner(
+            script_path="ao.onboarding.orchestrator",
+            script_args=script_args,
+            is_module_execution=True,
+            run_name=f"Onboarding: {repo_name}",
+        ).run()
     elif args.command == "install-skill":
         install_skill_command()
     elif args.command == "playbook":

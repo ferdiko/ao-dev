@@ -46,7 +46,7 @@ We detect dataflow between LLM calls using **content-based matching**:
 3. **Create edges**: If a match is found, we create an edge from the source node (whose output matched) to the current node.
 
 This approach is simple and robust:
-- User code runs completely unmodified (no AST rewrites)
+- User code runs completely unmodified
 - Works with any LLM library that uses httpx/requests under the hood
 - No risk of crashing user code
 
