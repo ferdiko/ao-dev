@@ -1248,29 +1248,6 @@ def create_parser() -> ArgumentParser:
         help="Name for the new run. Defaults to 'Edit of <original name>'",
     )
 
-    # onboard subcommand
-    onboard = subparsers.add_parser(
-        "onboard",
-        help="Run onboarding agent to extract domain knowledge",
-        description="Analyze a repository's agent and dataset, run the agent on samples, "
-                    "diagnose failures, and create lessons automatically.",
-    )
-    onboard.add_argument("repo_path", help="Path to the target repository")
-    onboard.add_argument(
-        "--max-parallel", type=int, default=4,
-        help="Maximum sub-agents running concurrently (default: 4)",
-    )
-    onboard.add_argument(
-        "--model", default="sonnet",
-        choices=["opus", "sonnet", "haiku"],
-        help="Model for sub-agents (default: sonnet). Orchestrator always uses opus.",
-    )
-    onboard.add_argument(
-        "--instructions",
-        default=None,
-        help="Additional instructions for the orchestrator agent",
-    )
-
     # install-skill subcommand
     subparsers.add_parser(
         "install-skill",
@@ -1451,22 +1428,6 @@ def main():
         experiments_command(args)
     elif args.command == "edit-and-rerun":
         edit_and_rerun_command(args)
-    elif args.command == "onboard":
-        from ao.runner.agent_runner import AgentRunner
-        repo_name = os.path.basename(os.path.abspath(args.repo_path))
-        script_args = [args.repo_path]
-        if args.max_parallel != 4:
-            script_args.extend(["--max-parallel", str(args.max_parallel)])
-        if args.model != "sonnet":
-            script_args.extend(["--model", args.model])
-        if args.instructions:
-            script_args.extend(["--instructions", args.instructions])
-        AgentRunner(
-            script_path="ao.onboarding.orchestrator",
-            script_args=script_args,
-            is_module_execution=True,
-            run_name=f"Onboarding: {repo_name}",
-        ).run()
     elif args.command == "install-skill":
         install_skill_command()
     elif args.command == "playbook":
