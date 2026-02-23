@@ -3,7 +3,7 @@
   "displayName": "AO Agent Dev",
   "description": "Visualize, edit and improve agent workflows.",
   "repository": "https://github.com/ao-agent-ops/ao-dev",
-  "version": "0.0.16",
+  "version": "0.1.1",
   "publisher": "agentops",
   "license": "Apache-2.0",
   "icon": "icon.png",

@@ -41,7 +41,7 @@ line-length = 100
 
 [project]
 name = "ao-dev"
-version = "0.1.0"
+version = "0.1.1"
 description = "A development tool for LLM call visualization and debugging"
 readme = "docs/release/PYPI_DESC.md"
 requires-python = ">=3.10"

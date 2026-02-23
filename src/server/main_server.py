@@ -37,19 +37,13 @@ from ao.server.handlers import (
     handle_get_graph,
     handle_erase,
     handle_get_all_experiments,
+    handle_get_lessons_applied,
     # Runner handlers
     handle_add_node,
     handle_add_subrun,
     handle_deregister_message,
     handle_update_command,
     handle_log,
-    # Lesson handlers
-    handle_get_lessons,
-    handle_add_lesson,
-    handle_update_lesson,
-    handle_delete_lesson,
-    handle_get_lesson,
-    handle_folder_ls,
 )
 
 logger = create_file_logger(MAIN_SERVER_LOG)
@@ -590,19 +584,9 @@ class MainServer:
         elif msg_type == "log":
             handle_log(self, msg)
 
-        # Lesson handlers
-        elif msg_type == "get_lessons":
-            handle_get_lessons(self, conn)
-        elif msg_type == "add_lesson":
-            handle_add_lesson(self, msg, conn)
-        elif msg_type == "update_lesson":
-            handle_update_lesson(self, msg, conn)
-        elif msg_type == "delete_lesson":
-            handle_delete_lesson(self, msg, conn)
-        elif msg_type == "get_lesson":
-            handle_get_lesson(self, msg, conn)
-        elif msg_type == "folder_ls":
-            handle_folder_ls(self, msg, conn)
+        # Lessons applied (local tracking data only; lesson CRUD goes direct to ao-playbook)
+        elif msg_type == "get_lessons_applied":
+            handle_get_lessons_applied(self, conn)
         else:
             logger.error(f"Unknown message type. Message:\n{msg}")
 
