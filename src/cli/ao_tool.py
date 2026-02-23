@@ -615,11 +615,9 @@ def install_skill_command() -> None:
     target_dir = target_root / ".claude" / "skills" / "ao"
     target_file = target_dir / "SKILL.md"
 
-    # Find the source SKILL.md relative to this package
-    # ao package is at ao-dev/ao/, SKILL.md is at ao-dev/SKILL.md
-    import ao
-    ao_package_dir = Path(ao.__file__).parent  # ao-dev/ao/
-    skill_source = ao_package_dir.parent / "SKILL.md"  # Go up to repo root
+    # Find the source SKILL.md bundled inside the ao package
+    import ao.assets
+    skill_source = Path(ao.assets.__file__).parent / "SKILL.md"
 
     if not skill_source.exists():
         print(f"Error: SKILL.md not found at {skill_source}", file=sys.stderr)

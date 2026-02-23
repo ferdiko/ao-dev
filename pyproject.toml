@@ -4,11 +4,15 @@
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.package-data]
+"ao.assets" = ["SKILL.md"]
+
 [tool.setuptools]
 # Map ao package to src directory with subpackages
 package-dir = {"ao" = "src"}
 packages = [
     "ao",
+    "ao.assets",
     "ao.cli",
     "ao.common",
     "ao.runner",
