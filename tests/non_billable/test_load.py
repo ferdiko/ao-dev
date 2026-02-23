@@ -12,9 +12,8 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__
 
 
 def restart_server():
-    """Restart the server for a clean connection state."""
-    subprocess.run(["uv", "run", "--directory", PROJECT_DIR, "ao-server", "restart"], check=False)
-    time.sleep(2)
+    """Clear server state for a clean test."""
+    subprocess.run(["uv", "run", "--directory", PROJECT_DIR, "ao-server", "clear"], check=False)
 
 
 def run_ao_record(script_path: str, index: int) -> tuple[int, int]:
