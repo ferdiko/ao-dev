@@ -1,6 +1,7 @@
 import socket
 import os
 import json
+import errno
 import threading
 import subprocess
 import time
@@ -441,58 +442,6 @@ class MainServer:
     #     except Exception as e:
     #         logger.error(f"Error handling auth message: {e}")
 
-    def handle_add_subrun(self, msg: dict, conn: socket.socket) -> None:
-        # If rerun, use previous session_id. Else, assign new one.
-        prev_session_id = msg.get("prev_session_id")
-        if prev_session_id:
-            session_id = prev_session_id
-        else:
-            session_id = str(uuid.uuid4())
-            # Insert new experiment into DB.
-            cwd = msg.get("cwd")
-            command = msg.get("command")
-            environment = msg.get("environment")
-            timestamp = datetime.now()
-            name = msg.get("name")
-            if not name:
-                run_index = DB.get_next_run_index()
-                name = f"Run {run_index}"
-            parent_session_id = msg.get("parent_session_id")
-            # NOTE: Auth disabled - user_id handling commented out
-            # user_id = msg.get("user_id")
-            # if user_id is None:
-            #     user_id = self.current_user_id
-
-            # Create experiment with version_date=None, request async versioning
-            DB.add_experiment(
-                session_id,
-                name,
-                timestamp,
-                cwd,
-                command,
-                environment,
-                parent_session_id,
-                None,  # user_id disabled
-                None,  # version_date will be set async by FileWatcher
-            )
-            # Request async git versioning from FileWatcher
-            self.file_watch_queue.put({"type": "request_version", "session_id": session_id})
-        # Insert session if not present.
-        with self.lock:
-            if session_id not in self.sessions:
-                self.sessions[session_id] = Session(session_id)
-            session = self.sessions[session_id]
-        with session.lock:
-            session.shim_conn = conn
-        session.status = "running"
-        self.conn_info[conn] = {"role": "agent-runner", "session_id": session_id}
-        response = {"type": "session_id", "session_id": session_id}
-        request_id = msg.get("request_id")
-        if request_id:
-            response["request_id"] = request_id
-        send_json(conn, response)
-        self.broadcast_experiment_list_to_uis()
-
     def handle_erase(self, msg):
         session_id = msg.get("session_id")
 
@@ -810,7 +759,7 @@ class MainServer:
                 self.server_sock.bind((HOST, PORT))
                 break
             except OSError as e:
-                if e.errno == 48 and attempt < max_retries - 1:  # Address already in use
+                if e.errno == errno.EADDRINUSE and attempt < max_retries - 1:
                     logger.warning(
                         f"Port {PORT} in use, retrying in 2 seconds... (attempt {attempt + 1}/{max_retries})"
                     )
@@ -838,13 +787,6 @@ class MainServer:
             # This will be triggered when server_sock is closed (on shutdown)
             pass
         finally:
-            self.stop_file_watcher()
-            for q in [self.file_watch_queue, self.file_watch_response_queue]:
-                try:
-                    q.close()
-                    q.join_thread()
-                except Exception:
-                    pass
             try:
                 self.server_sock.close()
             except Exception:

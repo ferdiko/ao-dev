@@ -31,9 +31,8 @@ def print_graph(graph: dict, label: str) -> None:
 
 
 def restart_server():
-    """Restart the server to ensure clean state for tests."""
-    subprocess.run(["ao-server", "restart"], check=False)
-    time.sleep(1)
+    """Clear server state to ensure clean state for tests."""
+    subprocess.run(["ao-server", "clear"], check=False)
 
 
 def _run_script_with_ao_record(script_path: str, env: dict) -> tuple[int, str]:

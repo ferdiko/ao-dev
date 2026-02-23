@@ -112,14 +112,13 @@ def execute_server_command(args):
             time.sleep(SHUTDOWN_WAIT)
         except Exception:
             logger.info("No running server found. Proceeding to start.")
-        # Clear log files before starting fresh (skip in CI to preserve crash logs)
-        if not os.environ.get("CI"):
-            for log_path in [MAIN_SERVER_LOG, FILE_WATCHER_LOG]:
-                try:
-                    with open(log_path, "w"):
-                        pass
-                except Exception:
+        # Clear log files before starting fresh
+        for log_path in [MAIN_SERVER_LOG, FILE_WATCHER_LOG]:
+            try:
+                with open(log_path, "w"):
                     pass
+            except Exception:
+                pass
         # Start the server
         launch_daemon_server()
         logger.info("Main server restarted.")
