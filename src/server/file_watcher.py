@@ -194,8 +194,7 @@ class FileWatcher:
         signal.signal(signal.SIGINT, self._handle_shutdown_signal)
 
     def _handle_shutdown_signal(self, signum, frame):
-        """Handle shutdown signals gracefully."""
-        logger.info(f"Received signal {signum}, shutting down gracefully...")
+        """Handle shutdown signals gracefully. No I/O here — signal may interrupt a flush."""
         self._shutdown = True
 
     def _is_parent_alive(self) -> bool:

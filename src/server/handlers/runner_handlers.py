@@ -132,7 +132,11 @@ def handle_add_subrun(server, msg: dict, conn: socket.socket) -> None:
     session.status = "running"
     server.broadcast_experiment_list_to_uis()
     server.conn_info[conn] = {"role": "agent-runner", "session_id": session_id}
-    send_json(conn, {"type": "session_id", "session_id": session_id})
+    response = {"type": "session_id", "session_id": session_id}
+    request_id = msg.get("request_id")
+    if request_id:
+        response["request_id"] = request_id
+    send_json(conn, response)
 
 
 def handle_deregister_message(server, msg: dict) -> None:

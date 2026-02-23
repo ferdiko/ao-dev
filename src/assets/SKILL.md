@@ -1,6 +1,6 @@
 ---
 name: ao
-description: ao helps you develop and maintain adaptable agentic systems. It extends Claude Code with context-optimized observability, accelerated A/B testing, a curated design guide of agent development techniques, and dynamic runtime lesson injection. Use when actively developing or improving agentic systems.
+description: ao helps you develop and maintain adaptable agentic systems. It extends Claude Code with context-optimized observability, accelerated A/B testing, and dynamic runtime lesson injection. Use when actively developing or improving agentic systems.
 ---
 
 # ao
@@ -10,7 +10,6 @@ description: ao helps you develop and maintain adaptable agentic systems. It ext
 - **Integrated Observability** – Record agent traces as dataflow graphs with zero code changes
 - **Accelerated A/B Testing** – Edit node inputs/outputs and rerun to see how changes propagate
 - **Lessons** – Inject learned lessons into agent context dynamically at runtime
-- **Design Guide** – Query curated agent development techniques with problems you are encountering
 
 ---
 
@@ -702,38 +701,6 @@ Examples:
 ```bash
 ao-tool playbook lessons rm abc123               # Delete single lesson
 ao-tool playbook lessons rm -r beaver/old/       # Delete folder and all contents
-```
-
----
-
-## Design Guide
-
-Query curated agent development techniques when encountering design problems.
-
-### When to use
-When the agent underperforms in a fundamental way – meaning the issue cannot be resolved by simply changing the system prompts or by creating a lesson.
-Examples:
-  - A SQL generator agent struggles to generate a query that produces a reasonable result when applied to the database, because it does not receive any feedback (syntax checking, execution feedback)
-  - A Deep Research agent that searches in a monotonic way (pursues one lead at a time), and therefore does not scale
-
-### How to use
-You can query the design guide with the particular problem you are facing, but you can also ask more generic design questions, for example: "For an agent generating a SQL command where we can evaluate the SQL command, what is the best agent topology?"
-
-```
-usage: ao-tool playbook design-guide query [-h] --query QUERY [--top-k TOP_K]
-
-Search the design guide using semantic similarity.
-
-options:
-  -h, --help         show this help message and exit
-  --query, -q QUERY  The problem or question to query the design guide with
-  --top-k, -k TOP_K  Number of results to return (omit for best match). Maximum allowed value is 5.
-```
-
-Example:
-
-```bash
-uv run ao-tool playbook design-guide query --query "The model does not follow output schemas."
 ```
 
 ---

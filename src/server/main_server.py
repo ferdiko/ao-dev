@@ -1,6 +1,7 @@
 import socket
 import os
 import json
+import errno
 import threading
 import subprocess
 import time
@@ -36,18 +37,13 @@ from ao.server.handlers import (
     handle_get_graph,
     handle_erase,
     handle_get_all_experiments,
+    handle_get_lessons_applied,
     # Runner handlers
     handle_add_node,
     handle_add_subrun,
     handle_deregister_message,
     handle_update_command,
     handle_log,
-    # Lesson handlers
-    handle_get_lessons,
-    handle_add_lesson,
-    handle_update_lesson,
-    handle_delete_lesson,
-    handle_get_lesson,
 )
 
 logger = create_file_logger(MAIN_SERVER_LOG)
@@ -422,18 +418,90 @@ class MainServer:
     # Admin Handlers (remain in main_server.py)
     # ============================================================
 
+
+    # NOTE: Auth disabled - handle_auth method commented out
+    # def handle_auth(self, msg: dict, conn: socket.socket) -> None:
+    #     """Handle auth messages from UI clients: attach user_id to connection and store current user."""
+    #     try:
+    #         user_id = msg.get("user_id")
+    #         # Store the current authenticated user_id on the server
+    #         self.current_user_id = user_id
+    #         info = self.conn_info.get(conn)
+    #         if info is None:
+    #             self.conn_info[conn] = {"role": "ui", "session_id": None, "user_id": user_id}
+    #         else:
+    #             info["user_id"] = user_id
+    #         # Send filtered list to this connection
+    #         self.broadcast_experiment_list_to_uis(conn)
+    #     except Exception as e:
+    #         logger.error(f"Error handling auth message: {e}")
+
+    def handle_erase(self, msg):
+        session_id = msg.get("session_id")
+
+        DB.erase(session_id)
+        # Clear color preview in database
+        DB.update_color_preview(session_id, [])
+
+        # Broadcast color preview clearing to all UIs
+        self.broadcast_to_all_uis(
+            {"type": "color_preview_update", "session_id": session_id, "color_preview": []}
+        )
+
+        self.handle_restart_message({"session_id": session_id})
+
+    def handle_restart_message(self, msg: dict) -> bool:
+        session_id = msg.get("session_id")
+        parent_session_id = DB.get_parent_session_id(session_id)
+        if not parent_session_id:
+            logger.error("Restart message missing session_id. Ignoring.")
+            return
+        # Clear UI state (updates both memory and database atomically)
+        self._clear_session_ui(session_id)
+
+        session = self.sessions.get(parent_session_id)
+
+        if session and session.status == "running":
+            # Send graceful restart signal to existing session if still connected
+            if session.shim_conn:
+                restart_msg = {"type": "restart", "session_id": parent_session_id}
+                logger.debug(
+                    f"Session running...Sending restart for session_id: {parent_session_id}"
+                )
+                try:
+                    send_json(session.shim_conn, restart_msg)
+                except Exception as e:
+                    logger.error(f"Error sending restart: {e}")
+                return
+            else:
+                logger.warning(f"No shim_conn for session_id: {parent_session_id}")
+        elif session and session.status == "finished":
+            # Rerun for finished session: spawn new process with same session_id
+            self._spawn_session_process(parent_session_id, session_id)
+
+    def handle_deregister_message(self, msg: dict) -> bool:
+        session_id = msg["session_id"]
+        session = self.sessions.get(session_id)
+        if session:
+            session.status = "finished"
+            self.broadcast_experiment_list_to_uis()
+
     def handle_shutdown(self) -> None:
         """Handle shutdown command by closing all connections."""
         logger.info("Shutdown command received. Closing all connections.")
-        # Shutdown git executor
-        self._git_executor.shutdown(wait=False)
         # Close all client sockets
         for s in list(self.conn_info.keys()):
             try:
                 s.close()
             except Exception as e:
                 logger.error(f"Error closing socket: {e}")
-        os._exit(0)
+        # Close server socket to break the accept() loop in run_server.
+        # Cleanup (file watcher, queues) happens in run_server's finally block.
+        if self.server_sock:
+            try:
+                self.server_sock.close()
+            except Exception:
+                pass
 
     def handle_clear(self):
         """Clear all experiments and graphs."""
@@ -516,18 +584,9 @@ class MainServer:
         elif msg_type == "log":
             handle_log(self, msg)
 
-        # Lesson handlers
-        elif msg_type == "get_lessons":
-            handle_get_lessons(self, conn)
-        elif msg_type == "add_lesson":
-            handle_add_lesson(self, msg, conn)
-        elif msg_type == "update_lesson":
-            handle_update_lesson(self, msg, conn)
-        elif msg_type == "delete_lesson":
-            handle_delete_lesson(self, msg, conn)
-        elif msg_type == "get_lesson":
-            handle_get_lesson(self, msg, conn)
-
+        # Lessons applied (local tracking data only; lesson CRUD goes direct to ao-playbook)
+        elif msg_type == "get_lessons_applied":
+            handle_get_lessons_applied(self, conn)
         else:
             logger.error(f"Unknown message type. Message:\n{msg}")
 
@@ -584,7 +643,6 @@ class MainServer:
                 with session.lock:
                     session.shim_conn = conn
                 session.status = "running"
-                self.broadcast_experiment_list_to_uis()
                 self.conn_info[conn] = {"role": role, "session_id": session_id}
                 send_json(
                     conn,
@@ -594,6 +652,7 @@ class MainServer:
                         "database_mode": DB.get_current_mode(),
                     },
                 )
+                self.broadcast_experiment_list_to_uis()
 
             elif role == "ui":
                 # Always reload finished runs from the DB before sending experiment list
@@ -684,7 +743,7 @@ class MainServer:
                 self.server_sock.bind((HOST, PORT))
                 break
             except OSError as e:
-                if e.errno == 48 and attempt < max_retries - 1:  # Address already in use
+                if e.errno == errno.EADDRINUSE and attempt < max_retries - 1:
                     logger.warning(
                         f"Port {PORT} in use, retrying in 2 seconds... (attempt {attempt + 1}/{max_retries})"
                     )
@@ -712,8 +771,10 @@ class MainServer:
             # This will be triggered when server_sock is closed (on shutdown)
             pass
         finally:
-            self._git_executor.shutdown(wait=False)
-            self.server_sock.close()
+            try:
+                self.server_sock.close()
+            except Exception:
+                pass
             logger.info("Develop server stopped.")
 
 

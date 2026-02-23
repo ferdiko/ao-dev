@@ -25,18 +25,33 @@ export interface ValidationResult {
   isRejected?: boolean;
 }
 
-interface LessonsViewProps {
+export interface FolderEntry {
+  path: string;
+  lesson_count: number;
+}
+
+export interface FolderData {
+  folders: FolderEntry[];
   lessons: Lesson[];
+  lessonCount?: number;
+}
+
+interface LessonsViewProps {
   isDarkTheme: boolean;
   onLessonCreate?: (data: LessonFormData, force?: boolean) => void;
   onLessonUpdate?: (id: string, data: Partial<LessonFormData>, force?: boolean) => void;
   onLessonDelete?: (id: string) => void;
   onNavigateToRun?: (sessionId: string, nodeId?: string) => void;
   onFetchLessonContent?: (id: string) => void;
+  onFetchFolder?: (path: string) => void;
   validationResult?: ValidationResult | null;
   isValidating?: boolean;
   onClearValidation?: () => void;
   apiKeyError?: boolean;
+  /** Incoming folder data from server — the parent sets this when folder_ls_result arrives */
+  folderResult?: { path: string; folders: FolderEntry[]; lessons: Lesson[]; lessonCount?: number } | null;
+  /** Incoming lesson content update */
+  lessonContentUpdate?: { id: string; content: string } | null;
 }
 
 // Loading spinner component
@@ -76,17 +91,19 @@ const getSeverityColor = (severity: string | undefined, isDark: boolean): string
 };
 
 export const LessonsView: React.FC<LessonsViewProps> = ({
-  lessons,
   isDarkTheme,
   onLessonCreate,
   onLessonUpdate,
   onLessonDelete,
   onNavigateToRun,
   onFetchLessonContent,
+  onFetchFolder,
   validationResult,
   isValidating,
   onClearValidation,
   apiKeyError,
+  folderResult,
+  lessonContentUpdate,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
@@ -95,21 +112,70 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createForm, setCreateForm] = useState<LessonFormData>({ name: '', summary: '', content: '', path: '' });
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [expandedAppliedIds, setExpandedAppliedIds] = useState<Set<string>>(new Set());
   const [loadingContentIds, setLoadingContentIds] = useState<Set<string>>(new Set());
   const lessonRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-  // Clear loading state when lesson content is received
+  // Folder tree state
+  const [folderData, setFolderData] = useState<Map<string, FolderData>>(new Map());
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [loadingFolders, setLoadingFolders] = useState<Set<string>>(new Set());
+
+  // Fetch root folder on mount
   useEffect(() => {
+    onFetchFolder?.('');
+    setLoadingFolders(new Set(['']));
+  }, []);
+
+  // Process incoming folder results
+  useEffect(() => {
+    if (!folderResult) return;
+    const { path, folders, lessons, lessonCount } = folderResult;
+    setFolderData((prev) => {
+      const next = new Map(prev);
+      next.set(path, { folders, lessons, lessonCount });
+      return next;
+    });
+    setLoadingFolders((prev) => {
+      const next = new Set(prev);
+      next.delete(path);
+      return next;
+    });
+  }, [folderResult]);
+
+  // Process incoming lesson content updates
+  useEffect(() => {
+    if (!lessonContentUpdate) return;
+    const { id, content } = lessonContentUpdate;
     setLoadingContentIds((prev) => {
       const next = new Set(prev);
-      for (const lesson of lessons) {
-        if (lesson.content && next.has(lesson.id)) {
-          next.delete(lesson.id);
+      next.delete(id);
+      return next;
+    });
+    // Update the lesson content in folderData
+    setFolderData((prev) => {
+      const next = new Map(prev);
+      for (const [path, data] of next) {
+        const idx = data.lessons.findIndex((l) => l.id === id);
+        if (idx !== -1) {
+          const updatedLessons = [...data.lessons];
+          updatedLessons[idx] = { ...updatedLessons[idx], content };
+          next.set(path, { ...data, lessons: updatedLessons });
+          break;
         }
       }
-      return next.size !== prev.size ? next : prev;
+      return next;
     });
-  }, [lessons]);
+  }, [lessonContentUpdate]);
+
+  // Collect all loaded lessons for search
+  const allLoadedLessons = useCallback((): Lesson[] => {
+    const lessons: Lesson[] = [];
+    for (const data of folderData.values()) {
+      lessons.push(...data.lessons);
+    }
+    return lessons;
+  }, [folderData]);
 
   // Check if a lesson matches the search query
   const lessonMatches = useCallback((lesson: Lesson, query: string): boolean => {
@@ -122,7 +188,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
   }, [expandedIds]);
 
   const matchingLessonIds = searchQuery
-    ? lessons.filter((lesson) => lessonMatches(lesson, searchQuery)).map((l) => l.id)
+    ? allLoadedLessons().filter((lesson) => lessonMatches(lesson, searchQuery)).map((l) => l.id)
     : [];
 
   useEffect(() => {
@@ -145,8 +211,6 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
       setCurrentMatchIndex((prev) => (prev + 1) % matchingLessonIds.length);
     }
   };
-
-  const filteredLessons = lessons;
 
   const highlightText = (text: string, isCurrentMatch: boolean): React.ReactNode => {
     if (!searchQuery || !text) return text;
@@ -242,7 +306,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
     onClearValidation?.();
   };
 
-  const toggleExpanded = (id: string, lesson: Lesson) => {
+  const toggleLessonExpanded = (id: string, lesson: Lesson) => {
     const isExpanding = !expandedIds.has(id);
     setExpandedIds((prev) => {
       const next = new Set(prev);
@@ -258,6 +322,27 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
       onFetchLessonContent(id);
     }
   };
+
+  const toggleFolder = (path: string) => {
+    const isExpanding = !expandedFolders.has(path);
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+    // Lazy-load folder contents if not yet fetched
+    if (isExpanding && !folderData.has(path)) {
+      setLoadingFolders((prev) => new Set(prev).add(path));
+      onFetchFolder?.(path);
+    }
+  };
+
+  // Public method to refresh all expanded folders (called on lessons_refresh)
+  // This is handled by the parent re-fetching folders — we expose expandedFolders via callback
 
   const buttonStyle = (isDark: boolean, variant: 'primary' | 'secondary' | 'danger' | 'warning' = 'secondary') => ({
     padding: '4px 10px',
@@ -559,6 +644,375 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
     </div>
   );
 
+  // Render a single lesson card
+  const renderLessonCard = (lesson: Lesson) => {
+    const isCurrentMatch = !!(searchQuery && matchingLessonIds[currentMatchIndex] === lesson.id);
+    return (
+      <div
+        key={lesson.id}
+        ref={(el) => {
+          if (el) lessonRefs.current.set(lesson.id, el);
+          else lessonRefs.current.delete(lesson.id);
+        }}
+        style={{
+          backgroundColor: isDarkTheme ? '#2d2d2d' : '#fafafa',
+          border: `1px solid ${isDarkTheme ? '#3c3c3c' : '#e0e0e0'}`,
+          borderLeft: lesson.validationSeverity
+            ? `3px solid ${getSeverityColor(lesson.validationSeverity, isDarkTheme)}`
+            : `1px solid ${isDarkTheme ? '#3c3c3c' : '#e0e0e0'}`,
+          borderRadius: '6px',
+          padding: '14px 16px',
+        }}
+      >
+        {/* Header: Name and Path */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '6px' }}>
+          <h4
+            style={{
+              margin: 0,
+              fontSize: '14px',
+              fontWeight: 600,
+              color: isDarkTheme ? '#e5e5e5' : '#333333',
+            }}
+          >
+            {highlightText(lesson.name, isCurrentMatch)}
+          </h4>
+          {lesson.path && (
+            <span
+              style={{
+                fontSize: '10px',
+                padding: '2px 6px',
+                borderRadius: '3px',
+                backgroundColor: isDarkTheme ? '#3c3c3c' : '#e0e0e0',
+                color: isDarkTheme ? '#999999' : '#666666',
+                marginLeft: '8px',
+                flexShrink: 0,
+              }}
+            >
+              {lesson.path}
+            </span>
+          )}
+        </div>
+
+        {/* Summary */}
+        <p
+          style={{
+            margin: '0 0 10px 0',
+            fontSize: '12px',
+            lineHeight: '1.5',
+            color: isDarkTheme ? '#999999' : '#666666',
+          }}
+        >
+          {highlightText(lesson.summary, isCurrentMatch)}
+        </p>
+
+        {/* Action Buttons */}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+          {onLessonUpdate && (
+            <button
+              onClick={() => handleStartEdit(lesson)}
+              style={buttonStyle(isDarkTheme)}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = isDarkTheme ? '#4a4a4a' : '#d0d0d0';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = isDarkTheme ? '#3c3c3c' : '#e8e8e8';
+              }}
+            >
+              Edit
+            </button>
+          )}
+
+          {onLessonDelete && (
+            <button
+              onClick={() => onLessonDelete(lesson.id)}
+              style={buttonStyle(isDarkTheme, 'danger')}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = isDarkTheme ? '#6a2a2a' : '#ffcdd2';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = isDarkTheme ? '#5a1d1d' : '#ffebee';
+              }}
+            >
+              Delete
+            </button>
+          )}
+
+          <button
+            onClick={() => toggleLessonExpanded(lesson.id, lesson)}
+            style={{
+              ...buttonStyle(isDarkTheme),
+              fontSize: '10px',
+              padding: '2px 8px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+            }}
+          >
+            <span style={{ transform: expandedIds.has(lesson.id) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+              ▶
+            </span>
+            {expandedIds.has(lesson.id) ? 'Hide content' : 'Show content'}
+          </button>
+
+          {lesson.appliedTo && lesson.appliedTo.length > 0 && (
+            <button
+              onClick={() => setExpandedAppliedIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(lesson.id)) next.delete(lesson.id);
+                else next.add(lesson.id);
+                return next;
+              })}
+              style={{
+                ...buttonStyle(isDarkTheme),
+                fontSize: '10px',
+                padding: '2px 8px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
+            >
+              <span style={{ transform: expandedAppliedIds.has(lesson.id) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                ▶
+              </span>
+              Applied to ({lesson.appliedTo.length})
+            </button>
+          )}
+        </div>
+
+        {/* Content (expandable) */}
+        {expandedIds.has(lesson.id) && (
+          <pre
+            style={{
+              margin: '8px 0 0 0',
+              padding: '10px',
+              fontSize: '12px',
+              lineHeight: '1.5',
+              backgroundColor: isDarkTheme ? '#1e1e1e' : '#ffffff',
+              border: `1px solid ${isDarkTheme ? '#3c3c3c' : '#e0e0e0'}`,
+              borderRadius: '4px',
+              color: isDarkTheme ? '#d4d4d4' : '#444444',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontFamily: 'inherit',
+              overflow: 'auto',
+              maxHeight: '300px',
+            }}
+          >
+            {loadingContentIds.has(lesson.id)
+              ? 'Loading...'
+              : (lesson.content ? highlightText(lesson.content, isCurrentMatch) : 'No content available')}
+          </pre>
+        )}
+
+        {/* Applied To (expandable list) */}
+        {expandedAppliedIds.has(lesson.id) && lesson.appliedTo && lesson.appliedTo.length > 0 && (
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' }}>
+            {lesson.appliedTo.map((target, idx) => (
+              <button
+                key={idx}
+                onClick={() => onNavigateToRun?.(target.sessionId, target.nodeId)}
+                style={{
+                  ...buttonStyle(isDarkTheme),
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = isDarkTheme ? '#4a4a4a' : '#d0d0d0';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = isDarkTheme ? '#3c3c3c' : '#e8e8e8';
+                }}
+                title={`Go to: ${target.runName}`}
+              >
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M4.5 3A1.5 1.5 0 0 0 3 4.5v7A1.5 1.5 0 0 0 4.5 13h7a1.5 1.5 0 0 0 1.5-1.5v-3a.5.5 0 0 1 1 0v3A2.5 2.5 0 0 1 11.5 14h-7A2.5 2.5 0 0 1 2 11.5v-7A2.5 2.5 0 0 1 4.5 2h3a.5.5 0 0 1 0 1h-3z"/>
+                  <path d="M10 2a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-1 0V2.707l-5.146 5.147a.5.5 0 0 1-.708-.708L13.293 2H10.5A.5.5 0 0 1 10 1.5z"/>
+                </svg>
+                {target.runName}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Render a folder row and its contents (recursive)
+  const renderFolder = (folder: FolderEntry, depth: number) => {
+    const { path: folderPath, lesson_count: lessonCount } = folder;
+    const isExpanded = expandedFolders.has(folderPath);
+    const isLoading = loadingFolders.has(folderPath);
+    const data = folderData.get(folderPath);
+    // Extract display name from path (last segment)
+    const segments = folderPath.replace(/\/$/, '').split('/');
+    const displayName = segments[segments.length - 1] || folderPath;
+
+    return (
+      <div key={folderPath}>
+        {/* Folder row */}
+        <div
+          onClick={() => toggleFolder(folderPath)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '8px 12px',
+            paddingLeft: `${12 + depth * 16}px`,
+            cursor: 'pointer',
+            borderRadius: '4px',
+            backgroundColor: isDarkTheme ? '#2d2d2d' : '#fafafa',
+            border: `1px solid ${isDarkTheme ? '#3c3c3c' : '#e0e0e0'}`,
+            fontSize: '13px',
+            fontWeight: 500,
+            color: isDarkTheme ? '#e5e5e5' : '#333333',
+            userSelect: 'none',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = isDarkTheme ? '#353535' : '#f0f0f0';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = isDarkTheme ? '#2d2d2d' : '#fafafa';
+          }}
+        >
+          <span style={{ width: 16, height: 16, display: 'inline-flex', alignItems: 'center' }}>
+            {isExpanded ? (
+              <svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path d="M3.14645 5.64645C3.34171 5.45118 3.65829 5.45118 3.85355 5.64645L8 9.79289L12.1464 5.64645C12.3417 5.45118 12.6583 5.45118 12.8536 5.64645C13.0488 5.84171 13.0488 6.15829 12.8536 6.35355L8.35355 10.8536C8.15829 11.0488 7.84171 11.0488 7.64645 10.8536L3.14645 6.35355C2.95118 6.15829 2.95118 5.84171 3.14645 5.64645Z"/></svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path d="M5.64645 3.14645C5.45118 3.34171 5.45118 3.65829 5.64645 3.85355L9.79289 8L5.64645 12.1464C5.45118 12.3417 5.45118 12.6583 5.64645 12.8536C5.84171 13.0488 6.15829 13.0488 6.35355 12.8536L10.8536 8.35355C11.0488 8.15829 11.0488 7.84171 10.8536 7.64645L6.35355 3.14645C6.15829 2.95118 5.84171 2.95118 5.64645 3.14645Z"/></svg>
+            )}
+          </span>
+          <span style={{ width: 16, height: 16, display: 'inline-flex', alignItems: 'center' }}>
+            {isExpanded ? (
+              <svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path d="M2 4.5V9.10022L2.92389 7.5C3.45979 6.5718 4.45017 6 5.52196 6L11.9146 6C11.7087 5.4174 11.1531 5 10.5 5H7C6.86739 5 6.74021 4.94732 6.64645 4.85355L4.93934 3.14645C4.84557 3.05268 4.71839 3 4.58579 3H3.5C2.67157 3 2 3.67157 2 4.5ZM7.06895 13.9953C7.04641 13.9984 7.02339 14 7 14H3.5C2.11929 14 1 12.8807 1 11.5V4.5C1 3.11929 2.11929 2 3.5 2H4.58579C4.98361 2 5.36514 2.15804 5.64645 2.43934L7.20711 4H10.5C11.724 4 12.7426 4.87965 12.958 6.04127C14.605 6.34148 15.5443 8.22106 14.6616 9.75L13.0766 12.4953C12.5407 13.4235 11.5503 13.9953 10.4785 13.9953H7.06895ZM5.52196 7C4.80743 7 4.14718 7.3812 3.78991 8L2.20492 10.7453C1.62757 11.7453 2.34926 12.9953 3.50396 12.9953L10.4785 12.9953C11.193 12.9953 11.8533 12.6141 12.2105 11.9953L13.7955 9.25C14.3729 8.25 13.6512 7 12.4965 7L5.52196 7Z"/></svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path d="M2 4.5V6H5.58579C5.71839 6 5.84557 5.94732 5.93934 5.85355L7.29289 4.5L5.93934 3.14645C5.84557 3.05268 5.71839 3 5.58579 3H3.5C2.67157 3 2 3.67157 2 4.5ZM1 4.5C1 3.11929 2.11929 2 3.5 2H5.58579C5.98361 2 6.36514 2.15804 6.64645 2.43934L8.20711 4H12.5C13.8807 4 15 5.11929 15 6.5V11.5C15 12.8807 13.8807 14 12.5 14H3.5C2.11929 14 1 12.8807 1 11.5V4.5ZM2 7V11.5C2 12.3284 2.67157 13 3.5 13H12.5C13.3284 13 14 12.3284 14 11.5V6.5C14 5.67157 13.3284 5 12.5 5H8.20711L6.64645 6.56066C6.36514 6.84197 5.98361 7 5.58579 7H2Z"/></svg>
+            )}
+          </span>
+          <span>{displayName}</span>
+          <span style={{
+            fontSize: '10px',
+            padding: '1px 5px',
+            borderRadius: '8px',
+            backgroundColor: isDarkTheme ? '#3c3c3c' : '#e0e0e0',
+            color: isDarkTheme ? '#999999' : '#666666',
+            marginLeft: '4px',
+          }}>
+            {lessonCount}
+          </span>
+          {isLoading && <Spinner isDark={isDarkTheme} />}
+        </div>
+
+        {/* Expanded contents */}
+        {isExpanded && data && (
+          <div style={{ marginLeft: `${depth * 16}px`, marginTop: '4px' }}>
+            {/* Sub-folders */}
+            {data.folders.map((subFolder) => renderFolder(subFolder, depth + 1))}
+            {/* Lessons in this folder */}
+            {data.lessons.map((lesson) => (
+              <div key={lesson.id} style={{ marginLeft: '16px', marginTop: '4px' }}>
+                {renderLessonCard(lesson)}
+              </div>
+            ))}
+            {data.folders.length === 0 && data.lessons.length === 0 && (
+              <div style={{
+                padding: '8px 16px',
+                marginLeft: '16px',
+                fontSize: '12px',
+                color: isDarkTheme ? '#888888' : '#666666',
+                fontStyle: 'italic',
+              }}>
+                Empty folder
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Render root-level content (lessons + folders from root)
+  const renderRootContent = () => {
+    const rootData = folderData.get('');
+    const isRootLoading = loadingFolders.has('');
+
+    if (apiKeyError) {
+      return (
+        <div
+          style={{
+            textAlign: 'center',
+            padding: '60px 20px',
+            color: isDarkTheme ? '#cccccc' : '#444444',
+          }}
+        >
+          <div style={{ fontSize: '14px', marginBottom: '12px' }}>
+            Unable to connect to the Lessons server.
+          </div>
+          <div style={{ fontSize: '13px', color: isDarkTheme ? '#888888' : '#666666' }}>
+            To obtain an API key, send an e-mail to{' '}
+            <a
+              href="mailto:hello@agops-project.com"
+              style={{ color: isDarkTheme ? '#4a9eff' : '#007acc' }}
+            >
+              hello@agops-project.com
+            </a>
+          </div>
+        </div>
+      );
+    }
+
+    if (isRootLoading && !rootData) {
+      return (
+        <div style={{
+          textAlign: 'center',
+          padding: '40px 20px',
+          color: isDarkTheme ? '#888888' : '#666666',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '8px',
+        }}>
+          Loading...
+          <Spinner isDark={isDarkTheme} />
+        </div>
+      );
+    }
+
+    if (!rootData) {
+      return (
+        <div style={{
+          textAlign: 'center',
+          padding: '40px 20px',
+          color: isDarkTheme ? '#888888' : '#666666',
+        }}>
+          No lessons yet
+        </div>
+      );
+    }
+
+    const { folders, lessons } = rootData;
+    if (folders.length === 0 && lessons.length === 0) {
+      return (
+        <div style={{
+          textAlign: 'center',
+          padding: '40px 20px',
+          color: isDarkTheme ? '#888888' : '#666666',
+        }}>
+          No lessons yet
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {/* Folders first */}
+        {folders.map((folder) => renderFolder(folder, 0))}
+        {/* Root-level lessons */}
+        {lessons.map((lesson) => renderLessonCard(lesson))}
+      </div>
+    );
+  };
+
   return (
     <div
       style={{
@@ -678,214 +1132,9 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
         </div>
       </div>
 
-      {/* Lessons List */}
+      {/* Folder Tree */}
       <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px 16px 24px' }}>
-        {apiKeyError ? (
-          <div
-            style={{
-              textAlign: 'center',
-              padding: '60px 20px',
-              color: isDarkTheme ? '#cccccc' : '#444444',
-            }}
-          >
-            <div style={{ fontSize: '14px', marginBottom: '12px' }}>
-              Unable to connect to the Lessons server.
-            </div>
-            <div style={{ fontSize: '13px', color: isDarkTheme ? '#888888' : '#666666' }}>
-              To obtain an API key, send an e-mail to{' '}
-              <a
-                href="mailto:hello@agops-project.com"
-                style={{ color: isDarkTheme ? '#4a9eff' : '#007acc' }}
-              >
-                hello@agops-project.com
-              </a>
-            </div>
-          </div>
-        ) : filteredLessons.length === 0 ? (
-          <div
-            style={{
-              textAlign: 'center',
-              padding: '40px 20px',
-              color: isDarkTheme ? '#888888' : '#666666',
-            }}
-          >
-            No lessons yet
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {filteredLessons.map((lesson) => {
-              const isCurrentMatch = !!(searchQuery && matchingLessonIds[currentMatchIndex] === lesson.id);
-              return (
-              <div
-                key={lesson.id}
-                ref={(el) => {
-                  if (el) lessonRefs.current.set(lesson.id, el);
-                  else lessonRefs.current.delete(lesson.id);
-                }}
-                style={{
-                  backgroundColor: isDarkTheme ? '#2d2d2d' : '#fafafa',
-                  border: `1px solid ${isDarkTheme ? '#3c3c3c' : '#e0e0e0'}`,
-                  borderLeft: lesson.validationSeverity
-                    ? `3px solid ${getSeverityColor(lesson.validationSeverity, isDarkTheme)}`
-                    : `1px solid ${isDarkTheme ? '#3c3c3c' : '#e0e0e0'}`,
-                  borderRadius: '6px',
-                  padding: '14px 16px',
-                }}
-              >
-                {/* Header: Name and Path */}
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <h4
-                    style={{
-                      margin: 0,
-                      fontSize: '14px',
-                      fontWeight: 600,
-                      color: isDarkTheme ? '#e5e5e5' : '#333333',
-                    }}
-                  >
-                    {highlightText(lesson.name, isCurrentMatch)}
-                  </h4>
-                  {lesson.path && (
-                    <span
-                      style={{
-                        fontSize: '10px',
-                        padding: '2px 6px',
-                        borderRadius: '3px',
-                        backgroundColor: isDarkTheme ? '#3c3c3c' : '#e0e0e0',
-                        color: isDarkTheme ? '#999999' : '#666666',
-                        marginLeft: '8px',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {lesson.path}
-                    </span>
-                  )}
-                </div>
-
-                {/* Summary */}
-                <p
-                  style={{
-                    margin: '0 0 10px 0',
-                    fontSize: '12px',
-                    lineHeight: '1.5',
-                    color: isDarkTheme ? '#999999' : '#666666',
-                  }}
-                >
-                  {highlightText(lesson.summary, isCurrentMatch)}
-                </p>
-
-                {/* Content (expandable) */}
-                <div style={{ marginBottom: '12px' }}>
-                  <button
-                    onClick={() => toggleExpanded(lesson.id, lesson)}
-                    style={{
-                      ...buttonStyle(isDarkTheme),
-                      fontSize: '10px',
-                      padding: '2px 8px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                    }}
-                  >
-                    <span style={{ transform: expandedIds.has(lesson.id) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
-                      ▶
-                    </span>
-                    {expandedIds.has(lesson.id) ? 'Hide content' : 'Show content'}
-                  </button>
-                  {expandedIds.has(lesson.id) && (
-                    <pre
-                      style={{
-                        margin: '8px 0 0 0',
-                        padding: '10px',
-                        fontSize: '12px',
-                        lineHeight: '1.5',
-                        backgroundColor: isDarkTheme ? '#1e1e1e' : '#ffffff',
-                        border: `1px solid ${isDarkTheme ? '#3c3c3c' : '#e0e0e0'}`,
-                        borderRadius: '4px',
-                        color: isDarkTheme ? '#d4d4d4' : '#444444',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                        fontFamily: 'inherit',
-                        overflow: 'auto',
-                        maxHeight: '300px',
-                      }}
-                    >
-                      {loadingContentIds.has(lesson.id)
-                        ? 'Loading...'
-                        : (lesson.content ? highlightText(lesson.content, isCurrentMatch) : 'No content available')}
-                    </pre>
-                  )}
-                </div>
-
-                {/* Action Buttons */}
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                  {onLessonUpdate && (
-                    <button
-                      onClick={() => handleStartEdit(lesson)}
-                      style={buttonStyle(isDarkTheme)}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = isDarkTheme ? '#4a4a4a' : '#d0d0d0';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = isDarkTheme ? '#3c3c3c' : '#e8e8e8';
-                      }}
-                    >
-                      Edit
-                    </button>
-                  )}
-
-                  {onLessonDelete && (
-                    <button
-                      onClick={() => onLessonDelete(lesson.id)}
-                      style={buttonStyle(isDarkTheme, 'danger')}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = isDarkTheme ? '#6a2a2a' : '#ffcdd2';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = isDarkTheme ? '#5a1d1d' : '#ffebee';
-                      }}
-                    >
-                      Delete
-                    </button>
-                  )}
-
-                  {lesson.appliedTo && lesson.appliedTo.length > 0 && (
-                    <>
-                      <span style={{ fontSize: '11px', color: isDarkTheme ? '#888888' : '#888888', marginLeft: '8px' }}>
-                        Applied to:
-                      </span>
-                      {lesson.appliedTo.map((target, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => onNavigateToRun?.(target.sessionId, target.nodeId)}
-                          style={{
-                            ...buttonStyle(isDarkTheme),
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.backgroundColor = isDarkTheme ? '#4a4a4a' : '#d0d0d0';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = isDarkTheme ? '#3c3c3c' : '#e8e8e8';
-                          }}
-                          title={`Go to: ${target.runName}`}
-                        >
-                          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
-                            <path d="M4.5 3A1.5 1.5 0 0 0 3 4.5v7A1.5 1.5 0 0 0 4.5 13h7a1.5 1.5 0 0 0 1.5-1.5v-3a.5.5 0 0 1 1 0v3A2.5 2.5 0 0 1 11.5 14h-7A2.5 2.5 0 0 1 2 11.5v-7A2.5 2.5 0 0 1 4.5 2h3a.5.5 0 0 1 0 1h-3z"/>
-                            <path d="M10 2a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-1 0V2.707l-5.146 5.147a.5.5 0 0 1-.708-.708L13.293 2H10.5A.5.5 0 0 1 10 1.5z"/>
-                          </svg>
-                          {target.runName}
-                        </button>
-                      ))}
-                    </>
-                  )}
-                </div>
-              </div>
-              );
-            })}
-          </div>
-        )}
+        {renderRootContent()}
       </div>
 
       {/* Create Modal */}

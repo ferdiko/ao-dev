@@ -5,6 +5,7 @@ import { MessageSender } from '../../../shared_components/types/MessageSender';
 import { useIsVsCodeDarkTheme } from '../../../shared_components/utils/themeUtils';
 import { GraphHeader } from '../../../shared_components/components/graph/GraphHeader';
 import { Lesson } from '../../../shared_components/components/lessons/LessonsView';
+import { AppliedLessonsView } from '../../../shared_components/components/lessons/AppliedLessonsView';
 import { DocumentContextProvider, useDocumentContext } from '../../../shared_components/contexts/DocumentContext';
 
 // Global type augmentation for window.vscode
@@ -24,6 +25,8 @@ const GraphTabAppInner: React.FC = () => {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [showAppliedLessons, setShowAppliedLessons] = useState(false);
+  const [lessonContentUpdate, setLessonContentUpdate] = useState<{ id: string; content: string } | null>(null);
   const isDarkTheme = useIsVsCodeDarkTheme();
   const { setDocumentOpened } = useDocumentContext();
 
@@ -108,6 +111,15 @@ const GraphTabAppInner: React.FC = () => {
           // Update lessons for header stats
           setLessons(message.lessons || []);
           break;
+        case 'lesson_content':
+          // Update lesson content for applied lessons view
+          if (message.lesson) {
+            setLessonContentUpdate({
+              id: message.lesson.id,
+              content: message.lesson.content,
+            });
+          }
+          break;
         case 'documentOpened':
           // Track opened document path for UI update
           if (message.payload?.documentKey && message.payload?.path) {
@@ -171,6 +183,16 @@ const GraphTabAppInner: React.FC = () => {
     }
   };
 
+  const handleFetchLessonContent = (id: string) => {
+    if (window.vscode) {
+      window.vscode.postMessage({ type: 'get_lesson', lesson_id: id });
+    }
+  };
+
+  const appliedLessons = sessionId
+    ? lessons.filter((l) => l.appliedTo?.some((a) => a.sessionId === sessionId))
+    : [];
+
   return (
     <div
       style={{
@@ -184,23 +206,34 @@ const GraphTabAppInner: React.FC = () => {
       }}
     >
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-        <SharedGraphTabApp
-          experiment={experiment}
-          graphData={graphData}
-          sessionId={sessionId}
-          messageSender={messageSender}
-          isDarkTheme={isDarkTheme}
-          onNodeUpdate={handleNodeUpdate}
-          headerContent={experiment ? (
-            <GraphHeader
-              runName={experiment.run_name || ''}
-              isDarkTheme={isDarkTheme}
-              sessionId={sessionId || undefined}
-              lessons={lessons}
-              onNavigateToLessons={handleNavigateToLessons}
-            />
-          ) : undefined}
-        />
+        {showAppliedLessons ? (
+          <AppliedLessonsView
+            lessons={appliedLessons}
+            isDarkTheme={isDarkTheme}
+            onBack={() => setShowAppliedLessons(false)}
+            onFetchLessonContent={handleFetchLessonContent}
+            lessonContentUpdate={lessonContentUpdate}
+          />
+        ) : (
+          <SharedGraphTabApp
+            experiment={experiment}
+            graphData={graphData}
+            sessionId={sessionId}
+            messageSender={messageSender}
+            isDarkTheme={isDarkTheme}
+            onNodeUpdate={handleNodeUpdate}
+            headerContent={experiment ? (
+              <GraphHeader
+                runName={experiment.run_name || ''}
+                isDarkTheme={isDarkTheme}
+                sessionId={sessionId || undefined}
+                lessons={lessons}
+                onNavigateToLessons={handleNavigateToLessons}
+                onNavigateToAppliedLessons={() => setShowAppliedLessons(true)}
+              />
+            ) : undefined}
+          />
+        )}
       </div>
     </div>
   );

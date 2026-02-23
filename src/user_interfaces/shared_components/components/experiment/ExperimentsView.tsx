@@ -403,11 +403,11 @@ export const ExperimentsView: React.FC<ExperimentsViewProps> = ({
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
-                        maxWidth: '150px'
+                        flex: 1,
+                        minWidth: 0,
                       }}>
                         {process.run_name || 'Untitled'}
                       </span>
-                      <span style={{ flex: 1 }} />
                       {process.version_date && (
                         <span style={{
                           fontSize: '10px',

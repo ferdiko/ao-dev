@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { LoginScreen } from "./LoginScreen";
 import "./App.css";
 import type { GraphNode, GraphEdge, ProcessInfo } from "../../../shared_components/types";
@@ -6,6 +6,7 @@ import { GraphTabApp } from "../../../shared_components/components/GraphTabApp";
 import { ExperimentsView} from "../../../shared_components/components/experiment/ExperimentsView";
 import type { MessageSender } from "../../../shared_components/types/MessageSender";
 import { LessonsView, type Lesson, type LessonFormData, type ValidationResult } from "../../../shared_components/components/lessons/LessonsView";
+import { AppliedLessonsView } from "../../../shared_components/components/lessons/AppliedLessonsView";
 import { GraphHeader } from "../../../shared_components/components/graph/GraphHeader";
 
 interface Experiment {
@@ -27,9 +28,59 @@ interface WSMessage {
   session_id?: string;
   color_preview? : string[];
   database_mode?: string;
-  lessons?: Lesson[];
 }
 
+
+// ============================================================
+// Direct ao-playbook HTTP helpers (lesson CRUD bypasses ao-server)
+// ============================================================
+
+async function playbookRequest(baseUrl: string, method: string, path: string, apiKey: string, body?: any): Promise<any> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (apiKey) { headers['X-API-Key'] = apiKey; }
+  const resp = await fetch(`${baseUrl}${path}`, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(text || `HTTP ${resp.status}`);
+  }
+  const text = await resp.text();
+  return text ? JSON.parse(text) : {};
+}
+
+/** Parse an SSE mutation response (ao-playbook returns SSE for create/update/delete). */
+async function playbookSseMutation(baseUrl: string, method: string, path: string, apiKey: string, body?: any): Promise<any> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'text/event-stream',
+  };
+  if (apiKey) { headers['X-API-Key'] = apiKey; }
+  const resp = await fetch(`${baseUrl}${path}`, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const text = await resp.text();
+  // Parse SSE frames to extract result or error event
+  let currentEvent = '';
+  for (const line of text.split('\n')) {
+    if (line.startsWith('event: ')) {
+      currentEvent = line.slice(7).trim();
+    } else if (line.startsWith('data: ')) {
+      const dataStr = line.slice(6);
+      try {
+        const data = JSON.parse(dataStr);
+        if (currentEvent === 'result') { return data; }
+        if (currentEvent === 'error') { return { error: data.error || 'Unknown error' }; }
+      } catch { /* ignore non-terminal events */ }
+      currentEvent = '';
+    }
+  }
+  return { error: 'SSE stream ended unexpectedly' };
+}
 
 function App() {
   // const [authenticated, setAuthenticated] = useState(false);
@@ -56,11 +107,23 @@ function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const messageBufferRef = useRef<string>(''); // Buffer for incomplete WebSocket frames
   const [showLessons, setShowLessons] = useState(false);
-  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [showAppliedLessons, setShowAppliedLessons] = useState(false);
   const [lessonError, setLessonError] = useState<string | null>(null);
   const [lessonValidationResult, setLessonValidationResult] = useState<ValidationResult | null>(null);
   const [isLessonValidating, setIsLessonValidating] = useState(false);
   const [lessonApiKeyError, setLessonApiKeyError] = useState(false);
+  const [lessonFolderResult, setLessonFolderResult] = useState<{
+    path: string; folders: { path: string; lesson_count: number }[]; lessons: Lesson[]; lessonCount?: number;
+  } | null>(null);
+  const [lessonContentUpdate, setLessonContentUpdate] = useState<{
+    id: string; content: string;
+  } | null>(null);
+  const expandedFoldersRef = useRef<Set<string>>(new Set(['']));
+  const [allLessons, setAllLessons] = useState<Lesson[]>([]);
+  // ao-playbook direct connection state
+  const playbookUrlRef = useRef<string>('');
+  const playbookApiKeyRef = useRef<string>('');
+  const sseSourceRef = useRef<EventSource | null>(null);
 
   // Detect dark theme reactively
   const [isDarkTheme, setIsDarkTheme] = useState(() => {
@@ -112,6 +175,68 @@ function App() {
   const handleResizeStart = () => {
     setIsResizing(true);
   };
+
+  // ============================================================
+  // Direct ao-playbook lesson operations
+  // ============================================================
+
+  const handleLessonError = useCallback((msg: string) => {
+    setIsLessonValidating(false);
+    if (msg.toLowerCase().includes('api key') || msg.toLowerCase().includes('invalid') || msg.toLowerCase().includes('unavailable')) {
+      setLessonApiKeyError(true);
+    } else {
+      setLessonError(msg);
+      setTimeout(() => setLessonError(null), 5000);
+    }
+  }, []);
+
+  const fetchFolderDirect = useCallback(async (path: string) => {
+    const url = playbookUrlRef.current;
+    if (!url) { handleLessonError('Playbook server not configured'); return; }
+    try {
+      const result = await playbookRequest(url, 'POST', '/api/v1/lessons/folders/ls', playbookApiKeyRef.current, { path });
+      if (result.error) { handleLessonError(result.error); return; }
+      setLessonFolderResult({
+        path: result.path ?? path,
+        folders: result.folders || [],
+        lessons: result.lessons || [],
+        lessonCount: result.lesson_count,
+      });
+      setLessonApiKeyError(false);
+    } catch (e: any) { handleLessonError(e.message); }
+  }, [handleLessonError]);
+
+  const refreshExpandedFolders = useCallback(() => {
+    for (const p of expandedFoldersRef.current) {
+      fetchFolderDirect(p);
+    }
+  }, [fetchFolderDirect]);
+
+  const handleFetchFolder = useCallback((path: string) => {
+    expandedFoldersRef.current.add(path);
+    fetchFolderDirect(path);
+  }, [fetchFolderDirect]);
+
+  const fetchLessonContent = useCallback(async (id: string) => {
+    const url = playbookUrlRef.current;
+    if (!url) return;
+    try {
+      const result = await playbookRequest(url, 'GET', `/api/v1/lessons/${id}`, playbookApiKeyRef.current);
+      if (result && !result.error) {
+        setLessonContentUpdate({ id: result.id, content: result.content });
+      }
+    } catch (e: any) { console.error('Failed to fetch lesson content:', e); }
+  }, []);
+
+  const fetchAllLessons = useCallback(async () => {
+    const url = playbookUrlRef.current;
+    if (!url) return;
+    try {
+      const result = await playbookRequest(url, 'GET', '/api/v1/lessons', playbookApiKeyRef.current);
+      const lessons = Array.isArray(result) ? result : result.lessons || [];
+      setAllLessons(lessons);
+    } catch (e: any) { console.error('Failed to fetch lessons list:', e); }
+  }, []);
 
   // Create webapp MessageSender that always uses the current WebSocket from the ref
   const messageSender: MessageSender = {
@@ -167,9 +292,8 @@ function App() {
       // with role: "ui" and user_id from the URL query parameter.
       // We should NOT send our own handshake here.
 
-      // Request the experiment list and lessons
+      // Request the experiment list (lessons are fetched directly from ao-playbook)
       socket.send(JSON.stringify({ type: "get_all_experiments" }));
-      socket.send(JSON.stringify({ type: "get_lessons" }));
     };
 
     socket.onmessage = (event: MessageEvent) => {
@@ -211,11 +335,13 @@ function App() {
 
         case "graph_update":
           if (msg.payload) {
-            console.log('[App] graph_update received:', {
-              nodes: msg.payload.nodes?.length,
-              edges: msg.payload.edges?.map((e: any) => e.id)
+            // Only apply graph updates for the currently selected experiment
+            setSelectedExperiment((current) => {
+              if (current && msg.session_id === current.session_id) {
+                setGraphData(msg.payload ?? null);
+              }
+              return current;
             });
-            setGraphData(msg.payload);
           }
           break;
 
@@ -236,11 +362,26 @@ function App() {
           break;
 
         case "session_id":
-          // Handle initial connection message with database mode
+          // Handle initial connection message with database mode and playbook URL
           if (msg.database_mode) {
             const mode = msg.database_mode === 'local' ? 'Local' : 'Remote';
             setDatabaseMode(mode);
             console.log(`Synchronized database mode to: ${mode}`);
+          }
+          if ((msg as any).playbook_url) {
+            playbookUrlRef.current = (msg as any).playbook_url;
+            playbookApiKeyRef.current = (msg as any).playbook_api_key || '';
+            // Fetch initial lessons list
+            fetchAllLessons();
+            // Set up SSE subscription for real-time lesson events
+            if (sseSourceRef.current) { sseSourceRef.current.close(); }
+            const es = new EventSource(`${(msg as any).playbook_url}/api/v1/events`);
+            const onLessonChange = () => { refreshExpandedFolders(); fetchAllLessons(); };
+            es.addEventListener('lesson_created', onLessonChange);
+            es.addEventListener('lesson_updated', onLessonChange);
+            es.addEventListener('lesson_deleted', onLessonChange);
+            es.addEventListener('folder_deleted', onLessonChange);
+            sseSourceRef.current = es;
           }
           break;
 
@@ -253,75 +394,17 @@ function App() {
           }
           break;
 
-        case "lessons_list":
-          if (msg.lessons) {
-            setLessons(msg.lessons);
-            setLessonError(null); // Clear any previous error on successful list
-            setLessonApiKeyError(false); // Clear API key error on success
-          }
-          break;
-
-        case "lesson_content":
-          // Update the specific lesson with its full content
-          if ((msg as any).lesson) {
-            const lessonWithContent = (msg as any).lesson;
-            setLessons((prev) =>
-              prev.map((l) =>
-                l.id === lessonWithContent.id ? { ...l, content: lessonWithContent.content } : l
-              )
-            );
-          }
-          break;
-
-        case "lesson_error":
-          console.error('[App] Received lesson_error:', (msg as any).error);
-          setIsLessonValidating(false);
-          const errorMsg = (msg as any).error || 'An unknown error occurred';
-          // Check if it's an API key error
-          if (errorMsg.toLowerCase().includes('api key') || errorMsg.toLowerCase().includes('invalid') || errorMsg.toLowerCase().includes('unavailable')) {
-            setLessonApiKeyError(true);
-          } else {
-            setLessonError(errorMsg);
-            // Auto-clear error after 5 seconds
-            setTimeout(() => setLessonError(null), 5000);
-          }
-          break;
-
-        case "lesson_created":
-        case "lesson_updated":
-          console.log(`[App] Received ${msg.type}:`, msg);
-          setIsLessonValidating(false);
-          if ((msg as any).validation) {
-            // Show validation feedback (info or warning)
-            setLessonValidationResult({
-              feedback: (msg as any).validation.feedback || '',
-              severity: (msg as any).validation.severity || 'info',
-              conflicting_lesson_ids: (msg as any).validation.conflicting_lesson_ids || [],
-              isRejected: false,
-            });
-          } else {
-            // No validation feedback, clear any previous result
-            setLessonValidationResult(null);
-          }
-          break;
-
-        case "lesson_rejected":
-          console.log('[App] Received lesson_rejected:', msg);
-          setIsLessonValidating(false);
-          setLessonValidationResult({
-            feedback: (msg as any).reason || 'Validation failed',
-            severity: (msg as any).severity || 'error',
-            conflicting_lesson_ids: (msg as any).conflicting_lesson_ids || [],
-            isRejected: true,
-          });
-          break;
+        // Lesson messages are handled directly via ao-playbook HTTP (not WebSocket)
 
         default:
           console.warn(`Unhandled message type: ${msg.type}`);
       }
     };
 
-    return () => socket.close();
+    return () => {
+      socket.close();
+      if (sseSourceRef.current) { sseSourceRef.current.close(); }
+    };
   }, []);
   // }, [authenticated, user]);
 
@@ -409,7 +492,8 @@ function App() {
     // Clear graph data when switching experiments to avoid showing stale data
     setGraphData(null);
     setSelectedExperiment(experiment);
-    setShowLessons(false); // Hide lessons when viewing an experiment
+    setShowLessons(false);
+    setShowAppliedLessons(false);
 
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "get_graph", session_id: experiment.session_id }));
@@ -421,10 +505,8 @@ function App() {
     setSelectedExperiment(null);
     setGraphData(null);
 
-    // Request lessons from server
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "get_lessons" }));
-    }
+    // Request root folder listing directly from ao-playbook
+    fetchFolderDirect('');
   };
 
   const handleDatabaseModeChange = (mode: 'Local' | 'Remote') => {
@@ -537,51 +619,82 @@ function App() {
             </button>
           </div>
         )}
-        {showLessons ? (
+        {showAppliedLessons && selectedExperiment ? (
+          <AppliedLessonsView
+            lessons={allLessons.filter((l) =>
+              l.appliedTo?.some((a) => a.sessionId === selectedExperiment.session_id)
+            )}
+            isDarkTheme={isDarkTheme}
+            onBack={() => setShowAppliedLessons(false)}
+            onFetchLessonContent={fetchLessonContent}
+            lessonContentUpdate={lessonContentUpdate}
+          />
+        ) : showLessons ? (
           <LessonsView
-            lessons={lessons}
             isDarkTheme={isDarkTheme}
             validationResult={lessonValidationResult}
             isValidating={isLessonValidating}
             onClearValidation={() => setLessonValidationResult(null)}
             apiKeyError={lessonApiKeyError}
-            onLessonCreate={(data: LessonFormData, force?: boolean) => {
-              // Create lesson via WebSocket (proxied to ao-playbook)
-              if (ws && ws.readyState === WebSocket.OPEN) {
-                setIsLessonValidating(true);
-                ws.send(JSON.stringify({
-                  type: "add_lesson",
-                  name: data.name,
-                  summary: data.summary,
-                  content: data.content,
-                  path: data.path || '',
-                  force: force || false,
-                }));
-              }
+            folderResult={lessonFolderResult}
+            lessonContentUpdate={lessonContentUpdate}
+            onFetchFolder={handleFetchFolder}
+            onLessonCreate={async (data: LessonFormData, force?: boolean) => {
+              const url = playbookUrlRef.current;
+              if (!url) { handleLessonError('Playbook server not configured'); return; }
+              setIsLessonValidating(true);
+              try {
+                const qs = force ? '?force=true' : '';
+                const result = await playbookSseMutation(url, 'POST', `/api/v1/lessons${qs}`, playbookApiKeyRef.current, {
+                  name: data.name, summary: data.summary, content: data.content, path: data.path || '',
+                });
+                setIsLessonValidating(false);
+                if (result.status === 'rejected') {
+                  let reason = result.reason || 'Validation failed';
+                  if (result.hint) { reason += `\n\nHint: ${result.hint}`; }
+                  setLessonValidationResult({ feedback: reason, severity: 'error', conflicting_lesson_ids: result.conflicting_lesson_ids || [], isRejected: true });
+                } else if (result.error) {
+                  handleLessonError(result.error);
+                } else if (result.status === 'created') {
+                  if (result.validation) {
+                    setLessonValidationResult({ feedback: result.validation.feedback || '', severity: result.validation.severity || 'info', conflicting_lesson_ids: result.validation.conflicting_lesson_ids || [], isRejected: false });
+                  } else { setLessonValidationResult(null); }
+                  refreshExpandedFolders();
+                }
+              } catch (e: any) { handleLessonError(e.message); }
             }}
-            onLessonUpdate={(id: string, data: Partial<LessonFormData>, force?: boolean) => {
-              // Update lesson via WebSocket (proxied to ao-playbook)
-              if (ws && ws.readyState === WebSocket.OPEN) {
-                setIsLessonValidating(true);
-                ws.send(JSON.stringify({
-                  type: "update_lesson",
-                  lesson_id: id,
-                  ...data,
-                  force: force || false,
-                }));
-              }
+            onLessonUpdate={async (id: string, data: Partial<LessonFormData>, force?: boolean) => {
+              const url = playbookUrlRef.current;
+              if (!url) { handleLessonError('Playbook server not configured'); return; }
+              setIsLessonValidating(true);
+              try {
+                const qs = force ? '?force=true' : '';
+                const result = await playbookSseMutation(url, 'PUT', `/api/v1/lessons/${id}${qs}`, playbookApiKeyRef.current, data);
+                setIsLessonValidating(false);
+                if (result.status === 'rejected') {
+                  let reason = result.reason || 'Validation failed';
+                  if (result.hint) { reason += `\n\nHint: ${result.hint}`; }
+                  setLessonValidationResult({ feedback: reason, severity: 'error', conflicting_lesson_ids: result.conflicting_lesson_ids || [], isRejected: true });
+                } else if (result.error) {
+                  handleLessonError(result.error);
+                } else {
+                  if (result.validation) {
+                    setLessonValidationResult({ feedback: result.validation.feedback || '', severity: result.validation.severity || 'info', conflicting_lesson_ids: result.validation.conflicting_lesson_ids || [], isRejected: false });
+                  } else { setLessonValidationResult(null); }
+                  refreshExpandedFolders();
+                }
+              } catch (e: any) { handleLessonError(e.message); }
             }}
-            onLessonDelete={(id: string) => {
-              // Delete lesson via WebSocket (proxied to ao-playbook)
-              if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                  type: "delete_lesson",
-                  lesson_id: id,
-                }));
-              }
+            onLessonDelete={async (id: string) => {
+              const url = playbookUrlRef.current;
+              if (!url) { handleLessonError('Playbook server not configured'); return; }
+              try {
+                const result = await playbookSseMutation(url, 'DELETE', `/api/v1/lessons/${id}`, playbookApiKeyRef.current);
+                if (result.error) { handleLessonError(result.error); }
+                else { refreshExpandedFolders(); }
+              } catch (e: any) { handleLessonError(e.message); }
             }}
             onNavigateToRun={(sessionId: string, nodeId?: string) => {
-              // Navigate to the run (and optionally focus on a specific node)
               const experiment = experiments.find(e => e.session_id === sessionId);
               if (experiment) {
                 setShowLessons(false);
@@ -591,12 +704,7 @@ function App() {
                 }
               }
             }}
-            onFetchLessonContent={(id: string) => {
-              // Fetch individual lesson content via WebSocket
-              if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: "get_lesson", lesson_id: id }));
-              }
-            }}
+            onFetchLessonContent={fetchLessonContent}
           />
         ) : selectedExperiment && graphData ? (
           <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "auto", position: "relative" }}>
@@ -605,8 +713,9 @@ function App() {
               runName={selectedExperiment.run_name || ''}
               isDarkTheme={isDarkTheme}
               sessionId={selectedExperiment.session_id}
-              lessons={lessons}
+              lessons={allLessons}
               onNavigateToLessons={() => setShowLessons(true)}
+              onNavigateToAppliedLessons={() => setShowAppliedLessons(true)}
             />
             {/* Graph */}
             <div style={{ flex: 1, minHeight: 0 }}>

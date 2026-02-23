@@ -13,6 +13,7 @@ from ao.server.handlers.ui_handlers import (
     handle_get_graph,
     handle_erase,
     handle_get_all_experiments,
+    handle_get_lessons_applied,
 )
 
 from ao.server.handlers.runner_handlers import (
@@ -21,14 +22,6 @@ from ao.server.handlers.runner_handlers import (
     handle_deregister_message,
     handle_update_command,
     handle_log,
-)
-
-from ao.server.handlers.lesson_handlers import (
-    handle_get_lessons,
-    handle_add_lesson,
-    handle_update_lesson,
-    handle_delete_lesson,
-    handle_get_lesson,
 )
 
 __all__ = [
@@ -46,16 +39,11 @@ __all__ = [
     "handle_get_graph",
     "handle_erase",
     "handle_get_all_experiments",
+    "handle_get_lessons_applied",
     # Runner handlers
     "handle_add_node",
     "handle_add_subrun",
     "handle_deregister_message",
     "handle_update_command",
     "handle_log",
-    # Lesson handlers
-    "handle_get_lessons",
-    "handle_add_lesson",
-    "handle_update_lesson",
-    "handle_delete_lesson",
-    "handle_get_lesson",
 ]

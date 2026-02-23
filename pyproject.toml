@@ -4,11 +4,15 @@
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.package-data]
+"ao.assets" = ["SKILL.md"]
+
 [tool.setuptools]
 # Map ao package to src directory with subpackages
 package-dir = {"ao" = "src"}
 packages = [
     "ao",
+    "ao.assets",
     "ao.cli",
     "ao.common",
     "ao.runner",
@@ -37,7 +41,7 @@ line-length = 100
 
 [project]
 name = "ao-dev"
-version = "0.1.0"
+version = "0.1.1"
 description = "A development tool for LLM call visualization and debugging"
 readme = "docs/release/PYPI_DESC.md"
 requires-python = ">=3.10"

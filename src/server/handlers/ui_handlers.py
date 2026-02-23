@@ -193,3 +193,9 @@ def handle_get_all_experiments(server, conn: socket.socket) -> None:
     )
     # Then send the experiment list
     server.broadcast_experiment_list_to_uis(conn)
+
+
+def handle_get_lessons_applied(server, conn: socket.socket) -> None:
+    """Return all lessons_applied records (which runs used which lessons)."""
+    records = DB.get_all_lessons_applied()
+    send_json(conn, {"type": "lessons_applied", "records": records})

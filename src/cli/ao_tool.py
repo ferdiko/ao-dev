@@ -615,11 +615,9 @@ def install_skill_command() -> None:
     target_dir = target_root / ".claude" / "skills" / "ao"
     target_file = target_dir / "SKILL.md"
 
-    # Find the source SKILL.md relative to this package
-    # ao package is at ao-dev/ao/, SKILL.md is at ao-dev/SKILL.md
-    import ao
-    ao_package_dir = Path(ao.__file__).parent  # ao-dev/ao/
-    skill_source = ao_package_dir.parent / "SKILL.md"  # Go up to repo root
+    # Find the source SKILL.md bundled inside the ao package
+    import ao.assets
+    skill_source = Path(ao.assets.__file__).parent / "SKILL.md"
 
     if not skill_source.exists():
         print(f"Error: SKILL.md not found at {skill_source}", file=sys.stderr)
@@ -746,25 +744,6 @@ def playbook_start_server_command(args) -> None:
         })
 
 
-def playbook_design_guide_query_command(args) -> None:
-    """Query the design guide for agent development techniques."""
-    query = args.query
-
-    data = {"query": query}
-    if args.top_k is not None:
-        data["top_k"] = args.top_k
-
-    result = _playbook_request("POST", "/api/v1/query/design-guide", data)
-    if "error" in result:
-        output_json(result)
-    else:
-        output_json({
-            "status": "success",
-            "query": query,
-            "results": result,
-        })
-
-
 def _playbook_request(method: str, path: str, data: dict | None = None) -> dict:
     """Make an HTTP request to the playbook server.
 
@@ -799,6 +778,98 @@ def _playbook_request(method: str, path: str, data: dict | None = None) -> dict:
 
     try:
         with urllib.request.urlopen(req, timeout=120) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8") if e.fp else str(e)
+        try:
+            server_error = json.loads(error_body)
+            if "detail" in server_error:
+                return {"status": "error", "error": server_error["detail"]}
+            if "error" in server_error:
+                return {"status": "error", "error": server_error["error"]}
+        except json.JSONDecodeError:
+            pass
+        return {"status": "error", "error": error_body}
+    except urllib.error.URLError as e:
+        return {"status": "error", "error": f"Connection failed: {e.reason}"}
+    except json.JSONDecodeError as e:
+        return {"status": "error", "error": f"Invalid JSON response: {e}"}
+
+
+def _parse_sse_stream(response) -> dict:
+    """Read an SSE stream from *response* and return the result/error data.
+
+    Handles ``waiting``, ``result``, and ``error`` events.  On ``waiting``,
+    prints a message to stderr so the CLI user sees feedback.
+    """
+    current_event = None
+    for raw_line in response:
+        line = raw_line.decode("utf-8", errors="replace").rstrip("\n").rstrip("\r")
+
+        if line.startswith("event: "):
+            current_event = line[7:]
+        elif line.startswith("data: "):
+            data_str = line[6:]
+            try:
+                data = json.loads(data_str)
+            except json.JSONDecodeError:
+                data = {"raw": data_str}
+
+            if current_event == "waiting":
+                msg = data.get("message", "Waiting for lock...")
+                print(f"[playbook] {msg}", file=sys.stderr)
+            elif current_event == "acquired":
+                msg = data.get("message", "Acquired lock")
+                print(f"[playbook] {msg}", file=sys.stderr)
+            elif current_event == "result":
+                return data
+            elif current_event == "error":
+                code = data.get("code", 500)
+                error_msg = data.get("error", "Unknown error")
+                return {"status": "error", "error": error_msg, "code": code}
+
+            current_event = None
+
+    # Stream ended without result/error
+    return {"status": "error", "error": "SSE stream ended unexpectedly"}
+
+
+def _playbook_request_sse(method: str, path: str, data: dict | None = None) -> dict:
+    """Make an HTTP request to the playbook server expecting an SSE stream.
+
+    Returns the parsed result/error data dict.
+    """
+    import urllib.request
+    import urllib.error
+
+    url = f"{PLAYBOOK_SERVER_URL}{path}"
+
+    if data is not None:
+        body = json.dumps(data).encode("utf-8")
+    else:
+        body = None
+
+    headers = {"Accept": "text/event-stream"}
+    if body:
+        headers["Content-Type"] = "application/json"
+
+    api_key = os.environ.get("AO_API_KEY")
+    if api_key:
+        headers["X-API-Key"] = api_key
+
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers=headers,
+        method=method,
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=120) as response:
+            content_type = response.headers.get("Content-Type", "")
+            if "text/event-stream" in content_type:
+                return _parse_sse_stream(response)
+            # Fallback: plain JSON response
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         error_body = e.read().decode("utf-8") if e.fp else str(e)
@@ -852,7 +923,7 @@ def playbook_lessons_create_command(args) -> None:
     if args.force:
         endpoint += "?force=true"
 
-    result = _playbook_request("POST", endpoint, data)
+    result = _playbook_request_sse("POST", endpoint, data)
 
     # Handle validation rejection
     if result.get("status") == "rejected":
@@ -902,7 +973,7 @@ def playbook_lessons_update_command(args) -> None:
     if args.force:
         endpoint += "?force=true"
 
-    result = _playbook_request("PUT", endpoint, data)
+    result = _playbook_request_sse("PUT", endpoint, data)
 
     # Handle validation rejection
     if result.get("status") == "rejected":
@@ -936,7 +1007,7 @@ def playbook_lessons_update_command(args) -> None:
 
 def playbook_lessons_delete_command(args) -> None:
     """Delete a lesson."""
-    result = _playbook_request("DELETE", f"/api/v1/lessons/{args.lesson_id}")
+    result = _playbook_request_sse("DELETE", f"/api/v1/lessons/{args.lesson_id}")
     if "status" in result and result["status"] == "error":
         output_json(result)
     output_json({"status": "success", "deleted": args.lesson_id})
@@ -1186,7 +1257,7 @@ def create_parser() -> ArgumentParser:
     playbook = subparsers.add_parser(
         "playbook",
         help="Design playbook commands",
-        description="Query the ao design guide for agent development techniques.",
+        description="Manage lessons for agent development.",
     )
     playbook_subparsers = playbook.add_subparsers(dest="playbook_command", required=True)
 
@@ -1194,33 +1265,7 @@ def create_parser() -> ArgumentParser:
     playbook_subparsers.add_parser(
         "start-server",
         help="Start the playbook server",
-        description="Start the ao-playbook-server daemon for design guide queries.",
-    )
-
-    # playbook design-guide (nested subcommand)
-    design_guide = playbook_subparsers.add_parser(
-        "design-guide",
-        help="Query the design guide",
-        description="Query the design guide for agent development techniques and best practices.",
-    )
-    design_guide_subparsers = design_guide.add_subparsers(dest="design_guide_command", required=True)
-
-    # playbook design-guide query
-    design_guide_query = design_guide_subparsers.add_parser(
-        "query",
-        help="Query the design guide",
-        description="Search the design guide using semantic similarity.",
-    )
-    design_guide_query.add_argument(
-        "--query", "-q",
-        required=True,
-        help="The problem or question to query the design guide with",
-    )
-    design_guide_query.add_argument(
-        "--top-k", "-k",
-        type=int,
-        default=None,
-        help="Number of results to return (omit for best match)",
+        description="Start the ao-playbook-server daemon.",
     )
 
     # playbook lessons (nested subcommand)
@@ -1386,9 +1431,6 @@ def main():
     elif args.command == "playbook":
         if args.playbook_command == "start-server":
             playbook_start_server_command(args)
-        elif args.playbook_command == "design-guide":
-            if args.design_guide_command == "query":
-                playbook_design_guide_query_command(args)
         elif args.playbook_command == "lessons":
             if args.lessons_command == "list":
                 playbook_lessons_list_command(args)

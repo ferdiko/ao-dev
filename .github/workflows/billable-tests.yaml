@@ -163,6 +163,12 @@ jobs:
       run: |
         uv run pytest -v -s tests/billable/test_caching.py
 
+    - name: Dump server logs
+      if: always()
+      run: |
+        echo "=== main_server.log ==="
+        cat ~/.cache/ao/logs/main_server.log 2>/dev/null || echo "No server log found"
+
     - name: Clean up
       if: always()
       run: rm -rf ~/.cache/ao/tests/caching

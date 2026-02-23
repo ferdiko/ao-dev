@@ -252,8 +252,7 @@ class AgentRunner:
         """Handle incoming server messages.
 
         Control messages (restart, shutdown) are handled directly.
-        Response messages (session_id, etc.) are routed to the response queue
-        for send_to_server_and_receive to pick up.
+        Response messages are routed by request_id to the correct waiting thread.
         """
         msg_type = msg.get("type")
         if msg_type == "restart":
@@ -263,9 +262,11 @@ class AgentRunner:
             logger.info(f"[AgentRunner] Received shutdown message: {msg}")
             self.shutdown_flag = True
         else:
-            # Route to response queue for synchronous request-response patterns
-            logger.debug(f"[AgentRunner] Routing response to queue: {msg}")
-            self.response_queue.put(msg)
+            from ao.common.utils import route_response
+            if not route_response(msg):
+                # No matching request_id — fall back to legacy queue
+                logger.debug(f"[AgentRunner] Unmatched response to queue: {msg}")
+                self.response_queue.put(msg)
 
     def _is_debugpy_session(self) -> bool:
         """Detect if we're running under debugpy (VSCode debugging)."""

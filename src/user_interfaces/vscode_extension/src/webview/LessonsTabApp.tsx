@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { LessonsView, Lesson, LessonFormData, ValidationResult } from '../../../shared_components/components/lessons/LessonsView';
 import { useIsVsCodeDarkTheme } from '../../../shared_components/utils/themeUtils';
 
@@ -12,33 +12,65 @@ declare global {
 }
 
 export const LessonsTabApp: React.FC = () => {
-  const [lessons, setLessons] = useState<Lesson[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const [apiKeyError, setApiKeyError] = useState(false);
   const isDarkTheme = useIsVsCodeDarkTheme();
 
+  // Folder tree data passed to LessonsView via folderResult prop
+  const [folderResult, setFolderResult] = useState<{
+    path: string; folders: { path: string; lesson_count: number }[]; lessons: Lesson[]; lessonCount?: number;
+  } | null>(null);
+  const [lessonContentUpdate, setLessonContentUpdate] = useState<{
+    id: string; content: string;
+  } | null>(null);
+
+  // Track expanded folders so we can re-fetch them on lessons_refresh
+  const expandedFoldersRef = useRef<Set<string>>(new Set(['']));
+
+  const fetchFolder = useCallback((path: string) => {
+    // Track which folders are expanded
+    expandedFoldersRef.current.add(path);
+    if (window.vscode) {
+      window.vscode.postMessage({ type: 'folder_ls', path });
+    }
+  }, []);
+
+  const refreshExpandedFolders = useCallback(() => {
+    for (const path of expandedFoldersRef.current) {
+      if (window.vscode) {
+        window.vscode.postMessage({ type: 'folder_ls', path });
+      }
+    }
+  }, []);
+
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
 
       switch (message.type) {
-        case 'lessons_list':
-          console.log('[LessonsTabApp] Received lessons_list:', message.lessons);
-          setLessons(message.lessons || []);
-          setError(null); // Clear any previous error on successful list
-          setApiKeyError(false); // Clear API key error on success
+        case 'folder_ls_result':
+          setFolderResult({
+            path: message.path ?? '',
+            folders: message.folders || [],
+            lessons: message.lessons || [],
+            lessonCount: message.lesson_count,
+          });
+          setApiKeyError(false);
+          break;
+        case 'lessons_refresh':
+          // Server signals that lessons changed — re-fetch all expanded folders
+          refreshExpandedFolders();
           break;
         case 'lesson_content':
           // Update the specific lesson with its full content
           console.log('[LessonsTabApp] Received lesson_content:', message.lesson);
           if (message.lesson) {
-            setLessons((prev) =>
-              prev.map((l) =>
-                l.id === message.lesson.id ? { ...l, content: message.lesson.content } : l
-              )
-            );
+            setLessonContentUpdate({
+              id: message.lesson.id,
+              content: message.lesson.content,
+            });
           }
           break;
         case 'lesson_error':
@@ -86,7 +118,7 @@ export const LessonsTabApp: React.FC = () => {
 
     window.addEventListener('message', handleMessage);
 
-    // Send ready message to request lessons data
+    // Send ready message — request root folder instead of full lesson list
     if (window.vscode) {
       window.vscode.postMessage({ type: 'ready' });
     }
@@ -94,7 +126,7 @@ export const LessonsTabApp: React.FC = () => {
     return () => {
       window.removeEventListener('message', handleMessage);
     };
-  }, []);
+  }, [refreshExpandedFolders]);
 
   return (
     <div
@@ -139,12 +171,14 @@ export const LessonsTabApp: React.FC = () => {
         </div>
       )}
       <LessonsView
-        lessons={lessons}
         isDarkTheme={isDarkTheme}
         validationResult={validationResult}
         isValidating={isValidating}
         onClearValidation={() => setValidationResult(null)}
         apiKeyError={apiKeyError}
+        folderResult={folderResult}
+        lessonContentUpdate={lessonContentUpdate}
+        onFetchFolder={fetchFolder}
         onLessonCreate={(data: LessonFormData, force?: boolean) => {
           // Create lesson via postMessage to backend (proxied to ao-playbook)
           if (window.vscode) {

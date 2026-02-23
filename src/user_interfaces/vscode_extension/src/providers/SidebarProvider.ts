@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { GraphTabProvider } from './GraphTabProvider';
 import { PythonServerClient } from './PythonServerClient';
+import { PlaybookClient } from './PlaybookClient';
 import { configManager } from './ConfigManager';
 // Google auth disabled - feature not yet visible in UI
 // import { AuthManager } from './AuthManager';
@@ -140,10 +141,6 @@ _context: vscode.WebviewViewResolveContext,
                 case 'edit_output':
                 case 'get_graph':
                 case 'erase':
-                case 'get_lessons':
-                case 'add_lesson':
-                case 'update_lesson':
-                case 'delete_lesson':
                     this._pythonClient?.sendMessage(data);
                     break;
                 case 'setDatabaseMode':
@@ -184,6 +181,8 @@ _context: vscode.WebviewViewResolveContext,
                                 }
                                 if (msg.playbook_url) {
                                     this._pythonClient?.setPlaybookUrl(msg.playbook_url);
+                                    // Initialize direct PlaybookClient for lesson operations
+                                    PlaybookClient.init(msg.playbook_url, msg.playbook_api_key || '');
                                 }
                                 if (msg.playbook_api_key) {
                                     this._pythonClient?.setPlaybookApiKey(msg.playbook_api_key);
@@ -361,6 +360,8 @@ _context: vscode.WebviewViewResolveContext,
             this._windowStateListener.dispose();
             this._windowStateListener = undefined;
         }
+        // Clean up PlaybookClient
+        PlaybookClient.getInstance()?.dispose();
         // Clean up is handled by ConfigManager
     }
 }

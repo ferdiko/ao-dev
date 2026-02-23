@@ -78,6 +78,13 @@ def get_module_file_path(module_name: str) -> str | None:
 # Global lock for thread-safe server communication
 _server_lock = threading.Lock()
 
+# Per-request response routing: each send_to_server_and_receive call gets a
+# unique request_id. The listener thread calls route_response() to deliver
+# the response to the correct waiting thread via its Event.
+_pending_requests: dict = {}   # request_id -> threading.Event
+_pending_responses: dict = {}  # request_id -> response dict
+_pending_lock = threading.Lock()
+
 
 def send_to_server(msg):
     """Thread-safe send message to server (no response expected)."""
@@ -93,32 +100,54 @@ def send_to_server(msg):
 
 
 def send_to_server_and_receive(msg, timeout=30):
-    """Thread-safe send message to server and receive response.
+    """Thread-safe send message to server and receive the matching response.
 
-    The listener thread in AgentRunner reads all incoming messages from the socket
-    and routes non-control messages (like session_id responses) to a response queue.
-    This function sends a message and then waits for the response from that queue.
+    Attaches a request_id to the message. The server echoes it back, and
+    route_response() delivers it to this thread's Event.
     """
-    from ao.runner.context_manager import server_file, response_queue
+    import uuid
+    from ao.runner.context_manager import server_file
 
+    request_id = str(uuid.uuid4())
     if isinstance(msg, dict):
+        msg["request_id"] = request_id
         msg = json.dumps(msg) + "\n"
-    elif isinstance(msg, str) and msg[-1] != "\n":
-        msg += "\n"
+
+    event = threading.Event()
+    with _pending_lock:
+        _pending_requests[request_id] = event
 
     with _server_lock:
         logger.debug(f"[send_to_server_and_receive] Sending: {msg[:200]}")
         server_file.write(msg)
         server_file.flush()
 
-    # Wait for response from the queue (populated by listener thread)
     try:
-        response = response_queue.get(timeout=timeout)
-        logger.debug(f"[send_to_server_and_receive] Received from queue: {response}")
-        return response
-    except Exception as e:
-        logger.error(f"[send_to_server_and_receive] Timeout or error waiting for response: {e}")
-        raise
+        if not event.wait(timeout=timeout):
+            raise TimeoutError(f"No response within {timeout}s for request {request_id}")
+        with _pending_lock:
+            return _pending_responses.pop(request_id)
+    finally:
+        with _pending_lock:
+            _pending_requests.pop(request_id, None)
+            _pending_responses.pop(request_id, None)
+
+
+
+def route_response(msg):
+    """Route an incoming response to the correct waiting thread by request_id.
+
+    Called by the listener thread. Returns True if matched, False otherwise.
+    """
+    request_id = msg.get("request_id")
+    if request_id:
+        with _pending_lock:
+            event = _pending_requests.get(request_id)
+            if event:
+                _pending_responses[request_id] = msg
+                event.set()
+                return True
+    return False
 
 
 # ===============================================
