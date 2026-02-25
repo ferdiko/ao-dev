@@ -15,7 +15,6 @@ from ao.common.logger import logger
 
 @dataclass
 class Config:
-    database_url: str = None
     python_executable: str = None  # Auto-populated when ao-server runs
     playbook_mode: str = None  # "local" or "cloud"
     playbook_api_key: str = None  # API key for cloud mode
@@ -24,11 +23,9 @@ class Config:
     def from_yaml_file(cls, yaml_file: str) -> "Config":
         with open(yaml_file, encoding="utf-8") as f:
             config_dict = yaml.safe_load(f)
-        # maybe here we need to do some processing if we have more involved types
-        extra_keys = sorted(set(config_dict.keys()) - set(cls.__dataclass_fields__.keys()))
-        if len(extra_keys) > 0:
-            raise ValueError(f"The config file at {yaml_file} had unknown keys ({extra_keys}).")
-        return cls(**config_dict)
+        known_keys = set(cls.__dataclass_fields__.keys())
+        filtered = {k: v for k, v in config_dict.items() if k in known_keys}
+        return cls(**filtered)
 
     def to_yaml_file(self, yaml_file: str) -> None:
         # Create parent directories if they don't exist

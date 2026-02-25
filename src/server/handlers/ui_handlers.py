@@ -179,17 +179,20 @@ def handle_erase(server, msg: dict) -> None:
 
 def handle_get_all_experiments(server, conn: socket.socket) -> None:
     """Handle request to refresh the experiment list (e.g., when VS Code window regains focus)."""
-    # First, send current session_id and database_mode to ensure UI state is synced
     send_json(
         conn,
         {
             "type": "session_id",
             "session_id": None,
             "config_path": AO_CONFIG,
-            "database_mode": DB.get_current_mode(),
             "playbook_url": PLAYBOOK_SERVER_URL,
             "playbook_api_key": PLAYBOOK_API_KEY,
         },
     )
-    # Then send the experiment list
     server.broadcast_experiment_list_to_uis(conn)
+
+
+def handle_get_lessons_applied(server, conn: socket.socket) -> None:
+    """Return all lessons_applied records (which runs used which lessons)."""
+    records = DB.get_all_lessons_applied()
+    send_json(conn, {"type": "lessons_applied", "records": records})

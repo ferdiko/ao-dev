@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { PythonServerClient } from './PythonServerClient';
+import { PlaybookClient } from './PlaybookClient';
 import { ProcessInfo } from '../../../shared_components/types';
 
 export class GraphTabProvider implements vscode.WebviewPanelSerializer {
@@ -10,6 +11,8 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     private _panels: Map<string, vscode.WebviewPanel> = new Map();
     private _pythonClient: PythonServerClient | null = null;
     private _sidebarProvider: { refreshLessons: () => void } | null = null;
+    /** Cached lessons_applied records from ao-server (which runs used which lessons). */
+    private _lessonsAppliedCache: any[] = [];
 
     public setSidebarProvider(provider: { refreshLessons: () => void }): void {
         this._sidebarProvider = provider;
@@ -19,11 +22,162 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         // Initialize Python client
         this._pythonClient = PythonServerClient.getInstance();
         this._pythonClient.ensureConnected(); // async but don't await in constructor
+
+        // Listen for experiment_list changes to invalidate lessons_applied cache
+        this._pythonClient.onMessage((msg) => {
+            if (msg.type === 'experiment_list') {
+                this._refreshLessonsApplied();
+            }
+        });
     }
 
     private get _iconPath(): vscode.Uri {
         return vscode.Uri.joinPath(this._extensionUri, 'dist', 'icon.png');
     }
+
+    // ============================================================
+    // lessons_applied cache (from ao-server)
+    // ============================================================
+
+    private _refreshLessonsApplied(): void {
+        this._pythonClient?.sendMessage({ type: 'get_lessons_applied' });
+    }
+
+    /** Merge lessons_applied records into a list of lessons. */
+    private _mergeApplied(lessons: any[]): any[] {
+        const byLesson: Record<string, any[]> = {};
+        for (const r of this._lessonsAppliedCache) {
+            const lid = r.lesson_id;
+            if (!byLesson[lid]) { byLesson[lid] = []; }
+            byLesson[lid].push({ sessionId: r.session_id, nodeId: r.node_id, runName: r.run_name });
+        }
+        for (const lesson of lessons) {
+            if (lesson.id && byLesson[lesson.id]) {
+                lesson.appliedTo = byLesson[lesson.id];
+            }
+        }
+        return lessons;
+    }
+
+    // ============================================================
+    // Playbook helpers — call PlaybookClient and post results to webview
+    // ============================================================
+
+    private async _handleFolderLs(panel: vscode.WebviewPanel, reqPath: string): Promise<void> {
+        const client = PlaybookClient.getInstance();
+        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Playbook server not configured' }); return; }
+        try {
+            const result = await client.fetchFolder(reqPath);
+            if (result.error) { panel.webview.postMessage({ type: 'lesson_error', error: result.error || result.detail }); return; }
+            const lessons = this._mergeApplied(result.lessons || []);
+            panel.webview.postMessage({
+                type: 'folder_ls_result',
+                path: reqPath,
+                folders: result.folders || [],
+                lessons,
+                lesson_count: result.lesson_count || 0,
+            });
+        } catch (e: any) { panel.webview.postMessage({ type: 'lesson_error', error: e.message }); }
+    }
+
+    private async _handleGetLesson(panel: vscode.WebviewPanel, lessonId: string): Promise<void> {
+        const client = PlaybookClient.getInstance();
+        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Playbook server not configured' }); return; }
+        try {
+            const result = await client.getLesson(lessonId);
+            if (result.error) { panel.webview.postMessage({ type: 'lesson_error', error: result.error || result.detail }); return; }
+            panel.webview.postMessage({ type: 'lesson_content', lesson: result });
+        } catch (e: any) { panel.webview.postMessage({ type: 'lesson_error', error: e.message }); }
+    }
+
+    private async _handleGetLessons(panel: vscode.WebviewPanel): Promise<void> {
+        const client = PlaybookClient.getInstance();
+        if (!client) { panel.webview.postMessage({ type: 'lessons_list', lessons: [], error: 'Playbook server not configured' }); return; }
+        try {
+            const result = await client.getLessonsList();
+            if (result.error) { panel.webview.postMessage({ type: 'lessons_list', lessons: [], error: result.error }); return; }
+            const lessons = Array.isArray(result) ? result : result.lessons || [];
+            panel.webview.postMessage({ type: 'lessons_list', lessons: this._mergeApplied(lessons) });
+        } catch (e: any) { panel.webview.postMessage({ type: 'lessons_list', lessons: [], error: e.message }); }
+    }
+
+    private async _handleAddLesson(panel: vscode.WebviewPanel, data: any): Promise<void> {
+        const client = PlaybookClient.getInstance();
+        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Playbook server not configured' }); return; }
+        try {
+            const result = await client.createLesson(
+                { name: data.name, summary: data.summary || '', content: data.content, path: data.path || '' },
+                !!data.force,
+            );
+            if (result.status === 'rejected') {
+                let reason = result.reason || 'Validation failed';
+                if (result.hint) { reason += `\n\nHint: ${result.hint}`; }
+                panel.webview.postMessage({ type: 'lesson_rejected', reason, severity: 'error', conflicting_lesson_ids: result.conflicting_lesson_ids || [] });
+            } else if (result.error) {
+                panel.webview.postMessage({ type: 'lesson_error', error: result.error });
+            } else if (result.status === 'created') {
+                panel.webview.postMessage({ type: 'lesson_created', lesson: result, validation: result.validation });
+            } else {
+                panel.webview.postMessage({ type: 'lesson_error', error: 'Unexpected server response' });
+            }
+        } catch (e: any) { panel.webview.postMessage({ type: 'lesson_error', error: e.message }); }
+    }
+
+    private async _handleUpdateLesson(panel: vscode.WebviewPanel, data: any): Promise<void> {
+        const client = PlaybookClient.getInstance();
+        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Playbook server not configured' }); return; }
+        const lessonId = data.lesson_id;
+        if (!lessonId) { panel.webview.postMessage({ type: 'lesson_error', error: 'Missing lesson_id' }); return; }
+        const fields: any = {};
+        for (const f of ['name', 'summary', 'content', 'path']) { if (data[f] !== undefined) { fields[f] = data[f]; } }
+        try {
+            const result = await client.updateLesson(lessonId, fields, !!data.force);
+            if (result.status === 'rejected') {
+                let reason = result.reason || 'Validation failed';
+                if (result.hint) { reason += `\n\nHint: ${result.hint}`; }
+                panel.webview.postMessage({ type: 'lesson_rejected', reason, severity: 'error', conflicting_lesson_ids: result.conflicting_lesson_ids || [] });
+            } else if (result.error) {
+                panel.webview.postMessage({ type: 'lesson_error', error: result.error });
+            } else if (result.status === 'updated') {
+                panel.webview.postMessage({ type: 'lesson_updated', lesson: result, validation: result.validation });
+            } else {
+                panel.webview.postMessage({ type: 'lesson_error', error: 'Unexpected server response' });
+            }
+        } catch (e: any) { panel.webview.postMessage({ type: 'lesson_error', error: e.message }); }
+    }
+
+    private async _handleDeleteLesson(panel: vscode.WebviewPanel, data: any): Promise<void> {
+        const client = PlaybookClient.getInstance();
+        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Playbook server not configured' }); return; }
+        const lessonId = data.lesson_id;
+        if (!lessonId) { panel.webview.postMessage({ type: 'lesson_error', error: 'Missing lesson_id' }); return; }
+        try {
+            const result = await client.deleteLesson(lessonId);
+            if (result.error) {
+                panel.webview.postMessage({ type: 'lesson_error', error: result.error });
+            }
+            // SSE event will trigger refresh in all panels
+        } catch (e: any) { panel.webview.postMessage({ type: 'lesson_error', error: e.message }); }
+    }
+
+    // ============================================================
+    // Wire PlaybookClient SSE events to a webview panel
+    // ============================================================
+
+    private _setupPlaybookEvents(panel: vscode.WebviewPanel): void {
+        const client = PlaybookClient.getInstance();
+        if (!client) { return; }
+
+        const handler = () => {
+            panel.webview.postMessage({ type: 'lessons_refresh' });
+        };
+        client.on('lesson_event', handler);
+        panel.onDidDispose(() => { client.removeListener('lesson_event', handler); });
+    }
+
+    // ============================================================
+    // Graph Tab
+    // ============================================================
 
     public async createOrShowGraphTab(experiment: ProcessInfo): Promise<void> {
         const sessionId = experiment.session_id;
@@ -95,7 +249,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
 
         // Handle messages from the webview
         panel.webview.onDidReceiveMessage(data => {
-            
+
             switch (data.type) {
                 case 'ready':
                     // Send initial data to the tab
@@ -168,16 +322,10 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                     }
                     break;
                 case 'get_lessons':
-                    // Forward get_lessons request to Python server
-                    if (this._pythonClient) {
-                        this._pythonClient.sendMessage({ type: 'get_lessons' });
-                    }
+                    this._handleGetLessons(panel);
                     break;
                 case 'get_lesson':
-                    // Forward get_lesson request to Python server (for applied lessons content)
-                    if (this._pythonClient) {
-                        this._pythonClient.sendMessage(data);
-                    }
+                    this._handleGetLesson(panel, data.lesson_id);
                     break;
                 case 'openLessonsTab':
                     // Open the lessons tab
@@ -237,6 +385,10 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         }
     }
 
+    // ============================================================
+    // Lessons Tab (uses PlaybookClient directly)
+    // ============================================================
+
     public async createOrShowLessonsTab(): Promise<void> {
         const lessonsTabId = 'lessons';
         const columnToShowIn = vscode.window.activeTextEditor ?
@@ -291,25 +443,23 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         panel.webview.onDidReceiveMessage(data => {
             switch (data.type) {
                 case 'ready':
-                    // Ensure Python client is available
-                    if (!this._pythonClient) {
-                        this._pythonClient = PythonServerClient.getInstance();
-                        this._pythonClient.ensureConnected();
-                    }
-                    // Request root folder listing (lazy-loaded tree)
-                    if (this._pythonClient) {
-                        this._pythonClient.sendMessage({ type: 'folder_ls', path: '' });
-                    }
+                    // Request root folder listing directly from ao-playbook
+                    this._handleFolderLs(panel, '');
                     break;
                 case 'folder_ls':
+                    this._handleFolderLs(panel, data.path ?? '');
+                    break;
                 case 'add_lesson':
+                    this._handleAddLesson(panel, data);
+                    break;
                 case 'update_lesson':
+                    this._handleUpdateLesson(panel, data);
+                    break;
                 case 'delete_lesson':
+                    this._handleDeleteLesson(panel, data);
+                    break;
                 case 'get_lesson':
-                    // Forward lesson operations to Python server
-                    if (this._pythonClient) {
-                        this._pythonClient.sendMessage(data);
-                    }
+                    this._handleGetLesson(panel, data.lesson_id);
                     break;
                 case 'navigateToRun':
                     // Navigate to a specific run's graph - handled by opening a new graph tab
@@ -326,8 +476,8 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
             }
         });
 
-        // Set up message forwarding for lessons
-        this._setupLessonsMessageForwarding(panel);
+        // Wire PlaybookClient SSE events for real-time sync
+        this._setupPlaybookEvents(panel);
 
         // Send theme info
         this._sendThemeToPanel(panel);
@@ -335,6 +485,10 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
             this._sendThemeToPanel(panel);
         });
     }
+
+    // ============================================================
+    // Node Editor Tab
+    // ============================================================
 
     public async createOrShowNodeEditorTab(
         nodeId: string,
@@ -535,36 +689,9 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         return html;
     }
 
-    private _setupLessonsMessageForwarding(panel: vscode.WebviewPanel): void {
-        if (!this._pythonClient) {
-            console.warn('[GraphTabProvider] No Python client available for lessons message forwarding');
-            return;
-        }
-
-        const messageHandler = (msg: any) => {
-            // Forward lesson-related messages to the lessons panel
-            const lessonMessageTypes = [
-                'folder_ls_result',
-                'lessons_refresh',
-                'lessons_list',
-                'lesson_content',
-                'lesson_error',
-                'lesson_created',
-                'lesson_updated',
-                'lesson_rejected',
-            ];
-            if (lessonMessageTypes.includes(msg.type)) {
-                panel.webview.postMessage(msg);
-            }
-        };
-
-        this._pythonClient.onMessage(messageHandler);
-
-        // Clean up when panel is disposed
-        panel.onDidDispose(() => {
-            this._pythonClient?.removeMessageListener(messageHandler);
-        });
-    }
+    // ============================================================
+    // Server message forwarding (graph data, experiment lists, etc.)
+    // ============================================================
 
     private _setupServerMessageForwarding(panel: vscode.WebviewPanel, sessionId: string): void {
         if (!this._pythonClient) {
@@ -577,6 +704,11 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         (panel as any)._sessionRef = sessionRef; // Store reference on panel for later updates
 
         const messageHandler = (msg: any) => {
+            // Cache lessons_applied when received
+            if (msg.type === 'lessons_applied') {
+                this._lessonsAppliedCache = msg.records || [];
+                return;
+            }
             // Forward relevant messages to this specific tab
             if (msg.session_id === sessionRef.current || !msg.session_id) {
                 panel.webview.postMessage(msg);
@@ -607,7 +739,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         const path = require('path');
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview.js'));
         const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'dist', 'codicons', 'codicon.css'));
-        
+
         const templatePath = path.join(
             this._extensionUri.fsPath,
             'src',
@@ -656,7 +788,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         html = html.replace(/{{scriptUri}}/g, scriptUri.toString());
         html = html.replace(/{{codiconsUri}}/g, codiconsUri.toString());
         html = html.replace(/{{sessionId}}/g, sessionId);
-        
+
         return html;
     }
 
@@ -750,6 +882,9 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         }
     }
 
+    // ============================================================
+    // Lesson Editor Tab (uses PlaybookClient directly)
+    // ============================================================
 
     public closeLessonEditorTab(): void {
         const panel = this._panels.get('lesson-editor');
@@ -820,47 +955,30 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         panel.webview.onDidReceiveMessage(data => {
             switch (data.type) {
                 case 'ready':
-                    // Request lessons list for dropdown
-                    if (this._pythonClient) {
-                        this._pythonClient.sendMessage({ type: 'get_lessons' });
-                    }
+                    // Request lessons list for dropdown directly from ao-playbook
+                    this._handleGetLessons(panel);
                     break;
                 case 'lessonUpdated':
                     // Notify sidebar to refresh lessons list
                     this._sidebarProvider?.refreshLessons();
                     break;
                 case 'get_lessons':
+                    this._handleGetLessons(panel);
+                    break;
                 case 'get_lesson':
+                    this._handleGetLesson(panel, data.lesson_id);
+                    break;
                 case 'add_lesson':
+                    this._handleAddLesson(panel, data);
+                    break;
                 case 'update_lesson':
-                    // Forward lesson operations to Python server
-                    if (this._pythonClient) {
-                        this._pythonClient.sendMessage(data);
-                    }
+                    this._handleUpdateLesson(panel, data);
                     break;
             }
         });
 
-        // Forward lesson responses from server to this panel
-        const lessonEditorMessageHandler = (msg: any) => {
-            const lessonMessageTypes = [
-                'folder_ls_result',
-                'lessons_refresh',
-                'lessons_list',
-                'lesson_content',
-                'lesson_error',
-                'lesson_created',
-                'lesson_updated',
-                'lesson_rejected',
-            ];
-            if (lessonMessageTypes.includes(msg.type)) {
-                panel.webview.postMessage(msg);
-            }
-        };
-        this._pythonClient?.onMessage(lessonEditorMessageHandler);
-        panel.onDidDispose(() => {
-            this._pythonClient?.removeMessageListener(lessonEditorMessageHandler);
-        });
+        // Wire PlaybookClient SSE events for real-time sync
+        this._setupPlaybookEvents(panel);
 
         // Send theme info
         this._sendThemeToPanel(panel);
@@ -926,7 +1044,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
 
     public async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, state: any): Promise<void> {
         // This method is called when VS Code restarts and needs to restore the panel
-        
+
         // Set up the webview again
         webviewPanel.webview.options = {
             enableScripts: true,

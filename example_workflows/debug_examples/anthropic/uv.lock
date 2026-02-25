@@ -55,7 +55,7 @@ wheels = [
 
 [[package]]
 name = "ao-dev"
-version = "0.0.6"
+version = "0.1.1"
 source = { editable = "../../../" }
 dependencies = [
     { name = "debugpy" },
@@ -74,6 +74,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'dev'" },
     { name = "anthropic", marker = "extra == 'examples'" },
     { name = "black", marker = "extra == 'dev'", specifier = "==25.1.0" },
+    { name = "claude-agent-sdk", marker = "extra == 'onboard'" },
     { name = "debugpy" },
     { name = "dill" },
     { name = "e2b-code-interpreter", marker = "extra == 'dev'" },
@@ -102,7 +103,7 @@ requires-dist = [
     { name = "responses", marker = "extra == 'dev'" },
     { name = "together", marker = "extra == 'dev'" },
 ]
-provides-extras = ["dev", "examples", "docs"]
+provides-extras = ["dev", "examples", "onboard", "docs"]
 
 [[package]]
 name = "ao-examples-anthropic"
