@@ -47,6 +47,9 @@ Core system files:
 
 ## Installation & Setup
 
+## Before you start
+Check if you are working on the main branch. If not, check the main branch for updates. If there are updates, **DO NOT PROCEED**. Let the user know there are updates in the main branch and ask him to pull the main branch and merge into the current branch.
+
 ## Key Commands
 
 ```bash
