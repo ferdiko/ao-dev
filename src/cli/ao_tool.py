@@ -1267,6 +1267,16 @@ def create_parser() -> ArgumentParser:
         default=None,
         help="Additional instructions for the orchestrator agent",
     )
+    onboard.add_argument(
+        "--resume",
+        default=None,
+        help="Session ID to resume a previous onboarding run",
+    )
+    onboard.add_argument(
+        "--fork",
+        action="store_true",
+        help="Fork into a new session when resuming (keeps original intact)",
+    )
 
     # install-skill subcommand
     subparsers.add_parser(
@@ -1458,6 +1468,10 @@ def main():
             script_args.extend(["--model", args.model])
         if args.instructions:
             script_args.extend(["--instructions", args.instructions])
+        if args.resume:
+            script_args.extend(["--resume", args.resume])
+        if args.fork:
+            script_args.append("--fork")
         AgentRunner(
             script_path="ao.onboarding.orchestrator",
             script_args=script_args,

@@ -96,7 +96,7 @@ works on at least one sample.
 
 Run the full evaluation to establish the starting success rate. This is Round 0.
 
-Write the result to a **state file** (e.g., `onboarding_state.md` in the repo root).
+Write the result to your **state file** at `{state_file}`.
 This file is your persistent memory across the entire onboarding process. Re-read it
 at the start of every round. It survives context compaction — if the conversation
 gets long and earlier details are lost, the state file has everything you need.
@@ -407,9 +407,10 @@ After processing all samples, report:
 """
 
 
-def build_orchestrator_prompt(skill_content: str) -> str:
-    """Build orchestrator system prompt with ao skill reference injected."""
-    parts = [ORCHESTRATOR_PROMPT]
+def build_orchestrator_prompt(skill_content: str, state_file: str = "onboarding_state.md") -> str:
+    """Build orchestrator system prompt with ao skill reference and state file path injected."""
+    prompt = ORCHESTRATOR_PROMPT.replace("{state_file}", state_file)
+    parts = [prompt]
     if skill_content:
         parts.append(f"\n\n## ao-tool Reference\n\n{skill_content}")
     return "\n".join(parts)

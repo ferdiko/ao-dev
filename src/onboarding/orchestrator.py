@@ -10,12 +10,77 @@ worker sub-agents to process dataset samples and create lessons.
 """
 
 import asyncio
+import json
 import os
 import re
 import sys
 import tempfile
+import uuid
 from argparse import ArgumentParser
 from pathlib import Path
+
+def _sessions_root() -> Path:
+    """Root directory for all onboarding session folders."""
+    from ao.common.constants import AO_CACHE
+    d = Path(AO_CACHE) / "onboard_sessions"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _session_dir(session_id: str) -> Path:
+    """Per-session folder: AO_CACHE/onboard_sessions/<session_id>/."""
+    d = _sessions_root() / session_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _save_session(run_id: str, args, claude_session_id: str | None = None) -> None:
+    """Write a read-only session.json inside the session folder."""
+    from datetime import datetime, timezone
+    path = _session_dir(run_id) / "session.json"
+    data = {
+        "run_id": run_id,
+        "claude_session_id": claude_session_id,
+        "repo_path": str(Path(args.repo_path).resolve()),
+        "max_parallel": args.max_parallel,
+        "model": args.model,
+        "instructions": args.instructions,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path.write_text(json.dumps(data, indent=2))
+
+
+def _load_session(identifier: str) -> dict | None:
+    """Load session metadata by run_id (folder name) or claude_session_id."""
+    # Try direct folder match first (don't create dir)
+    path = _sessions_root() / identifier / "session.json"
+    try:
+        return json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    # Search by claude_session_id
+    for f in _sessions_root().glob("*/session.json"):
+        try:
+            data = json.loads(f.read_text())
+            if data.get("claude_session_id") == identifier:
+                return data
+        except (json.JSONDecodeError, OSError):
+            continue
+    return None
+
+
+def _find_last_session() -> dict | None:
+    """Find the session with the most recent updated_at timestamp."""
+    best, best_ts = None, ""
+    for f in _sessions_root().glob("*/session.json"):
+        try:
+            data = json.loads(f.read_text())
+            ts = data.get("updated_at", "")
+            if ts > best_ts:
+                best, best_ts = data, ts
+        except (json.JSONDecodeError, OSError):
+            continue
+    return best
 
 
 def _load_skill_md() -> str:
@@ -259,6 +324,34 @@ async def _monitor_progress(progress_file: Path, stop_event: asyncio.Event) -> N
 # Main orchestrator
 # ============================================================
 
+async def _approve_code_changes(tool_name, input_data, context):
+    """Prompt user to approve file writes and edits."""
+    from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
+
+    if tool_name not in ("Write", "Edit"):
+        return PermissionResultAllow(updated_input=input_data)
+
+    file_path = input_data.get("file_path", "?")
+    if tool_name == "Edit":
+        old = input_data.get("old_string", "")
+        new = input_data.get("new_string", "")
+        print(f"\n  {_YELLOW}Edit {file_path}{_RESET}")
+        print(f"  {_DIM}{_RED}- {_truncate(old, 300)}{_RESET}")
+        print(f"  {_DIM}{_GREEN}+ {_truncate(new, 300)}{_RESET}")
+    else:
+        content = input_data.get("content", "")
+        print(f"\n  {_YELLOW}Write {file_path}{_RESET} ({len(content)} chars)")
+
+    print(f"  {_YELLOW}Allow? [Y/n]{_RESET} ", end="", flush=True)
+    loop = asyncio.get_event_loop()
+    line = await loop.run_in_executor(None, sys.stdin.readline)
+    answer = line.strip().lower() if line else ""
+
+    if answer in ("", "y", "yes"):
+        return PermissionResultAllow(updated_input=input_data)
+    return PermissionResultDeny(message="User denied this change.")
+
+
 async def _run_onboarding_async(args):
     from ao.onboarding.prompts import build_orchestrator_prompt, build_worker_prompt
     from ao.onboarding.hooks import guard_hook, audit_hook
@@ -271,9 +364,19 @@ async def _run_onboarding_async(args):
     max_parallel = args.max_parallel
     worker_model = args.model
 
+    # Set up per-session folder (reuse existing on resume, new UUID otherwise)
+    run_id = getattr(args, "_run_id", None) or str(uuid.uuid4())
+    session_folder = _session_dir(run_id)
+    state_file = session_folder / "onboarding.md"
+    print(f"{_DIM}Run: {run_id}{_RESET}", flush=True)
+    print(f"{_DIM}State: {state_file}{_RESET}", flush=True)
+
+    # Save session metadata early (claude_session_id filled in after first turn)
+    _save_session(run_id, args)
+
     # Load SKILL.md and build prompts with it
     skill_content = _load_skill_md()
-    orchestrator_prompt = build_orchestrator_prompt(skill_content)
+    orchestrator_prompt = build_orchestrator_prompt(skill_content, state_file=str(state_file))
     worker_prompt = build_worker_prompt(skill_content)
 
     # Set up progress tracking
@@ -294,6 +397,9 @@ async def _run_onboarding_async(args):
 
     prompt_text = "\n".join(prompt_parts)
 
+    resume_session = getattr(args, "resume", None)
+    fork_session = getattr(args, "fork", False)
+
     options = ClaudeAgentOptions(
         system_prompt=orchestrator_prompt,
         allowed_tools=[
@@ -302,12 +408,17 @@ async def _run_onboarding_async(args):
             "Grep",
             "Bash",
             "Task",
+            "Write",
+            "Edit",
         ],
-        permission_mode="bypassPermissions",
+        permission_mode="default",
         model="opus",
         max_turns=1000,
         max_buffer_size=100_000_000,  # 100MB — default 1MB is too small for large tool results
         cwd=repo_path,
+        resume=resume_session,
+        fork_session=fork_session,
+        can_use_tool=_approve_code_changes,
         hooks={
             "PreToolUse": [
                 HookMatcher(matcher="Bash", hooks=[guard_hook]),
@@ -345,13 +456,28 @@ async def _run_onboarding_async(args):
 
     try:
         async with ClaudeSDKClient(options=options) as client:
-            # Send initial prompt
-            await client.query(prompt_text)
+            if resume_session:
+                # Resuming — prompt for guidance before continuing
+                print(f"\n{_YELLOW}Resuming session {resume_session[:8]}...{_RESET}", flush=True)
+                print(f"{_YELLOW}Enter guidance for the agent (or press Enter to continue as-is):{_RESET}", flush=True)
+                print(f"{_YELLOW}>>>{_RESET} ", end="", flush=True)
+                line = await loop.run_in_executor(None, sys.stdin.readline)
+                guidance = line.strip() if line else ""
+                await client.query(guidance or "Continue where you left off.")
+            else:
+                await client.query(prompt_text)
 
             while True:
                 # Receive agent's full response (until ResultMessage)
+                session_id = None
                 async for message in client.receive_response():
                     _print_message(message)
+                    if hasattr(message, "session_id"):
+                        session_id = message.session_id
+
+                if session_id:
+                    print(f"\n{_DIM}Session: {session_id} (run: {run_id[:8]}){_RESET}", flush=True)
+                    _save_session(run_id, args, claude_session_id=session_id)
 
                 # Agent stopped — prompt for human input
                 print(f"\n{_YELLOW}Type your response (or press Enter to end):{_RESET}", flush=True)
@@ -385,11 +511,41 @@ def main():
         sys.exit(1)
 
     parser = ArgumentParser(description="Onboarding orchestrator agent")
-    parser.add_argument("repo_path", help="Path to the target repository")
+    parser.add_argument("repo_path", nargs="?", default=None, help="Path to the target repository")
     parser.add_argument("--max-parallel", type=int, default=4)
     parser.add_argument("--model", default="sonnet", choices=["opus", "sonnet", "haiku"])
     parser.add_argument("--instructions", default=None)
+    parser.add_argument("--resume", default=None, help="Session ID to resume (or 'last')")
+    parser.add_argument("--fork", action="store_true", help="Fork into a new session when resuming")
     args = parser.parse_args()
+
+    if args.resume:
+        if args.resume == "last":
+            saved = _find_last_session()
+            if not saved:
+                print("No previous session found.", file=sys.stderr)
+                sys.exit(1)
+        else:
+            saved = _load_session(args.resume)
+        if not saved:
+            print(f"No saved session found for '{args.resume}'.", file=sys.stderr)
+            sys.exit(1)
+        # Restore claude_session_id for SDK resume and run_id for folder reuse
+        args.resume = saved["claude_session_id"]
+        args._run_id = saved["run_id"]
+        # Restore saved args (CLI flags override if explicitly provided)
+        args.repo_path = args.repo_path or saved["repo_path"]
+        if args.max_parallel == 4:  # default wasn't overridden
+            args.max_parallel = saved["max_parallel"]
+        if args.model == "sonnet":  # default wasn't overridden
+            args.model = saved["model"]
+        if not args.instructions and saved.get("instructions"):
+            args.instructions = saved["instructions"]
+        print(f"Resuming session: {args.resume[:8]}... (run: {args._run_id[:8]})")
+
+    if not args.repo_path:
+        print("Error: repo_path is required (provide it or use --resume with a saved session).", file=sys.stderr)
+        sys.exit(1)
 
     asyncio.run(_run_onboarding_async(args))
 
