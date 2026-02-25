@@ -14,7 +14,6 @@ import sys
 import threading
 import time
 
-from ao.server.database_manager import DB
 from ao.common.constants import HOST, PORT
 
 try:
@@ -208,7 +207,6 @@ def test_cache_edit_timing():
     script_path = "./example_workflows/debug_examples/anthropic/debate.py"
 
     restart_server()
-    DB.switch_mode("local")
 
     # Start listening for node messages
     listener = NodeTimingListener()

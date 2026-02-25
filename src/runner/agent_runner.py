@@ -27,7 +27,6 @@ from ao.common.constants import (
 from ao.cli.ao_server import launch_daemon_server
 from ao.runner.context_manager import set_parent_session_id, set_server_connection
 from ao.runner.monkey_patching.apply_monkey_patches import apply_all_monkey_patches
-from ao.server.database_manager import DB
 
 
 def _log_error(context: str, exception: Exception) -> None:
@@ -146,14 +145,12 @@ class AgentRunner:
         script_args: List[str],
         is_module_execution: bool,
         sample_id: Optional[str] = None,
-        user_id: Optional[str] = None,
         run_name: Optional[str] = None,
     ):
         self.script_path = script_path
         self.script_args = script_args
         self.is_module_execution = is_module_execution
         self.sample_id = sample_id
-        self.user_id = user_id
         self.run_name = run_name
 
         # State management
@@ -355,9 +352,6 @@ class AgentRunner:
             "prev_session_id": os.getenv("AO_SESSION_ID"),
         }
 
-        if self.user_id is not None:
-            handshake["user_id"] = str(self.user_id)
-
         try:
             logger.info(f"[AgentRunner] Sending handshake...")
             self.server_conn.sendall((json.dumps(handshake) + "\n").encode("utf-8"))
@@ -370,10 +364,6 @@ class AgentRunner:
             if session_line:
                 session_msg = json.loads(session_line.strip())
                 self.session_id = session_msg.get("session_id")
-                database_mode = session_msg.get("database_mode")
-                if database_mode:
-                    DB.switch_mode(database_mode)
-                    logger.debug(f"Using database mode: {database_mode}")
                 logger.info(f"Registered with session_id: {self.session_id}")
 
                 # Write session info to file for ao-tool IPC

@@ -1,5 +1,4 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { LoginScreen } from "./LoginScreen";
 import "./App.css";
 import type { GraphNode, GraphEdge, ProcessInfo } from "../../../shared_components/types";
 import { GraphTabApp } from "../../../shared_components/components/GraphTabApp";
@@ -27,7 +26,6 @@ interface WSMessage {
   payload?: GraphData;
   session_id?: string;
   color_preview? : string[];
-  database_mode?: string;
 }
 
 
@@ -83,16 +81,12 @@ async function playbookSseMutation(baseUrl: string, method: string, path: string
 }
 
 function App() {
-  // const [authenticated, setAuthenticated] = useState(false);
-  // const [user, setUser] = useState<any | null>(null);
-  // const [checkingSession, setCheckingSession] = useState(true);
   const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5958";
   const [experiments, setExperiments] = useState<ProcessInfo[]>([]);
   const [selectedExperiment, setSelectedExperiment] = useState<ProcessInfo | null>(null);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [showDetailsPanel, setShowDetailsPanel] = useState(false);
-  const [databaseMode, setDatabaseMode] = useState<'Local' | 'Remote'>('Local');
   // const [sidebarOpen, setSidebarOpen] = useState(true);
   const [editDialog, setEditDialog] = useState<{
     nodeId: string;
@@ -268,8 +262,6 @@ function App() {
   };
 
   useEffect(() => {
-    // if (!authenticated) return;
-    
     // Permitir definir la URL del WebSocket por variable de entorno
     const baseWsUrl = import.meta.env.VITE_APP_WS_URL || (() => {
       const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -279,9 +271,6 @@ function App() {
       return `${wsProtocol}//${wsHost}/ws`;
     })();
     
-    // Include user_id in WebSocket URL if available for cleaner handshake authentication
-    // const wsUrl = user && user.id ? `${baseWsUrl}?user_id=${encodeURIComponent(user.id)}` : baseWsUrl;
-
     const socket = new WebSocket(baseWsUrl);
     setWs(socket);
     wsRef.current = socket; // Keep ref in sync
@@ -289,8 +278,7 @@ function App() {
     socket.onopen = () => {
       console.log("Connected to backend");
       // Note: The WebSocket proxy (server.js) automatically sends the handshake
-      // with role: "ui" and user_id from the URL query parameter.
-      // We should NOT send our own handshake here.
+      // with role: "ui". We should NOT send our own handshake here.
 
       // Request the experiment list (lessons are fetched directly from ao-playbook)
       socket.send(JSON.stringify({ type: "get_all_experiments" }));
@@ -362,12 +350,7 @@ function App() {
           break;
 
         case "session_id":
-          // Handle initial connection message with database mode and playbook URL
-          if (msg.database_mode) {
-            const mode = msg.database_mode === 'local' ? 'Local' : 'Remote';
-            setDatabaseMode(mode);
-            console.log(`Synchronized database mode to: ${mode}`);
-          }
+          // Handle initial connection message with playbook URL
           if ((msg as any).playbook_url) {
             playbookUrlRef.current = (msg as any).playbook_url;
             playbookApiKeyRef.current = (msg as any).playbook_api_key || '';
@@ -385,15 +368,6 @@ function App() {
           }
           break;
 
-        case "database_mode_changed":
-          // Handle database mode change broadcast from server
-          if (msg.database_mode) {
-            const mode = msg.database_mode === 'local' ? 'Local' : 'Remote';
-            setDatabaseMode(mode);
-            console.log(`Database mode changed by another UI to: ${mode}`);
-          }
-          break;
-
         // Lesson messages are handled directly via ao-playbook HTTP (not WebSocket)
 
         default:
@@ -406,52 +380,6 @@ function App() {
       if (sseSourceRef.current) { sseSourceRef.current.close(); }
     };
   }, []);
-  // }, [authenticated, user]);
-
-  // On app mount check session (useful after OAuth redirect)
-  // Fetch session and set user+authenticated state
-  // const checkSession = async () => {
-  //   console.log('🔍 checkSession starting, API_BASE:', API_BASE);
-  //   setCheckingSession(true);
-  //   try {
-  //     const sessionUrl = `${API_BASE}/auth/session`;
-  //     console.log('📡 Fetching session from:', sessionUrl);
-  //     const resp = await fetch(sessionUrl, { credentials: 'include' });
-  //     console.log('📡 Session response status:', resp.status, 'ok:', resp.ok);
-      
-  //     if (!resp.ok) {
-  //       console.log('❌ Response not OK, setting authenticated=false');
-  //       setAuthenticated(false);
-  //       setUser(null);
-  //       return;
-  //     }
-      
-  //     const data = await resp.json();
-  //     console.log('📋 Session data received:', data);
-  //     console.log('📋 Has user?', !!(data && data.user));
-      
-  //     if (data && data.user) {
-  //       console.log('✅ Setting authenticated=true, user:', data.user);
-  //       setAuthenticated(true);
-  //       setUser(data.user);
-  //     } else {
-  //       console.log('❌ No user in data, setting authenticated=false');
-  //       setAuthenticated(false);
-  //       setUser(null);
-  //     }
-  //   } catch (err) {
-  //     console.error('❌ Failed to check session', err);
-  //     setAuthenticated(false);
-  //     setUser(null);
-  //   } finally {
-  //     console.log('🏁 checkSession finished, calling setCheckingSession(false)');
-  //     setCheckingSession(false);
-  //   }
-  // };
-
-  // useEffect(() => {
-  //   checkSession();
-  // }, []);
 
   const handleNodeUpdate = (
     nodeId: string,
@@ -509,19 +437,6 @@ function App() {
     fetchFolderDirect('');
   };
 
-  const handleDatabaseModeChange = (mode: 'Local' | 'Remote') => {
-    // Update local state immediately for responsive UI
-    setDatabaseMode(mode);
-    
-    // Send WebSocket message to server
-    if (ws) {
-      ws.send(JSON.stringify({
-        type: 'set_database_mode',
-        mode: mode.toLowerCase()
-      }));
-    }
-  };
-
   // const running = experiments.filter((e) => e.status === "running");
   // const finished = experiments.filter((e) => e.status === "finished");
 
@@ -530,29 +445,6 @@ function App() {
   const similarExperiments = sortedExperiments[0];
   const running = sortedExperiments.filter((e) => e.status === "running");
   const finished = sortedExperiments.filter((e) => e.status === "finished");
-
-  // if (checkingSession) {
-  //   // while we verify session do not show the login screen to avoid flicker
-  //   return (
-  //     <div className={`app-container ${isDarkTheme ? 'dark' : ''}`}>
-  //       <div style={{ padding: 24 }}>
-  //         Checking authentication...
-  //       </div>
-  //     </div>
-  //   );
-  // }
-
-  // if (!authenticated) {
-  //   return (
-  //     <LoginScreen
-  //       onSuccess={async () => {
-  //         setAuthenticated(true);
-  //         // after successful login try to load session user
-  //         await checkSession();
-  //       }}
-  //     />
-  //   );
-  // }
 
   return (
     <div className={`app-container ${isDarkTheme ? 'dark' : ''}`}>
@@ -563,20 +455,7 @@ function App() {
           finishedProcesses={finished}
           onCardClick={handleExperimentClick}
           isDarkTheme={isDarkTheme}
-          // user={{
-          //   displayName: user?.name || user?.displayName,
-          //   avatarUrl: user?.picture || user?.avatarUrl,
-          //   email: user?.email,
-          // }}
-          // onLogout={() => {
-          //   fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' })
-          //     .catch((err) => console.warn('Logout request failed', err));
-          //   setAuthenticated(false);
-          //   setUser(null);
-          // }}
           showHeader={true}
-          onModeChange={handleDatabaseModeChange}
-          currentMode={databaseMode}
           onLessonsClick={handleLessonsClick}
         />
         <div

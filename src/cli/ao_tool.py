@@ -552,7 +552,6 @@ def _copy_experiment(session_id: str, run_name: str | None = None) -> str | dict
         command=command,
         environment=environment,
         parent_session_id=new_session_id,  # Self-referential for new top-level run
-        user_id=None,
         version_date=experiment["version_date"],
     )
 

@@ -9,7 +9,6 @@ export class PythonServerClient {
     private onMessageCallback?: (msg: any) => void;
     private messageCallbacks: ((msg: any) => void)[] = [];
     private connectionCallbacks: (() => void)[] = [];
-    private userId?: string;
     private serverHost: string;
     private serverPort: number;
     private serverUrl?: string;
@@ -27,15 +26,10 @@ export class PythonServerClient {
         this.useWebSocket = !!(this.serverUrl && typeof this.serverUrl === 'string' && this.serverUrl.startsWith('ws'));
 
         // Don't auto-connect - let the extension control when to connect
-        // after setting user_id
     }
 
     public static getInstance(): PythonServerClient {
         return PythonServerClient.instance ??= new PythonServerClient();
-    }
-
-    public setUserId(userId: string | undefined) {
-        this.userId = userId;
     }
 
     public setPlaybookUrl(url: string | undefined) {
@@ -57,17 +51,6 @@ export class PythonServerClient {
     public async ensureConnected() {
         console.log('[AO] ensureConnected called, client exists:', !!this.client);
         if (!this.client) {
-            // Google auth disabled - feature not yet visible in UI
-            // try {
-            //     const vscode = await import('vscode');
-            //     const session = await vscode.authentication.getSession('google', [], { createIfNone: false });
-            //     if (session) {
-            //         this.userId = session.account.id;
-            //     }
-            // } catch (error) {
-            //     // Authentication check failed, continue without user_id
-            //     console.error('Failed to check authentication before connection:', error);
-            // }
             this.connect();
         }
     }
@@ -85,17 +68,12 @@ export class PythonServerClient {
 
         this.client.connect(5959, '127.0.0.1', () => {
             console.log('[AO] Connected successfully');
-            const handshake: any = {
+            const handshake = {
                 type: "hello",
                 role: "ui",
                 script: "vscode-extension",
                 workspace_root: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
             };
-
-            // Add user_id to handshake if authenticated
-            if (this.userId) {
-                handshake.user_id = this.userId;
-            }
 
             this.client.write(JSON.stringify(handshake) + "\n");
             this.messageQueue.forEach(msg => this.client.write(msg));

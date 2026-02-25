@@ -315,7 +315,6 @@ class MainServer:
             except Exception as e:
                 logger.error(f"Error sending experiment list to UI: {e}")
 
-        # Auth disabled - get all experiments without user filtering
         db_experiments = DB.get_all_experiments_sorted()
         if conn:
             build_and_send(conn, db_experiments)
@@ -419,23 +418,6 @@ class MainServer:
     # ============================================================
 
 
-    # NOTE: Auth disabled - handle_auth method commented out
-    # def handle_auth(self, msg: dict, conn: socket.socket) -> None:
-    #     """Handle auth messages from UI clients: attach user_id to connection and store current user."""
-    #     try:
-    #         user_id = msg.get("user_id")
-    #         # Store the current authenticated user_id on the server
-    #         self.current_user_id = user_id
-    #         info = self.conn_info.get(conn)
-    #         if info is None:
-    #             self.conn_info[conn] = {"role": "ui", "session_id": None, "user_id": user_id}
-    #         else:
-    #             info["user_id"] = user_id
-    #         # Send filtered list to this connection
-    #         self.broadcast_experiment_list_to_uis(conn)
-    #     except Exception as e:
-    #         logger.error(f"Error handling auth message: {e}")
-
     def handle_erase(self, msg):
         session_id = msg.get("session_id")
 
@@ -513,27 +495,6 @@ class MainServer:
             {"type": "graph_update", "session_id": None, "payload": {"nodes": [], "edges": []}}
         )
 
-    def handle_set_database_mode(self, msg: dict):
-        """Handle database mode switching from UI dropdown."""
-        mode = msg.get("mode")  # "local" or "remote"
-        if mode not in ["local", "remote"]:
-            logger.error(f"Invalid database mode: {mode}")
-            return
-
-        try:
-            current_mode = DB.get_current_mode()
-            if current_mode != mode:
-                DB.switch_mode(mode)
-
-                # Broadcast the mode change to all UIs so they can update their UI controls
-                self.broadcast_to_all_uis({"type": "database_mode_changed", "database_mode": mode})
-
-                # Refresh experiment list with new database - UI will see different data
-                self.broadcast_experiment_list_to_uis()
-
-        except Exception as e:
-            logger.error(f"Failed to switch database mode: {e}")
-
     # ============================================================
     # Message routing logic.
     # ============================================================
@@ -547,8 +508,6 @@ class MainServer:
             self.handle_shutdown()
         elif msg_type == "clear":
             self.handle_clear()
-        elif msg_type == "set_database_mode":
-            self.handle_set_database_mode(msg)
 
         # UI handlers
         elif msg_type == "restart":
@@ -629,9 +588,6 @@ class MainServer:
                         cwd,
                         command,
                         environment,
-                        None,
-                        None,  # user_id disabled
-                        None,  # version_date will be set async
                     )
                     # Request async git versioning
                     self._git_executor.submit(self._do_git_version, session_id)
@@ -649,7 +605,6 @@ class MainServer:
                     {
                         "type": "session_id",
                         "session_id": session_id,
-                        "database_mode": DB.get_current_mode(),
                     },
                 )
                 self.broadcast_experiment_list_to_uis()
@@ -673,7 +628,6 @@ class MainServer:
                         "type": "session_id",
                         "session_id": None,
                         "config_path": AO_CONFIG,
-                        "database_mode": DB.get_current_mode(),
                         "playbook_url": PLAYBOOK_SERVER_URL,
                         "playbook_api_key": PLAYBOOK_API_KEY,
                     },

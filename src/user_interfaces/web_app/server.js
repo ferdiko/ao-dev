@@ -18,30 +18,13 @@ const server = app.listen(WS_PORT, "0.0.0.0", () =>
 
 const wss = new WebSocketServer({ server, path: "/ws" });
 
-wss.on("connection", (ws, req) => {
+wss.on("connection", (ws) => {
   console.log("Frontend connected via WebSocket");
-
-  // Extract user_id from URL query parameters
-  let userId = null;
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    userId = url.searchParams.get('user_id');
-    if (userId) {
-      console.log(`🔗 Found user_id in query: ${userId}`);
-    }
-  } catch (e) {
-    console.warn("Failed to parse URL for user_id query parameter", e);
-  }
 
   // connect to Python socket server
   const client = net.createConnection({ host: HOST, port: PORT }, () => {
     console.log(`Connected to Python backend at ${HOST}:${PORT}`);
     const handshake = { role: "ui" };
-    if (userId) {
-      // try to convert to integer, otherwise pass as string
-      const n = parseInt(userId, 10);
-      handshake.user_id = Number.isNaN(n) ? userId : n;
-    }
     client.write(JSON.stringify(handshake) + "\n"); // handshake
   });
 

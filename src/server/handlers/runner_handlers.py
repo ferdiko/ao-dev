@@ -116,7 +116,6 @@ def handle_add_subrun(server, msg: dict, conn: socket.socket) -> None:
             command,
             environment,
             parent_session_id,
-            None,  # user_id disabled
             None,  # version_date will be set async
         )
         # Request async git versioning

@@ -12,13 +12,6 @@ def _convert_playbook_mode(value: str) -> str:
 
 
 def get_user_input() -> Config:
-    database_url = _ask_field(
-        "Database URL (leave empty for SQLite)\n> ",
-        str,
-        default=os.environ.get("DATABASE_URL"),
-        error_message="Please enter a valid database URL or leave empty.",
-    )
-
     # --- Playbook configuration ---
     playbook_mode = _ask_field(
         "Where do you want to host lessons? [local/cloud] (default: local)\n> ",
@@ -37,7 +30,6 @@ def get_user_input() -> Config:
         )
 
     config = Config(
-        database_url=database_url,
         playbook_mode=playbook_mode,
         playbook_api_key=playbook_api_key,
     )

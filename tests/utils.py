@@ -5,9 +5,6 @@ from ao.server.database_manager import DB
 
 def cleanup_test_db():
     """Clean up test data from the database and environment."""
-    # Ensure we're using local SQLite for tests
-    DB.switch_mode("local")
-
     # Clear attachment records
     DB.execute("DELETE FROM attachments")
 
@@ -34,9 +31,6 @@ def setup_test_session(session_id, name="Test Session", parent_session_id=None):
         name: Name for the test session
         parent_session_id: Parent session ID (defaults to session_id if None)
     """
-    # Ensure we're using local SQLite for tests
-    DB.switch_mode("local")
-
     DB.add_experiment(
         session_id=session_id,
         name=name,
