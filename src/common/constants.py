@@ -36,9 +36,6 @@ if not os.path.exists(AO_CONFIG):
 # Load values from config file.
 config = Config.from_yaml_file(AO_CONFIG)
 
-# Remote PostgreSQL database URL for "Remote" mode in UI dropdown
-REMOTE_DATABASE_URL = os.environ.get("DB_URL", "Unavailable")
-
 # server-related constants
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PYTHON_PORT", 5959))

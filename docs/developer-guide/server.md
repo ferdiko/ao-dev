@@ -64,13 +64,13 @@ lsof -i :5959
 
 ## Database
 
-We support different database backends (e.g., sqlite, postgres) but currently only expose sqlite to the user. The database stores:
+The database (SQLite) stores:
 
 - **Cached LLM calls** - For fast replay during re-runs
 - **User edits** - Input/output modifications
 - **Graph topology** - For reconstructing past runs
 
-See `src/server/database_backends/sqlite.py` for the sqlite DB schema. Schemas may differ between different DB backends.
+See `src/server/database_backends/sqlite.py` for the DB schema.
 
 ### Key Concepts
 

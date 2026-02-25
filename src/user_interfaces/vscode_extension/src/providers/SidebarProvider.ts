@@ -4,36 +4,18 @@ import { GraphTabProvider } from './GraphTabProvider';
 import { PythonServerClient } from './PythonServerClient';
 import { PlaybookClient } from './PlaybookClient';
 import { configManager } from './ConfigManager';
-// Google auth disabled - feature not yet visible in UI
-// import { AuthManager } from './AuthManager';
-
 export class SidebarProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'graphExtension.graphView';
     private _view?: vscode.WebviewView;
     private _graphTabProvider?: GraphTabProvider;
     private _pendingMessages: any[] = [];
     private _pythonClient: PythonServerClient | null = null;
-    // Google auth disabled - feature not yet visible in UI
-    // private _authManager: AuthManager;
     private _messageHandler?: (msg: any) => void;
     private _windowStateListener?: vscode.Disposable;
     // The Python server connection is deferred until the webview sends 'ready'.
     // Buffering is needed to ensure no messages are lost if the server sends messages before the webview is ready.
 
     constructor(private readonly _extensionUri: vscode.Uri, private readonly _context: vscode.ExtensionContext) {
-        // Google auth disabled - feature not yet visible in UI
-        // this._authManager = AuthManager.getInstance(_context);
-
-        // Listen to auth state changes and update webview
-        // this._authManager.onAuthStateChanged((state) => {
-        //     if (this._view) {
-        //         this._view.webview.postMessage({
-        //             type: 'authStateChanged',
-        //             payload: state
-        //         });
-        //     }
-        // });
-
         // Set up window focus detection to request experiments when VS Code regains focus
         this._windowStateListener = vscode.window.onDidChangeWindowState((state) => {
             if (state.focused && this._pythonClient) {
@@ -143,12 +125,6 @@ _context: vscode.WebviewViewResolveContext,
                 case 'erase':
                     this._pythonClient?.sendMessage(data);
                     break;
-                case 'setDatabaseMode':
-                    this._pythonClient?.sendMessage({ 
-                        type: 'set_database_mode', 
-                        mode: data.mode 
-                    });
-                    break;
                 case 'ready':
                     // Webview is ready - now connect to the Python server and set up message forwarding
                     if (!this._pythonClient) {
@@ -199,42 +175,11 @@ _context: vscode.WebviewViewResolveContext,
                         this._pythonClient.startServerIfNeeded();
                     }
 
-                    // Google auth disabled - feature not yet visible in UI
-                    // Send current auth state to webview
-                    // const authState = this._authManager.getCurrentState();
-                    // this._view?.webview.postMessage({
-                    //     type: 'authStateChanged',
-                    //     payload: authState
-                    // });
-
-                    // If user is already authenticated, send auth message to server
-                    // This ensures the server knows the user_id for filtering experiments
-                    // if (authState.authenticated && authState.userId && this._pythonClient) {
-                    //     this._pythonClient.setUserId(authState.userId);
-                    //     this._pythonClient.sendMessage({ type: 'auth', user_id: authState.userId });
-                    // }
-
-                    // Request experiments after Python client is set up and auth state is sent
+                    // Request experiments after Python client is set up
                     if (this._pythonClient) {
                         this._pythonClient.sendMessage({ type: 'get_all_experiments' });
                     }
                     break;
-                // Google auth disabled - feature not yet visible in UI
-                // case 'signIn':
-                //     this._authManager.signIn().then((state) => {
-                //         if (state.authenticated && this._pythonClient) {
-                //             this._pythonClient.setUserId(state.userId);
-                //             this._pythonClient.sendMessage({ type: 'auth', user_id: state.userId });
-                //         }
-                //     });
-                //     break;
-                // case 'signOut':
-                //     this._authManager.signOut().then(() => {
-                //         if (this._pythonClient) {
-                //             this._pythonClient.setUserId(undefined);
-                //         }
-                //     });
-                //     break;
                 case 'navigateToCode':
                     // Handle code navigation
                     const { filePath, line } = this._parseStackTrace(data.payload.stack_trace);

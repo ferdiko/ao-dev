@@ -31,7 +31,7 @@ Note that all server logs are printed to files and not visible from any terminal
 
 ## Database
 
-We support different database backends (e.g., sqlite, postgres) but (at the time of writing) only expose sqlite to the user. Amongst other things, the database stores cached LLM results and user input overrides (see `llm_calls` table). See [sqlite.py](/src/server/database_backends/sqlite.py) for the sqlite DB schema. Schemas may be different between different DB backends (beyond syntax).
+The database uses SQLite. Amongst other things, it stores cached LLM results and user input overrides (see `llm_calls` table). See [sqlite.py](/src/server/database_backends/sqlite.py) for the DB schema.
 
 ## Edge Detection via Content Matching
 
@@ -47,28 +47,3 @@ This approach:
 - Is simple and robust
 
 The matching logic is implemented in [string_matching.py](/src/runner/string_matching.py). The content registry (storing outputs for matching) lives in [database_manager.py](/src/server/database_manager.py).
-
-## Maintainance of EC2 server [OUT OF SERVICE]
-
-### List running process
-
-```
-[ec2-user@ip-172-31-42-109 ~]$ docker ps -a
-```
-
-Should be 3. (auth (proxy), main_server (backend), frontend (frontend)). E.g.:
-
-```
-CONTAINER ID   IMAGE                                                                             COMMAND                  CREATED        STATUS        PORTS                                                           NAMES
-a0b7e5115b81   853766430252.dkr.ecr.us-east-1.amazonaws.com/workflow-extension-proxy:latest      "docker-entrypoint.s…"   38 hours ago   Up 38 hours   0.0.0.0:4000->4000/tcp, :::4000->4000/tcp                       workflow-proxy
-6913553c4efb   853766430252.dkr.ecr.us-east-1.amazonaws.com/workflow-extension-frontend:latest   "/docker-entrypoint.…"   38 hours ago   Up 38 hours   0.0.0.0:3000->80/tcp, :::3000->80/tcp                           workflow-frontend
-0ee59b1ccb71   853766430252.dkr.ecr.us-east-1.amazonaws.com/workflow-extension-backend:latest    "sh -c 'uvicorn src.…"   38 hours ago   Up 38 hours   0.0.0.0:5958-5959->5958-5959/tcp, :::5958-5959->5958-5959/tcp   workflow-backend
-```
-
-### Server logs:
-
-```
-docker logs XXX
-```
-
-`XXX`: `workflow-backend` for main_server, `workflow-proxy` for auth server. `workflow-frontend` is not interesting, should do Right click -> Inspect -> Console

@@ -98,9 +98,6 @@ async def run_test(script_path: str):
     ao_random_seed = random.randint(0, 2**31 - 1)
     env["AO_SEED"] = str(ao_random_seed)
 
-    # Ensure we use local SQLite database
-    DB.switch_mode("local")
-
     # First run
     print("\n" + "=" * 60)
     print("STARTING FIRST RUN")

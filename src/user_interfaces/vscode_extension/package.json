@@ -23,26 +23,11 @@
         "command": "graphExtension.showGraph",
         "title": "Show Graph Panel",
         "category": "Graph Extension"
-      },
-      {
-        "command": "graphExtension.signIn",
-        "title": "Sign In with Google",
-        "category": "Graph Extension"
-      },
-      {
-        "command": "graphExtension.signOut",
-        "title": "Sign Out",
-        "category": "Graph Extension"
       }
     ],
     "configuration": {
       "title": "AO",
       "properties": {
-        "ao.authServerUrl": {
-          "type": "string",
-          "default": "http://localhost:5958",
-          "description": "URL of the authentication server"
-        },
         "ao.pythonServerHost": {
           "type": "string",
           "default": "127.0.0.1",

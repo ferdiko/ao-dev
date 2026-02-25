@@ -17,8 +17,6 @@ declare global {
 
 export const App: React.FC = () => {
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
-  const [databaseMode, setDatabaseMode] = useState<'Local' | 'Remote' | null>(null);
-  const [user, setUser] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'experiments' | 'experiment-graph'>('experiments');
   const [selectedExperiment, setSelectedExperiment] = useState<ProcessInfo | null>(null);
   const [showDetailsPanel, setShowDetailsPanel] = useState(false);
@@ -31,34 +29,6 @@ export const App: React.FC = () => {
       const message = event.data;
       switch (message.type) {
         case "session_id":
-          // Handle initial connection message with database mode
-          if (message.database_mode) {
-            const mode = message.database_mode === 'local' ? 'Local' : 'Remote';
-            setDatabaseMode(mode);
-          }
-          break;
-        case "database_mode_changed":
-          // Handle database mode change broadcast from server
-          if (message.database_mode) {
-            const mode = message.database_mode === 'local' ? 'Local' : 'Remote';
-            setDatabaseMode(mode);
-          }
-          break;
-        case "authStateChanged":
-          // Update user state from auth provider
-          if (message.payload?.session) {
-            const account = message.payload.session.account;
-            const userAvatar = message.payload.userAvatar ||
-                              account.picture ||
-                              'https://www.gravatar.com/avatar/?d=mp&s=200';
-            setUser({
-              displayName: account.label,
-              email: account.label,
-              avatarUrl: userAvatar
-            });
-          } else {
-            setUser(null);
-          }
           break;
         case "configUpdate":
           // Config changed - forward to config bridge
@@ -129,19 +99,6 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleDatabaseModeChange = (mode: 'Local' | 'Remote') => {
-    // Update local state immediately for responsive UI
-    setDatabaseMode(mode);
-
-    // Send message to VS Code extension to relay to server
-    if (window.vscode) {
-      window.vscode.postMessage({
-        type: 'setDatabaseMode',
-        mode: mode.toLowerCase()
-      });
-    }
-  };
-
   const handleNodeUpdate = (nodeId: string, field: string, value: string, sessionId: string, attachments?: any) => {
     if (window.vscode) {
       const baseMsg = {
@@ -175,7 +132,6 @@ export const App: React.FC = () => {
   };
 
   // Use experiments in the order sent by server (already sorted by name ascending)
-  // Server already filters by user_id, so no client-side filtering needed
   const sortedProcesses = processes;
 
   // const similarExperiments = sortedProcesses.filter(p => p.status === 'similar');
@@ -212,8 +168,6 @@ export const App: React.FC = () => {
             onCardClick={handleExperimentCardClick}
             isDarkTheme={isDarkTheme}
             showHeader={true}
-            onModeChange={handleDatabaseModeChange}
-            currentMode={databaseMode}
             onLessonsClick={handleLessonsClick}
             onRefresh={handleRefresh}
           />

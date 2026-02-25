@@ -59,9 +59,6 @@ def get_conn():
 def _init_db(conn):
     c = conn.cursor()
 
-    # Note: Users are only managed in PostgreSQL for remote authentication
-    # Local SQLite runs are single-user and don't need user management
-
     # Create experiments table
     c.execute(
         """
@@ -200,7 +197,6 @@ def add_experiment_query(
     default_success,
     default_note,
     default_log,
-    user_id,  # Ignored in SQLite - kept for API compatibility
     version_date,
 ):
     """Execute SQLite-specific INSERT for experiments table"""
@@ -380,15 +376,6 @@ def get_all_experiments_sorted_query():
     )
 
 
-def get_all_experiments_sorted_by_user_query(user_id=None):
-    """Get all experiments sorted by timestamp desc. SQLite ignores user_id filtering (single-user)."""
-    # SQLite is single-user, so we always return all experiments regardless of user_id
-    return query_all(
-        "SELECT session_id, timestamp, color_preview, name, version_date, success, notes, log FROM experiments ORDER BY timestamp DESC",
-        (),
-    )
-
-
 def get_experiment_graph_topology_query(session_id):
     """Get graph topology for an experiment."""
     return query_one("SELECT graph_topology FROM experiments WHERE session_id=?", (session_id,))
@@ -471,21 +458,6 @@ def get_experiment_log_success_graph_query(session_id):
     return query_one(
         "SELECT log, success, graph_topology FROM experiments WHERE session_id=?",
         (session_id,),
-    )
-
-
-# User management functions - SQLite is single-user so these raise errors
-def upsert_user(google_id, email, name, picture):
-    """SQLite doesn't support user management - single user database."""
-    raise Exception(
-        "User management not supported in local SQLite database. Switch to remote mode for multi-user support."
-    )
-
-
-def get_user_by_id_query(user_id):
-    """SQLite doesn't support user management - single user database."""
-    raise Exception(
-        "User management not supported in local SQLite database. Switch to remote mode for multi-user support."
     )
 
 

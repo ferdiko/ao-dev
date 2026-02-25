@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as yaml from 'js-yaml';
 
 export interface Config {
-  userId: string;
+  // Fields will be added as needed (e.g., playbook settings)
 }
 
 type ConfigChangeCallback = (config: Config) => void;
@@ -74,18 +74,13 @@ export class ConfigManager {
 
   private loadConfig(): Config {
     if (!this.configPath) {
-      // Return sensible defaults if no path provided
-      return {
-        userId: 'default_user'
-      };
+      return {};
     }
 
     try {
       if (fs.existsSync(this.configPath)) {
-        const configData = yaml.load(fs.readFileSync(this.configPath, 'utf8')) as any;
-        return {
-          userId: configData?.user_id || 'default_user'
-        };
+        yaml.load(fs.readFileSync(this.configPath, 'utf8')) as any;
+        return {};
       } else {
         console.warn(`Config file not found at: ${this.configPath} — using defaults`);
       }
@@ -93,10 +88,7 @@ export class ConfigManager {
       console.warn('Failed to read config from path:', this.configPath, error);
     }
 
-    // Return default config instead of throwing so extension remains stable
-    return {
-      userId: 'default_user'
-    };
+    return {};
   }
 
   private notifyListeners(config: Config): void {

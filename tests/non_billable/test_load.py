@@ -36,7 +36,6 @@ class TestLoad:
     def test_20_parallel_sessions(self, tmp_path):
         # 1. Restart server, snapshot existing experiment count
         restart_server()
-        DB.switch_mode("local")
         existing = len(DB.get_all_experiments_sorted())
 
         # 2. Write trivial dummy script
