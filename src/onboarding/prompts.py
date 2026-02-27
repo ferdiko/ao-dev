@@ -66,11 +66,11 @@ This phase is a **conversation**, not a single dump of questions. Ask one questi
 at a time, wait for the human's answer, incorporate it, then ask the next. This
 lets you adapt — the human's answer to one question often informs what you ask next.
 
-**CRITICAL — you MUST stop after asking a question.** Output your question text
-and then end your turn. Do NOT use any tools, do NOT continue exploring, do NOT
-investigate the answer yourself. The system only prompts the human for input when
-your turn ends. If you make any tool calls after your question, the human will
-never see it — your turn keeps running and the question is buried in output.
+**CRITICAL — use the `mcp__onboarding__ask_human` tool to ask the human questions.**
+Do NOT just write a question in your text output — the system cannot detect that. You
+MUST call `mcp__onboarding__ask_human` with a `question` parameter. This is the ONLY
+way to get human input. The tool will block until the human responds, and you'll
+receive their answer as the tool result.
 
 Topics you need to cover (in whatever order makes sense):
 
@@ -121,12 +121,199 @@ The state file should contain:
 
 Update this file after every round.
 
+## 1.5 Pipeline Analysis
+
+Most non-trivial agents have a multi-step pipeline: the output of one stage feeds
+into the next. When an early stage fails, every downstream stage is doomed regardless
+of its quality. Optimizing downstream stages against corrupted upstream input is
+wasteful — lessons created this way target symptoms, not root causes, and become
+obsolete or harmful once the upstream stage improves.
+
+Pipeline decomposition transforms a noisy end-to-end signal into clean per-stage
+signal, dramatically accelerating the optimization loop. **This is almost always
+worth doing.** Invest significant effort here — every hour spent building per-stage
+evaluation infrastructure saves many hours in the improvement loop.
+
+### 1.5.1 Detect Pipeline Structure
+
+Probe 3-5 baseline traces with `ao-tool probe <session_id>` to get the dataflow
+graph. Identify pipeline stages by:
+
+- **Source grouping**: Group nodes by the source file/function in their stack traces
+  (use the highest application-level frame, skip library internals). Nodes from the
+  same source function typically belong to the same stage.
+- **Edge structure**: If group A's outputs feed group B's inputs, A is upstream of B.
+- **Stage DAG**: Map the dependency structure — linear (A→B→C), fan-out (A→B, A→C),
+  fan-in (B→D, C→D), or combinations.
+
+For each stage, determine: what it does, which code implements it, and where lessons
+are injected into its prompt.
+
+### 1.5.2 Decide Whether to Decompose
+
+Decomposition **almost always exists** for any non-trivial agent. Any agent that does
+something useful has at least two conceptual stages. Look hard for decomposition
+opportunities. The bar for skipping should be very high.
+
+**Decompose when** (the common case):
+- 2+ distinct stages exist
+- Failures show any sign of cascading (early errors propagating downstream)
+
+**Skip decomposition only when**:
+- The agent is genuinely a single atomic LLM call with no sub-steps
+- All failures clearly originate in the final stage with no upstream issues
+
+If skipped, proceed with end-to-end optimization (Stage 2 as written below).
+
+### 1.5.3 Build Per-Stage Evaluation Infrastructure
+
+**This is the highest-leverage phase of the entire onboarding process.** Building
+per-stage evaluation infrastructure is a major, deliberate investment — not a quick
+side-step. Do not rush this phase.
+
+Three things must exist for each stage: **isolation**, **oracle inputs**, and
+**evaluation**.
+
+#### Isolation
+
+Can this stage be run independently?
+
+- Look for CLI flags that bypass upstream stages (read argparse/click definitions,
+  config files, README)
+- Look for conditional logic that accepts pre-computed inputs
+- If no isolation mechanism exists, one must be built — spawn a dedicated
+  infrastructure worker to create it
+
+#### Oracle / Gold Intermediate Data
+
+What is the expected output of this stage? This is the hardest and most important
+piece. Use this hierarchy of approaches:
+
+**a) Existing gold intermediates** (best case): The dataset or repo already provides
+expected outputs for this stage. Look for gold annotation files, reference outputs,
+ground truth columns beyond the final answer.
+
+**b) Back-derive from final gold** (common case): When only the final answer has
+gold, work backwards to determine what each intermediate stage MUST have produced
+for the final answer to be correct. This is a deliberate, effortful analytical
+process — invest heavily here:
+
+- Given the final gold output, what input must the last stage have received?
+- Given that input, what must the previous stage have produced?
+- Continue tracing backwards through the pipeline
+- This may require running the pipeline on passing samples and capturing intermediate
+  outputs as reference data
+- Spawn a worker to do this systematically across all samples
+
+**c) Abstract behavioral gold** (when concrete gold can't be derived): Not every
+stage produces a discrete output that can be compared exactly. Some stages produce
+decisions, plans, reasoning traces, or transformations where correctness is
+contextual. For these, define **observable behaviors or properties** that a correct
+execution should exhibit. These behavioral expectations can be checked automatically
+via LLM-as-judge.
+
+#### Evaluation
+
+Every stage needs a **numeric metric** to optimize (accuracy, precision, recall, F1,
+etc.). This is non-negotiable — without a number, you can't measure progress.
+
+The metric is built from per-sample correctness judgments. For each sample, you must
+determine: did this stage produce the right output? There are two ways to make that
+judgment:
+
+**Programmatic judgment** — exact match, set comparison, constraint checks, running
+a test suite. Use this when the downstream stage consumes a literal value. If the
+next stage needs an exact column name, tool name, API parameter, or file path, then
+"semantically similar" is not good enough — the output must match exactly.
+
+**LLM-as-judge** — semantic evaluation via a rubric. Use this when the downstream
+stage consumes something semantic: a plan, gathered context, reasoning, a summary.
+Write a clear rubric: given the input, the gold final answer, and this stage's
+output, does the output exhibit the expected behavior? LLM-as-judge introduces noise,
+so prefer programmatic judgment when feasible.
+
+**The downstream stage determines which judgment method to use.** Ask: what does the
+next stage actually consume? If it consumes a literal value that must be exact,
+use programmatic judgment. If it consumes meaning that can be expressed in multiple
+valid ways, use LLM-as-judge.
+
+Examples:
+- A stage selects which tool to call → downstream executor needs the exact tool name
+  → programmatic (exact match) → metric: accuracy
+- A stage maps natural language to database columns → downstream SQL generator needs
+  literal column names → programmatic (set comparison) → metric: precision/recall
+- A stage gathers context before answering → downstream synthesizer consumes meaning,
+  not exact text → LLM-as-judge (was sufficient information gathered?) → metric:
+  recall of required facts
+- A stage generates a plan of sub-tasks → downstream executor follows the plan
+  semantically → LLM-as-judge (are the right sub-tasks identified?) → metric:
+  accuracy
+- A stage patches code → downstream test runner executes it → programmatic (run
+  tests) → metric: pass rate
+
+#### Building Infrastructure
+
+When infrastructure must be built, spawn **dedicated infrastructure workers**. These
+are NOT optimization workers — they build tooling. Invest serious effort in writing
+thorough, detailed briefings for these workers. Each briefing describes:
+
+- What needs to be built (isolation script, oracle data generation, eval function)
+- The stage it serves (what the stage does, its inputs/outputs, its code, how it
+  connects to other stages)
+- The approach to use (back-derive gold from final answer, capture intermediates from
+  passing runs, define behavioral rubric, etc.)
+- How to verify the infrastructure works (run on a few samples, check that passing
+  samples score well and failing samples score poorly)
+- Where to put the deliverables
+
+Block until all infrastructure workers complete and **validate their output** before
+proceeding. Validation means: run the per-stage evaluation on a mix of passing and
+failing baseline samples and confirm it produces sensible results (passing samples
+should score higher than failing ones). If it doesn't, iterate with the worker or
+the human.
+
+### 1.5.4 Update State File
+
+Add a `## Pipeline` section to your state file:
+
+    ## Pipeline
+    Stage 1: <name> (<source file/function>)
+      - Purpose: <what it does>
+      - Isolation: <how to run independently, or "end-to-end only">
+      - Evaluation: <per-stage eval method, or "N/A">
+      - Oracle: <how upstream input is provided, or "N/A — first stage">
+      - Lesson path: <folder>
+      - Status: ready / building / end-to-end-only
+
+    Stage 2: ...
+
+    Dependencies: Stage 1 -> Stage 2 -> Stage 3
+
 # Stage 2: Improvement Loop
 
 This is the core of onboarding. You iterate in rounds, each time focusing workers
 on currently failing samples, then measuring overall progress.
 
 **At the start of each round**, re-read the state file to recover your full context.
+
+## Pipeline-Aware Strategy
+
+If you identified a decomposable pipeline in Phase 1.5, use stage-wise optimization:
+
+1. **Stage-wise rounds first**: For each stage with status "ready", run optimization
+   rounds targeting ONLY that stage using its isolated run command, per-stage
+   evaluation, and stage-specific lesson path. Stages with no dependencies between
+   them can be optimized in parallel (dispatch workers for different stages in the
+   same round).
+
+2. **Integration rounds after**: Once per-stage optimization converges (or all stages
+   are end-to-end-only), switch to full end-to-end rounds to catch cross-stage issues.
+
+3. **Cross-stage regression**: If a stage lesson causes regression in the full
+   pipeline, the lesson may be too aggressive. Refine it to be more targeted.
+
+If no pipeline was identified, proceed with end-to-end rounds (the default behavior
+described below).
 
 ## Each round
 
@@ -137,6 +324,10 @@ Group them by likely root cause or failure pattern. This analysis informs how yo
 assign workers — workers should get samples that share a common theme so they can
 create broadly applicable lessons.
 
+**Stage-wise rounds**: Use `ao-tool probe` on failing traces to identify which stage
+caused the failure. Prioritize the earliest failing stage — fixing upstream errors
+first prevents wasted effort on downstream symptoms.
+
 ### 2.2 Design Worker Assignments
 
 Assign failing samples to workers. Guidelines:
@@ -146,6 +337,9 @@ Assign failing samples to workers. Guidelines:
   same worker so the worker can create one good lesson rather than many narrow ones.
 - **Only failing samples**: Never assign samples that are already passing, disputed,
   or marked non-fixable.
+
+**Stage-wise rounds**: Only assign samples failing at the target stage. Include the
+stage-specific run command, evaluation method, and lesson path in the assignment.
 
 ### 2.3 Enrich Worker Briefings
 
@@ -158,10 +352,17 @@ Each worker gets a briefing as its prompt. Include:
 - How lessons are integrated into the agent (folder path, injection point)
 - Any special flags, timeouts, or environment setup
 - Any constraints (e.g., train/test split rules)
-- The worker number (W1, W2, ...) and progress file path for real-time reporting
+- The worker number (W1, W2, ...)
 - **Round context**: What round this is, what the current success rate is, what
   lessons already exist, what patterns are known to be non-fixable from
   previous rounds, and any insights from earlier rounds that might help
+
+**Stage-wise rounds** — also include:
+- Which pipeline stage this worker is optimizing
+- The stage-specific run command (isolation command)
+- The stage-specific evaluation method and success criteria
+- The lesson path for this stage
+- Explicit instruction to stay within the stage's scope
 
 ### 2.4 Dispatch Workers
 
@@ -174,17 +375,63 @@ setting). Manage a queue:
 3. Spawn the next batch of workers to fill the freed slots
 4. Repeat until all chunks for this round have been processed
 
-### 2.5 Run Full Evaluation
+**IMPORTANT**: Always set `max_turns` to a high value (e.g., 200) when spawning workers
+via the Task tool. Workers need many turns to run agents, evaluate, diagnose, create
+lessons, and verify. The default is too low and will cause workers to stop mid-task.
 
-After all workers for this round complete, run the full evaluation to measure
-overall success rate. Record the result:
+**Stage-wise rounds**: Workers for independent stages (no dependency between them)
+can be dispatched in the same round.
+
+### 2.5 Run Evaluation
+
+After all workers for this round complete, run evaluation to measure progress.
+
+**End-to-end rounds**: Run the full evaluation. Record the result:
 
     Round N: X/N succeeding (XX.X%) [+delta, K lessons, D disputed]
+
+**Stage-wise rounds**: Run both the stage-specific evaluation AND a full pipeline
+evaluation. This catches integration regressions early. Record both results:
+
+    Round N (stage: <name>): X/N stage-passing (XX.X%)
+    Round N (end-to-end):    X/N succeeding (XX.X%)
 
 Update the state file with the new round result, current failing samples, any
 newly disputed samples, and any new lessons.
 
-### 2.6 Decide Next Step
+### 2.6 Restructure Lesson Taxonomy
+
+After every round, restructure the lesson taxonomy to keep the knowledge base clean
+and well-organized. As workers create lessons across rounds, the folder structure
+drifts — duplicates accumulate, related lessons scatter across folders, naming
+becomes inconsistent. Restructuring after each round prevents this from compounding.
+
+Use the three-phase `ao-tool playbook restructure` workflow:
+
+1. **Propose**: Request a restructuring proposal for the lesson path:
+
+       ao-tool playbook restructure propose <lesson-path> -c "<guidance>"
+
+   Include guidance based on what you know about the domain (e.g., "group by
+   failure category", "consolidate small folders", "merge near-duplicate lessons").
+   The server returns a proposal with moves, new folders, redundant lessons, and a
+   `task_id`.
+
+2. **Review**: Read the proposal carefully. Check that:
+   - Moves make sense (related lessons grouped together)
+   - Redundant lessons flagged for removal are genuinely redundant
+   - New folder names are clear and descriptive
+   - No lessons are being lost or misplaced
+
+3. **Execute or abort**:
+   - If the proposal looks good: `ao-tool playbook restructure execute <task_id>`
+   - If the proposal is wrong: `ao-tool playbook restructure abort <task_id>` and
+     re-propose with better guidance
+
+If the server returns `409 Conflict` during execution (lessons changed since the
+proposal), re-propose — a worker may have created or updated a lesson concurrently.
+
+### 2.7 Decide Next Step
 
 Based on the evaluation result, decide what to do:
 
@@ -192,6 +439,8 @@ Based on the evaluation result, decide what to do:
 - **Regressed**: Success rate went down. Some lessons may have caused regressions.
   Investigate which lessons are problematic, refine or delete them, re-evaluate,
   then continue.
+- **Stage converged**: A stage's isolated success rate has plateaued. Move to the
+  next stage, or switch to integration rounds if all stages are done.
 - **Converged**: Stop the loop (see convergence criteria below).
 
 ### Convergence Criteria
@@ -220,6 +469,10 @@ After the loop ends, summarize:
   likely incorrect, with evidence for each
 - **Unresolved samples**: Which samples still fail and why (categorized: code bug,
   model limitation, ambiguous, etc.)
+- **Pipeline structure** (if decomposed): Stages identified, how each was optimized,
+  per-stage success rate progression
+- **Infrastructure built**: Any isolation scripts, oracle data, or evaluation
+  functions created during pipeline analysis
 - **Recommendations**: Suggestions for further improvement beyond lessons
 """
 
@@ -233,6 +486,25 @@ knowledge.
 You have full agency: you can read files, run commands, explore the environment.
 If the briefing's instructions don't work exactly as described, debug and fix the
 issue yourself. Do not give up — adapt.
+
+## Mode of Operation
+
+Your briefing specifies one of two modes:
+
+**End-to-end mode** (default): Run the full agent pipeline, evaluate the final output.
+
+**Stage mode**: Run only a specific pipeline stage in isolation. Your briefing will
+provide a stage-specific run command, evaluation method, and lesson folder. Use these
+instead of the end-to-end equivalents.
+
+In stage mode:
+- Only create lessons in the stage-specific lesson folder
+- Only evaluate using the stage-specific criteria
+- Focus diagnosis on the stage's behavior, not downstream effects
+- The isolation command handles separating this stage — just run it as specified
+
+The per-sample loop below applies in both modes. "Run the agent" and "evaluate" mean
+whichever command and method your briefing specifies.
 
 ## Per-Sample Loop
 
@@ -375,23 +647,6 @@ If a regression is detected:
 - The new lesson may be too broad or conflicting with existing knowledge
 - Refine the lesson to be more specific
 - If the conflict can't be resolved, delete the lesson
-
-### Progress Reporting
-
-Your briefing includes a progress file path and your worker number (N).
-After each significant step, write a progress line:
-
-    printf '[WN] description\\n' >> PROGRESS_FILE
-
-Replace N with your worker number. Keep descriptions short (under 100 chars).
-Examples:
-    [W1] Running agent on sample 042
-    [W3] Lesson created: date_format_convention
-    [W1] Sample 042: PASS
-    [W2] Diagnosing failure on sample 117
-    [W2] DISPUTED sample 117: gold answer uses wrong format, agent output is correct
-
-This lets the orchestrator display your activity in real time.
 
 ### Output
 

@@ -703,6 +703,74 @@ ao-tool playbook lessons rm abc123               # Delete single lesson
 ao-tool playbook lessons rm -r beaver/old/       # Delete folder and all contents
 ```
 
+### Restructure Taxonomy
+
+LLM-driven analysis and reorganization of the lesson folder structure. The system analyzes all lessons under a folder and proposes a better taxonomy — the client does not need to specify how to restructure.
+
+Three-phase workflow:
+1. **Propose** — The server analyzes lessons and returns a proposed restructuring (moves, new folders, redundant lessons). This acquires a lock on the folder.
+2. **Execute** — Apply the proposal (or a client-modified version). Releases the lock.
+3. **Abort** — Cancel without making changes. Releases the lock.
+
+#### Propose
+
+```
+usage: ao-tool playbook restructure propose [path] [-c COMMENTS]
+
+positional arguments:
+  path                Base folder to analyze (default: root)
+
+options:
+  -c, --comments      Guidance for the LLM (e.g. 'group by domain, not by agent')
+```
+
+Example:
+```bash
+ao-tool playbook restructure propose my-agent/ -c "consolidate small folders"
+```
+
+Returns the proposal with a `task_id` and `snapshot`:
+```json
+{
+  "task_id": "abc-123",
+  "summary": "Reorganized 8 lessons into 3 topic folders...",
+  "moves": [
+    {"lesson_id": "L1", "current_path": "my-agent/misc/", "new_path": "my-agent/error-handling/", "reason": "..."}
+  ],
+  "new_folders": ["my-agent/error-handling/"],
+  "removed_folders": ["my-agent/misc/"],
+  "redundant_lesson_ids": [],
+  "total_lessons": 8,
+  "snapshot": "a1b2c3d4"
+}
+```
+
+#### Execute
+
+```
+usage: ao-tool playbook restructure execute task_id
+```
+
+Example:
+```bash
+ao-tool playbook restructure execute abc-123
+```
+
+If lessons changed since the proposal, the server returns `409 Conflict` and the lock is released. Re-propose in that case.
+
+#### Abort
+
+```
+usage: ao-tool playbook restructure abort task_id
+```
+
+Example:
+```bash
+ao-tool playbook restructure abort abc-123
+```
+
+Proposals auto-expire after 1 hour, which also releases the lock.
+
 ---
 
 ## Troubleshooting

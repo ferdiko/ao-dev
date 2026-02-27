@@ -12,10 +12,9 @@ worker sub-agents to process dataset samples and create lessons.
 import asyncio
 import json
 import os
-import re
 import sys
-import tempfile
 import uuid
+from datetime import datetime
 from argparse import ArgumentParser
 from pathlib import Path
 
@@ -122,30 +121,22 @@ _WORKER_COLORS = [
 ]
 
 
-def _tool_detail(block) -> str:
-    """Extract the most relevant detail from a tool use block."""
-    inp = block.input
-    if block.name == "Bash":
-        return _truncate(inp.get("command", ""), 300)
-    if block.name == "Task":
-        return inp.get("description", "")
-    if block.name in ("Read", "Write", "Edit"):
-        return inp.get("file_path", "?")
-    if block.name in ("Glob", "Grep"):
-        return inp.get("pattern", "")
+def _tool_detail_from_dict(tool_name: str, tool_input: dict) -> str:
+    """Extract a compact detail string from tool name + input dict."""
+    if tool_name == "Bash":
+        return _truncate(tool_input.get("command", ""), 300)
+    if tool_name == "Task":
+        return tool_input.get("description", "")
+    if tool_name in ("Read", "Write", "Edit"):
+        return tool_input.get("file_path", "?")
+    if tool_name in ("Glob", "Grep"):
+        return tool_input.get("pattern", "")
     return ""
 
 
-# Tool-use IDs to suppress from output (e.g., worker progress writes)
-_suppressed_tool_ids: set = set()
-
-
-def _is_progress_write(block) -> bool:
-    """Check if a tool use block is a worker progress write (should be hidden)."""
-    if block.name != "Bash":
-        return False
-    cmd = block.input.get("command", "")
-    return "[W" in cmd and ">>" in cmd
+def _tool_detail(block) -> str:
+    """Extract the most relevant detail from an SDK tool use block."""
+    return _tool_detail_from_dict(block.name, block.input)
 
 
 def _print_message(message) -> None:
@@ -158,17 +149,20 @@ def _print_message(message) -> None:
     )
 
     if isinstance(message, AssistantMessage):
+        # When workers are active, their tool calls are already logged via
+        # _worker_log_hook + _monitor_progress (with W{n} prefix).  Only print
+        # orchestrator-level messages here to avoid duplicates.
+        is_worker_msg = _active_worker_num() is not None
+
         for block in message.content:
             if hasattr(block, "text"):
-                # Claude's text — left-bordered like a blockquote
+                if is_worker_msg:
+                    continue  # Worker text — shown via log monitor
                 lines = block.text.split("\n")
                 bordered = "\n".join(f"  {_DIM}{_CYAN}│{_RESET} {l}" for l in lines)
                 print(f"\n{bordered}", flush=True)
             elif hasattr(block, "name"):
-                if _is_progress_write(block):
-                    _suppressed_tool_ids.add(block.id)
-                    continue
-                # Stash Task metadata for worker start messages
+                # Always stash Task metadata (needed by _on_worker_start)
                 if block.name == "Task":
                     desc = block.input.get("description", "")
                     if desc:
@@ -176,23 +170,23 @@ def _print_message(message) -> None:
                     agent_type = block.input.get("subagent_type", "")
                     if agent_type:
                         _worker_state.setdefault("_task_types", {})[block.id] = agent_type
-                # Tool use header — bold, compact
+                if is_worker_msg:
+                    continue  # Worker tool use — shown via log monitor
                 detail = _tool_detail(block)
                 print(f"\n  {_BOLD}{block.name}{_RESET}  {detail}", flush=True)
 
     elif isinstance(message, UserMessage):
         # Tool results — dim with └ connector, color-coded
-        if isinstance(message.content, list):
+        # Skip worker tool results (already shown via log monitor)
+        if _active_worker_num() is not None:
+            pass
+        elif isinstance(message.content, list):
             for block in message.content:
-                if hasattr(block, "tool_use_id"):
-                    if block.tool_use_id in _suppressed_tool_ids:
-                        _suppressed_tool_ids.discard(block.tool_use_id)
-                        continue
-                    if block.content:
-                        is_err = getattr(block, "is_error", False)
-                        color = _RED if is_err else _GREEN
-                        text = _truncate(str(block.content))
-                        print(f"  {_DIM}└ {color}{text}{_RESET}", flush=True)
+                if hasattr(block, "tool_use_id") and block.content:
+                    is_err = getattr(block, "is_error", False)
+                    color = _RED if is_err else _GREEN
+                    text = _truncate(str(block.content))
+                    print(f"  {_DIM}└ {color}{text}{_RESET}", flush=True)
 
     elif isinstance(message, ResultMessage):
         cost = f"${message.total_cost_usd:.2f}" if message.total_cost_usd else "?"
@@ -212,17 +206,15 @@ def _print_message(message) -> None:
 # Worker progress tracking
 # ============================================================
 
-# Matches lines like "[W1] doing something" or "[W12] anything"
-_WORKER_PREFIX_RE = re.compile(r"^\[W(\d+)\]\s*(.*)$")
-
 _worker_state = {
     "started": 0,
     "completed": 0,
     "id_to_num": {},        # agent_id -> worker number
+    "active_workers": {},   # agent_id -> worker number (only while running)
     "num_to_color": {},     # worker number -> ANSI color
     "task_descs": {},       # tool_use_id -> description (from Task tool use blocks)
-    "progress_dir": None,
     "color_index": 0,
+    "log_dir": None,        # Path to session folder for per-worker log files
 }
 
 
@@ -235,111 +227,128 @@ def _assign_worker_color(worker_num: int) -> str:
     return _worker_state["num_to_color"][worker_num]
 
 
-def _is_onboarding_worker(input_data, tool_use_id):
-    """Check if this sub-agent is an onboarding-worker (not a generic Task)."""
-    # Check subagent_type from Task tool input stashed in _print_message
-    return _worker_state.get("_task_types", {}).get(tool_use_id) == "onboarding-worker"
+def _is_onboarding_worker(input_data):
+    """Check if this sub-agent is an onboarding-worker.
+
+    Uses agent_type from SubagentStart/SubagentStop input_data directly,
+    avoiding the race condition of relying on _task_types from the message stream.
+    """
+    return input_data.get("agent_type") == "onboarding-worker"
+
+
+def _active_worker_num() -> int | None:
+    """Return the worker number if exactly one worker is active, else None.
+
+    SDK hooks share the same session_id for orchestrator and workers, so we
+    can't use session_id for attribution. Instead we track which workers are
+    between SubagentStart and SubagentStop. With one active worker, all
+    non-Task tool calls belong to it. With multiple, we pick the most recently
+    started (best-effort — parallel workers interleave).
+    """
+    active = _worker_state["active_workers"]
+    if not active:
+        return None
+    if len(active) == 1:
+        return next(iter(active.values()))
+    # Multiple active: return highest worker number (most recently started)
+    return max(active.values())
+
+
+def _worker_log_path(worker_num: int) -> Path | None:
+    """Return the log file path for a given worker number."""
+    log_dir = _worker_state.get("log_dir")
+    if not log_dir:
+        return None
+    return Path(log_dir) / f"worker_{worker_num}.log"
+
+
+def _append_worker_log(worker_num: int, line: str) -> None:
+    """Append a timestamped line to a worker's log file."""
+    path = _worker_log_path(worker_num)
+    if not path:
+        return
+    ts = datetime.now().strftime("%H:%M:%S")
+    with open(path, "a") as f:
+        f.write(f"[{ts}] {line}\n")
+
+
 
 
 async def _on_worker_start(input_data, tool_use_id, context):
-    """Hook callback: prints when a worker sub-agent starts."""
-    if not _is_onboarding_worker(input_data, tool_use_id):
+    """Hook callback: track worker and print start message."""
+    if not _is_onboarding_worker(input_data):
         return {}
     _worker_state["started"] += 1
     n = _worker_state["started"]
     agent_id = input_data.get("agent_id", "")
     _worker_state["id_to_num"][agent_id] = n
+    _worker_state["active_workers"][agent_id] = n
+    # Create empty log file
+    path = _worker_log_path(n)
+    if path:
+        path.touch()
     color = _assign_worker_color(n)
     desc = _worker_state["task_descs"].pop(tool_use_id, "")
     suffix = f" — {desc}" if desc else ""
     print(f"\n  {color}▶ Worker {n} (W{n}) started{suffix}{_RESET}", flush=True)
+    _append_worker_log(n, f"Started{suffix}")
     return {}
 
 
 async def _on_worker_stop(input_data, tool_use_id, context):
-    """Hook callback: prints when a worker sub-agent finishes."""
+    """Hook callback: print stop message and finalize worker log."""
     agent_id = input_data.get("agent_id", "")
     if agent_id not in _worker_state["id_to_num"]:
         return {}
+    _worker_state["active_workers"].pop(agent_id, None)
     _worker_state["completed"] += 1
     done = _worker_state["completed"]
     total = _worker_state["started"]
     n = _worker_state["id_to_num"].get(agent_id, "?")
     color = _worker_state["num_to_color"].get(n, _GREEN)
     print(f"  {color}✓ Worker {n} (W{n}) done ({done}/{total}){_RESET}", flush=True)
+    _append_worker_log(n, f"Finished ({done}/{total})")
     return {}
 
 
-def _setup_progress_dir() -> Path:
-    """Create a temp directory for worker progress files."""
-    d = Path(tempfile.mkdtemp(prefix="ao-onboard-"))
-    _worker_state["progress_dir"] = d
-    return d
+async def _worker_log_hook(input_data, tool_use_id, context):
+    """PreToolUse hook: log every worker tool action to per-worker log files.
 
-
-async def _monitor_progress(progress_file: Path, stop_event: asyncio.Event) -> None:
-    """Background task: tail progress file and print colored worker updates.
-
-    Workers append free-form lines prefixed with [WN]:
-        [W1] Running agent on sample bird-042
-        [W3] Lesson created: table_alias_convention
-        [W1] Sample bird-042: PASS
-
-    Lines without a [WN] prefix are printed dimmed with no worker attribution.
+    Uses PreToolUse (not PostToolUse) because PostToolUse doesn't fire reliably
+    for all tool types in sub-agents. Skips Task calls (always orchestrator).
     """
-    file_pos = 0
-
-    while not stop_event.is_set():
-        try:
-            if progress_file.exists():
-                with open(progress_file) as f:
-                    f.seek(file_pos)
-                    new_lines = f.readlines()
-                    file_pos = f.tell()
-
-                for raw_line in new_lines:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-
-                    m = _WORKER_PREFIX_RE.match(line)
-                    if m:
-                        wnum = int(m.group(1))
-                        text = m.group(2)
-                        color = _assign_worker_color(wnum)
-                        print(
-                            f"\n{color}W{wnum}{_RESET} {_DIM}{text}{_RESET}",
-                            flush=True,
-                        )
-                    else:
-                        # No worker prefix — print dimmed
-                        print(f"{_DIM}{line}{_RESET}", flush=True)
-        except Exception:
-            pass
-
-        await asyncio.sleep(0.5)
+    tool_name = input_data.get("tool_name", "?")
+    if tool_name == "Task":
+        return {}  # Orchestrator spawning a worker — not a worker action
+    worker_num = _active_worker_num()
+    if worker_num is None:
+        return {}  # No active workers — orchestrator tool call
+    tool_input = input_data.get("tool_input", {})
+    detail = _tool_detail_from_dict(tool_name, tool_input)
+    _append_worker_log(worker_num, f"{tool_name}: {detail}")
+    return {}
 
 
-# ============================================================
-# Main orchestrator
-# ============================================================
+async def _write_edit_guard_hook(input_data, tool_use_id, context):
+    """PreToolUse hook: prompt user to approve Write/Edit tool calls."""
+    tool_name = input_data.get("tool_name", "")
+    tool_input = input_data.get("tool_input", {})
+    file_path = tool_input.get("file_path", "?")
 
-async def _approve_code_changes(tool_name, input_data, context):
-    """Prompt user to approve file writes and edits."""
-    from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
+    # Auto-approve writes to the session folder (state file, log files)
+    log_dir = _worker_state.get("log_dir")
+    if log_dir and file_path.startswith(str(log_dir)):
+        return {}
 
-    if tool_name not in ("Write", "Edit"):
-        return PermissionResultAllow(updated_input=input_data)
-
-    file_path = input_data.get("file_path", "?")
+    # Show details and prompt
     if tool_name == "Edit":
-        old = input_data.get("old_string", "")
-        new = input_data.get("new_string", "")
+        old = tool_input.get("old_string", "")
+        new = tool_input.get("new_string", "")
         print(f"\n  {_YELLOW}Edit {file_path}{_RESET}")
         print(f"  {_DIM}{_RED}- {_truncate(old, 300)}{_RESET}")
         print(f"  {_DIM}{_GREEN}+ {_truncate(new, 300)}{_RESET}")
     else:
-        content = input_data.get("content", "")
+        content = tool_input.get("content", "")
         print(f"\n  {_YELLOW}Write {file_path}{_RESET} ({len(content)} chars)")
 
     print(f"  {_YELLOW}Allow? [Y/n]{_RESET} ", end="", flush=True)
@@ -348,8 +357,130 @@ async def _approve_code_changes(tool_name, input_data, context):
     answer = line.strip().lower() if line else ""
 
     if answer in ("", "y", "yes"):
-        return PermissionResultAllow(updated_input=input_data)
-    return PermissionResultDeny(message="User denied this change.")
+        return {}  # Allow
+
+    # Denied — prompt for instructions to feed back to the agent
+    print(f"  {_YELLOW}Instructions for agent (or Enter to skip):{_RESET} ", end="", flush=True)
+    instr_line = await loop.run_in_executor(None, sys.stdin.readline)
+    instructions = instr_line.strip() if instr_line else ""
+    reason = instructions or "User denied this change."
+
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+async def _monitor_progress(log_dir: Path, stop_event: asyncio.Event) -> None:
+    """Background task: tail per-worker log files and print updates.
+
+    Dynamically discovers new worker_*.log files as workers start.
+    """
+    file_positions: dict[str, int] = {}  # filename -> file position
+
+    while not stop_event.is_set():
+        try:
+            for log_file in sorted(log_dir.glob("worker_*.log")):
+                name = log_file.name
+                pos = file_positions.get(name, 0)
+                with open(log_file) as f:
+                    f.seek(pos)
+                    new_lines = f.readlines()
+                    file_positions[name] = f.tell()
+
+                if not new_lines:
+                    continue
+
+                # Extract worker number from filename (worker_3.log -> 3)
+                try:
+                    wnum = int(name.split("_")[1].split(".")[0])
+                except (IndexError, ValueError):
+                    wnum = 0
+                color = _assign_worker_color(wnum)
+
+                for raw_line in new_lines:
+                    line = raw_line.strip()
+                    if line:
+                        print(f"\n{color}W{wnum}{_RESET} {_DIM}{line}{_RESET}", flush=True)
+        except Exception:
+            pass
+
+        await asyncio.sleep(0.5)
+
+
+# ============================================================
+# Turn-end classification
+# ============================================================
+
+
+def _classify_turn_end(result_msg) -> str:
+    """Classify why the agent's turn ended. Returns one of:
+    - "error": API or execution error — should auto-retry
+    - "done": agent signalled onboarding is complete — exit
+    - "continue": agent was working and stopped — auto-continue
+
+    User interaction is handled structurally via the ask_human MCP tool,
+    not by heuristically detecting question marks in the agent's text.
+    """
+    if result_msg is None:
+        return "continue"
+
+    # Transient / API errors → auto-retry
+    if result_msg.is_error:
+        return "error"
+
+    result = getattr(result_msg, "result", None) or ""
+
+    # Agent explicitly finished onboarding
+    if any(phrase in result.lower() for phrase in [
+        "onboarding complete",
+        "onboarding is complete",
+        "onboarding finished",
+    ]):
+        return "done"
+
+    # Default: agent was working, let it continue
+    return "continue"
+
+
+# ============================================================
+# Main orchestrator
+# ============================================================
+
+def _build_ask_human_server():
+    """Build an in-process MCP server with an ask_human tool.
+
+    This replaces AskUserQuestion (which doesn't work through the SDK's subprocess
+    transport) with a custom tool that prints to stdout and reads from stdin.
+    """
+    from claude_agent_sdk import tool, create_sdk_mcp_server
+
+    @tool(
+        "ask_human",
+        "Ask the human operator a question and wait for their answer. "
+        "Use this whenever you need clarification, confirmation, or input from the human. "
+        "The question will be displayed in the terminal and execution blocks until they respond.",
+        {"question": str},
+    )
+    async def ask_human(args: dict) -> dict:
+        question = args["question"]
+        loop = asyncio.get_event_loop()
+        print(f"\n{_YELLOW}Agent asks:{_RESET} {question}", flush=True)
+        print(f"{_YELLOW}>>>{_RESET} ", end="", flush=True)
+        line = await loop.run_in_executor(None, sys.stdin.readline)
+        answer = line.strip() if line else ""
+        if not answer:
+            answer = "(no response)"
+        return {"content": [{"type": "text", "text": answer}]}
+
+    return create_sdk_mcp_server(
+        name="onboarding",
+        version="1.0.0",
+        tools=[ask_human],
+    )
 
 
 async def _run_onboarding_async(args):
@@ -379,17 +510,19 @@ async def _run_onboarding_async(args):
     orchestrator_prompt = build_orchestrator_prompt(skill_content, state_file=str(state_file))
     worker_prompt = build_worker_prompt(skill_content)
 
-    # Set up progress tracking
+    # Set up worker state tracking (per-worker logs live in session folder)
     _worker_state.update(
-        started=0, completed=0, id_to_num={}, num_to_color={}, task_descs={}, color_index=0,
+        started=0, completed=0, id_to_num={}, active_workers={},
+        num_to_color={}, task_descs={}, color_index=0,
+        log_dir=str(session_folder),
     )
-    progress_dir = _setup_progress_dir()
-    progress_file = progress_dir / "progress.log"
+
+    # Build the ask_human MCP server (must be created before options)
+    ask_human_server = _build_ask_human_server()
 
     prompt_parts = [
         f"Onboard the repository at: {repo_path}",
         f"Maximum parallel workers: {max_parallel}.",
-        f"Progress file for workers: {progress_file}",
         "Follow the process described in your instructions.",
     ]
     if getattr(args, "instructions", None):
@@ -410,7 +543,9 @@ async def _run_onboarding_async(args):
             "Task",
             "Write",
             "Edit",
+            "mcp__onboarding__ask_human",
         ],
+        mcp_servers={"onboarding": ask_human_server},
         permission_mode="default",
         model="opus",
         max_turns=1000,
@@ -418,10 +553,12 @@ async def _run_onboarding_async(args):
         cwd=repo_path,
         resume=resume_session,
         fork_session=fork_session,
-        can_use_tool=_approve_code_changes,
         hooks={
             "PreToolUse": [
                 HookMatcher(matcher="Bash", hooks=[guard_hook]),
+                HookMatcher(matcher="Write", hooks=[_write_edit_guard_hook]),
+                HookMatcher(matcher="Edit", hooks=[_write_edit_guard_hook]),
+                HookMatcher(hooks=[_worker_log_hook]),
             ],
             "PostToolUse": [
                 HookMatcher(matcher="Bash", hooks=[audit_hook]),
@@ -450,9 +587,9 @@ async def _run_onboarding_async(args):
 
     loop = asyncio.get_event_loop()
 
-    # Start progress monitor
+    # Start progress monitor (tails per-worker log files in session folder)
     stop_monitor = asyncio.Event()
-    monitor_task = asyncio.create_task(_monitor_progress(progress_file, stop_monitor))
+    monitor_task = asyncio.create_task(_monitor_progress(session_folder, stop_monitor))
 
     try:
         async with ClaudeSDKClient(options=options) as client:
@@ -470,24 +607,31 @@ async def _run_onboarding_async(args):
             while True:
                 # Receive agent's full response (until ResultMessage)
                 session_id = None
+                result_msg = None
                 async for message in client.receive_response():
                     _print_message(message)
                     if hasattr(message, "session_id"):
                         session_id = message.session_id
+                    if hasattr(message, "is_error"):
+                        result_msg = message
 
                 if session_id:
                     print(f"\n{_DIM}Session: {session_id} (run: {run_id[:8]}){_RESET}", flush=True)
                     _save_session(run_id, args, claude_session_id=session_id)
 
-                # Agent stopped — prompt for human input
-                print(f"\n{_YELLOW}Type your response (or press Enter to end):{_RESET}", flush=True)
-                print(f"{_YELLOW}>>>{_RESET} ", end="", flush=True)
-                line = await loop.run_in_executor(None, sys.stdin.readline)
+                # Decide what to do based on how the turn ended
+                action = _classify_turn_end(result_msg)
 
-                if not line or not line.strip():
+                if action == "error":
+                    print(f"\n  {_RED}Agent hit an error. Auto-retrying...{_RESET}", flush=True)
+                    await client.query("An error occurred. Please continue where you left off.")
+
+                elif action == "done":
+                    print(f"\n  {_GREEN}Onboarding complete.{_RESET}", flush=True)
                     break
 
-                await client.query(line.strip())
+                else:  # "continue"
+                    await client.query("Continue.")
     finally:
         stop_monitor.set()
         monitor_task.cancel()

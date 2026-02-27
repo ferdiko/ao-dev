@@ -743,7 +743,7 @@ def playbook_start_server_command(args) -> None:
         })
 
 
-def _playbook_request(method: str, path: str, data: dict | None = None) -> dict:
+def _playbook_request(method: str, path: str, data: dict | None = None, timeout: int = 120) -> dict:
     """Make an HTTP request to the playbook server.
 
     Returns the parsed JSON response, or an error dict.
@@ -776,7 +776,7 @@ def _playbook_request(method: str, path: str, data: dict | None = None) -> dict:
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=120) as response:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         error_body = e.read().decode("utf-8") if e.fp else str(e)
@@ -1128,6 +1128,34 @@ def playbook_lessons_rm_command(args) -> None:
     output_json(result)
 
 
+def playbook_restructure_propose_command(args) -> None:
+    """Propose a restructuring of the lesson taxonomy."""
+    data = {"base_path": _normalize_folder_path(args.path or "")}
+    if args.comments:
+        data["comments"] = args.comments
+    result = _playbook_request("POST", "/api/v1/lessons/restructure/propose", data, timeout=300)
+    if result.get("status") == "error":
+        output_json(result)
+    output_json(result)
+
+
+def playbook_restructure_execute_command(args) -> None:
+    """Execute an approved restructure proposal."""
+    data = {"task_id": args.task_id}
+    result = _playbook_request("POST", "/api/v1/lessons/restructure/execute", data)
+    if result.get("status") == "error":
+        output_json(result)
+    output_json(result)
+
+
+def playbook_restructure_abort_command(args) -> None:
+    """Abort a pending restructure proposal."""
+    result = _playbook_request("POST", "/api/v1/lessons/restructure/abort", {"task_id": args.task_id})
+    if result.get("status") == "error":
+        output_json(result)
+    output_json(result)
+
+
 def create_parser() -> ArgumentParser:
     """Create the argument parser with subcommands."""
     parser = ArgumentParser(
@@ -1252,7 +1280,7 @@ def create_parser() -> ArgumentParser:
         description="Analyze a repository's agent and dataset, run the agent on samples, "
                     "diagnose failures, and create lessons automatically.",
     )
-    onboard.add_argument("repo_path", help="Path to the target repository")
+    onboard.add_argument("repo_path", nargs="?", default=None, help="Path to the target repository")
     onboard.add_argument(
         "--max-parallel", type=int, default=4,
         help="Maximum sub-agents running concurrently (default: 4)",
@@ -1443,6 +1471,47 @@ def create_parser() -> ArgumentParser:
     )
     lessons_rm.add_argument("target", help="Lesson ID or folder path (with -r)")
 
+    # playbook restructure (nested subcommand)
+    restructure = playbook_subparsers.add_parser(
+        "restructure",
+        help="Restructure lesson taxonomy",
+        description="Propose, execute, or abort a lesson taxonomy restructuring.",
+    )
+    restructure_subparsers = restructure.add_subparsers(dest="restructure_command", required=True)
+
+    # playbook restructure propose
+    restructure_propose = restructure_subparsers.add_parser(
+        "propose",
+        help="Propose a restructuring (locks the folder)",
+        description="Analyze lessons and propose a better folder taxonomy. "
+                    "Acquires a lock on the target folder until executed or aborted.",
+    )
+    restructure_propose.add_argument(
+        "path", nargs="?", default="",
+        help="Base folder path to analyze (default: root)",
+    )
+    restructure_propose.add_argument(
+        "--comments", "-c", default=None,
+        help="Guidance for the restructuring (e.g. 'group by domain, not by agent')",
+    )
+
+    # playbook restructure execute
+    restructure_execute = restructure_subparsers.add_parser(
+        "execute",
+        help="Execute an approved proposal (releases lock)",
+        description="Apply a previously proposed restructuring. "
+                    "Verifies nothing changed since the proposal was generated.",
+    )
+    restructure_execute.add_argument("task_id", help="Task ID from the propose step")
+
+    # playbook restructure abort
+    restructure_abort = restructure_subparsers.add_parser(
+        "abort",
+        help="Abort a pending proposal (releases lock)",
+        description="Cancel a pending restructure proposal and release the folder lock.",
+    )
+    restructure_abort.add_argument("task_id", help="Task ID from the propose step")
+
     return parser
 
 
@@ -1460,8 +1529,12 @@ def main():
         edit_and_rerun_command(args)
     elif args.command == "onboard":
         from ao.runner.agent_runner import AgentRunner
-        repo_name = os.path.basename(os.path.abspath(args.repo_path))
-        script_args = [args.repo_path]
+        if not args.repo_path and not args.resume:
+            print("Error: repo_path is required unless using --resume.", file=sys.stderr)
+            sys.exit(1)
+        script_args = []
+        if args.repo_path:
+            script_args.append(args.repo_path)
         if args.max_parallel != 4:
             script_args.extend(["--max-parallel", str(args.max_parallel)])
         if args.model != "sonnet":
@@ -1472,6 +1545,7 @@ def main():
             script_args.extend(["--resume", args.resume])
         if args.fork:
             script_args.append("--fork")
+        repo_name = os.path.basename(os.path.abspath(args.repo_path)) if args.repo_path else "resume"
         AgentRunner(
             script_path="ao.onboarding.orchestrator",
             script_args=script_args,
@@ -1506,6 +1580,13 @@ def main():
                 playbook_lessons_cp_command(args)
             elif args.lessons_command == "rm":
                 playbook_lessons_rm_command(args)
+        elif args.playbook_command == "restructure":
+            if args.restructure_command == "propose":
+                playbook_restructure_propose_command(args)
+            elif args.restructure_command == "execute":
+                playbook_restructure_execute_command(args)
+            elif args.restructure_command == "abort":
+                playbook_restructure_abort_command(args)
 
 
 if __name__ == "__main__":
