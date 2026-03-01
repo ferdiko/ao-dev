@@ -37,6 +37,8 @@ from ao.server.handlers import (
     handle_get_graph,
     handle_erase,
     handle_get_all_experiments,
+    handle_get_more_experiments,
+    handle_get_experiment_detail,
     handle_get_lessons_applied,
     # Runner handlers
     handle_add_node,
@@ -250,79 +252,66 @@ class MainServer:
                 }
             )
 
-    def broadcast_experiment_list_to_uis(self, conn=None) -> None:
-        """Only broadcast to one UI (conn) or, if conn is None, to all."""
+    EXPERIMENT_PAGE_SIZE = 50
 
-        def build_and_send(target_conn, db_rows):
-            session_map = {session.session_id: session for session in self.sessions.values()}
-            experiment_list = []
-            for row in db_rows:
-                session_id = row["session_id"]
-                session = session_map.get(session_id)
+    def _format_experiment_row(self, row, session_map) -> dict:
+        """Convert a DB experiment row to a dict for the frontend."""
+        session_id = row["session_id"]
+        session = session_map.get(session_id)
+        status = session.status if session else "finished"
 
-                # Get status from in-memory session, or default to "finished"
-                status = session.status if session else "finished"
-
-                # Get data from DB entries.
-                timestamp = row["timestamp"]
-                # Format timestamp as ISO string for frontend parsing
-                if hasattr(timestamp, "isoformat"):
-                    timestamp = timestamp.isoformat()
-                elif hasattr(timestamp, "strftime"):
-                    timestamp = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-                else:
-                    # If it's already a string, ensure it's in a parseable format
-                    try:
-                        from datetime import datetime
-
-                        dt = datetime.strptime(str(timestamp), "%Y-%m-%d %H:%M:%S")
-                        timestamp = dt.isoformat()
-                    except:
-                        # If parsing fails, use as-is
-                        pass
-
-                run_name = row["name"]
-                success = row["success"]
-                notes = row["notes"]
-                log = row["log"]
-                version_date = row["version_date"]
-
-                # Parse color_preview from database
-                color_preview = []
-                if row["color_preview"]:
-                    try:
-                        color_preview = json.loads(row["color_preview"])
-                    except:
-                        color_preview = []
-
-                experiment_list.append(
-                    {
-                        "session_id": session_id,
-                        "status": status,
-                        "timestamp": timestamp,
-                        "color_preview": color_preview,
-                        "version_date": version_date,
-                        "run_name": run_name,
-                        "result": success,
-                        "notes": notes,
-                        "log": log,
-                    }
-                )
-
-            msg = {"type": "experiment_list", "experiments": experiment_list}
+        timestamp = row["timestamp"]
+        if hasattr(timestamp, "isoformat"):
+            timestamp = timestamp.isoformat()
+        elif hasattr(timestamp, "strftime"):
+            timestamp = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        else:
             try:
-                send_json(target_conn, msg)
+                dt = datetime.strptime(str(timestamp), "%Y-%m-%d %H:%M:%S")
+                timestamp = dt.isoformat()
+            except:
+                pass
+
+        color_preview = []
+        if row["color_preview"]:
+            try:
+                color_preview = json.loads(row["color_preview"])
+            except:
+                color_preview = []
+
+        return {
+            "session_id": session_id,
+            "status": status,
+            "timestamp": timestamp,
+            "color_preview": color_preview,
+            "version_date": row["version_date"],
+            "run_name": row["name"],
+            "result": row["success"],
+        }
+
+    def broadcast_experiment_list_to_uis(self, conn=None) -> None:
+        """Broadcast first page of experiments (no notes/log) to one or all UIs."""
+        db_rows = DB.get_all_experiments_sorted(limit=self.EXPERIMENT_PAGE_SIZE)
+        total_count = DB.get_experiment_count()
+        has_more = total_count > self.EXPERIMENT_PAGE_SIZE
+        session_map = {s.session_id: s for s in self.sessions.values()}
+
+        experiments = [self._format_experiment_row(row, session_map) for row in db_rows]
+        msg = {"type": "experiment_list", "experiments": experiments, "has_more": has_more}
+
+        if conn:
+            try:
+                send_json(conn, msg)
             except Exception as e:
                 logger.error(f"Error sending experiment list to UI: {e}")
-
-        db_experiments = DB.get_all_experiments_sorted()
-        if conn:
-            build_and_send(conn, db_experiments)
             return
 
-        # Broadcast to all UIs
         for ui_conn in list(self.ui_connections):
-            build_and_send(ui_conn, db_experiments)
+            try:
+                send_json(ui_conn, msg)
+            except Exception as e:
+                logger.error(f"Error broadcasting experiment list to UI: {e}")
+                self.ui_connections.discard(ui_conn)
 
     def print_graph(self, session_id):
         # Debug utility.
@@ -530,6 +519,10 @@ class MainServer:
             handle_erase(self, msg)
         elif msg_type == "get_all_experiments":
             handle_get_all_experiments(self, conn)
+        elif msg_type == "get_more_experiments":
+            handle_get_more_experiments(self, msg, conn)
+        elif msg_type == "get_experiment_detail":
+            handle_get_experiment_detail(self, msg, conn)
 
         # Runner handlers
         elif msg_type == "add_node":

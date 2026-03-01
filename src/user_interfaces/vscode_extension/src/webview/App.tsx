@@ -17,6 +17,7 @@ declare global {
 
 export const App: React.FC = () => {
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
+  const [hasMoreFinished, setHasMoreFinished] = useState(false);
   const [activeTab, setActiveTab] = useState<'experiments' | 'experiment-graph'>('experiments');
   const [selectedExperiment, setSelectedExperiment] = useState<ProcessInfo | null>(null);
   const [showDetailsPanel, setShowDetailsPanel] = useState(false);
@@ -56,9 +57,27 @@ export const App: React.FC = () => {
         case "updateNode":
           // Node updates are now handled by individual graph tabs
           break;
-        case "experiment_list":
+        case "experiment_list": {
           console.log('[App] Received experiment_list:', message.experiments);
-          setProcesses(message.experiments || []);
+          const broadcastExperiments = message.experiments || [];
+          const broadcastIds = new Set(broadcastExperiments.map((e: ProcessInfo) => e.session_id));
+          // Merge: use broadcast data for first page, keep previously paginated experiments
+          setProcesses(prev => {
+            const paginatedExtras = prev.filter((e: ProcessInfo) => !broadcastIds.has(e.session_id));
+            return [...broadcastExperiments, ...paginatedExtras];
+          });
+          setHasMoreFinished(!!message.has_more);
+          break;
+        }
+        case "more_experiments":
+          setProcesses(prev => {
+            const existingIds = new Set(prev.map(p => p.session_id));
+            const newExperiments = (message.experiments || []).filter(
+              (e: ProcessInfo) => !existingIds.has(e.session_id)
+            );
+            return [...prev, ...newExperiments];
+          });
+          setHasMoreFinished(!!message.has_more);
           break;
       }
     };
@@ -96,6 +115,13 @@ export const App: React.FC = () => {
     // Refresh experiments from backend
     if (window.vscode) {
       window.vscode.postMessage({ type: 'requestExperimentRefresh' });
+    }
+  };
+
+  const handleLoadMoreFinished = () => {
+    if (window.vscode) {
+      // Offset is total experiments loaded (DB query includes both running and finished)
+      window.vscode.postMessage({ type: 'get_more_experiments', offset: processes.length });
     }
   };
 
@@ -170,6 +196,8 @@ export const App: React.FC = () => {
             showHeader={true}
             onLessonsClick={handleLessonsClick}
             onRefresh={handleRefresh}
+            hasMoreFinished={hasMoreFinished}
+            onLoadMoreFinished={handleLoadMoreFinished}
           />
         ) : activeTab === "experiment-graph" && selectedExperiment && !showDetailsPanel ? (
           <GraphView

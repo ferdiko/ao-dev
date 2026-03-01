@@ -13,6 +13,8 @@ from ao.server.handlers.ui_handlers import (
     handle_get_graph,
     handle_erase,
     handle_get_all_experiments,
+    handle_get_more_experiments,
+    handle_get_experiment_detail,
     handle_get_lessons_applied,
 )
 
@@ -39,6 +41,8 @@ __all__ = [
     "handle_get_graph",
     "handle_erase",
     "handle_get_all_experiments",
+    "handle_get_more_experiments",
+    "handle_get_experiment_detail",
     "handle_get_lessons_applied",
     # Runner handlers
     "handle_add_node",

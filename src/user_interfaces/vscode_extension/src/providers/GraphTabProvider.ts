@@ -265,10 +265,14 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         this._pythonClient = PythonServerClient.getInstance();
                         this._pythonClient.ensureConnected(); // async but don't await
                     }
-                    // Request graph data and experiment list for dropdown
+                    // Request graph data, experiment detail (notes/log), and experiment list
                     if (this._pythonClient) {
                         this._pythonClient.sendMessage({
                             type: 'get_graph',
+                            session_id: sessionId
+                        });
+                        this._pythonClient.sendMessage({
+                            type: 'get_experiment_detail',
                             session_id: sessionId
                         });
                         this._pythonClient.sendMessage({
@@ -352,9 +356,13 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         if (sessionRef) {
                             sessionRef.current = data.sessionId;
                         }
-                        // Request graph data for the new session
+                        // Request graph data and detail for the new session
                         this._pythonClient.sendMessage({
                             type: 'get_graph',
+                            session_id: data.sessionId
+                        });
+                        this._pythonClient.sendMessage({
+                            type: 'get_experiment_detail',
                             session_id: data.sessionId
                         });
                         // Update tab title

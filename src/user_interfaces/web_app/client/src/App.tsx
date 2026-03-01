@@ -83,6 +83,7 @@ async function playbookSseMutation(baseUrl: string, method: string, path: string
 function App() {
   const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5958";
   const [experiments, setExperiments] = useState<ProcessInfo[]>([]);
+  const [hasMoreFinished, setHasMoreFinished] = useState(false);
   const [selectedExperiment, setSelectedExperiment] = useState<ProcessInfo | null>(null);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [ws, setWs] = useState<WebSocket | null>(null);
@@ -307,18 +308,46 @@ function App() {
       switch (msg.type) {
         case "experiment_list":
           if (msg.experiments) {
-            const updatedExperiments = msg.experiments;
-            setExperiments(updatedExperiments);
+            const broadcastExperiments = msg.experiments as ProcessInfo[];
+            const broadcastIds = new Set(broadcastExperiments.map((e: ProcessInfo) => e.session_id));
+            // Merge: use broadcast data for first page, keep previously paginated experiments
+            setExperiments(prev => {
+              const paginatedExtras = prev.filter(e => !broadcastIds.has(e.session_id));
+              return [...broadcastExperiments, ...paginatedExtras];
+            });
+            setHasMoreFinished(!!(msg as any).has_more);
             // Update selectedExperiment if it matches one in the updated list
-            // This ensures metadata edits are reflected in the UI
             setSelectedExperiment((current) => {
               if (!current) return null;
-              const updated = updatedExperiments.find(
+              const updated = broadcastExperiments.find(
                 (exp: ProcessInfo) => exp.session_id === current.session_id
               );
               return updated || current;
             });
           }
+          break;
+
+        case "more_experiments":
+          if (msg.experiments) {
+            setExperiments(prev => {
+              const existingIds = new Set(prev.map(p => p.session_id));
+              const newExperiments = (msg.experiments || []).filter(
+                (e: ProcessInfo) => !existingIds.has(e.session_id)
+              );
+              return [...prev, ...newExperiments];
+            });
+            setHasMoreFinished(!!(msg as any).has_more);
+          }
+          break;
+
+        case "experiment_detail":
+          // Update selected experiment with notes/log fetched on demand
+          setSelectedExperiment((current) => {
+            if (current && (msg as any).session_id === current.session_id) {
+              return { ...current, notes: (msg as any).notes, log: (msg as any).log };
+            }
+            return current;
+          });
           break;
 
         case "graph_update":
@@ -425,6 +454,15 @@ function App() {
 
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "get_graph", session_id: experiment.session_id }));
+      // Fetch notes/log on demand (not included in experiment list)
+      ws.send(JSON.stringify({ type: "get_experiment_detail", session_id: experiment.session_id }));
+    }
+  };
+
+  const handleLoadMoreFinished = () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      // Offset is total experiments loaded (DB query includes both running and finished)
+      ws.send(JSON.stringify({ type: "get_more_experiments", offset: experiments.length }));
     }
   };
 
@@ -457,6 +495,8 @@ function App() {
           isDarkTheme={isDarkTheme}
           showHeader={true}
           onLessonsClick={handleLessonsClick}
+          hasMoreFinished={hasMoreFinished}
+          onLoadMoreFinished={handleLoadMoreFinished}
         />
         <div
           className="sidebar-resize-handle"
