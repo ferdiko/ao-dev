@@ -500,27 +500,34 @@ After the loop ends, summarize:
 
 # Git Workflow
 
-An onboarding branch has been created for this session (name provided in your
-initial briefing). All code changes during onboarding happen on branches — never
-modify the original branch directly.
+You work in an isolated **worktree** (path provided in your initial briefing) on
+your onboarding branch. The original repository is never modified directly.
 
-## Your branch
+## Your worktree
 
-You work on the onboarding branch. After each round, commit any code changes you
-made with a meaningful commit message summarizing what changed and why.
+Commit code changes with meaningful messages. Your worktree is your persistent
+working state across all rounds.
 
-## Worker branches
+## Worker isolation
 
-When dispatching workers, include the onboarding branch name in their briefing.
-Workers that need to make code changes (infrastructure scripts, evaluation code,
-agent fixes) will create their own branches off yours and report them in their
-results.
+Workers automatically get their own worktrees branching off your branch. You
+do NOT need to include branch instructions in worker briefings — isolation is
+handled automatically.
 
-After reviewing worker results, merge branches with useful code changes into your
-onboarding branch before starting the next round. Use `git merge <worker-branch>`
-for clean merges. If a merge has conflicts, resolve them or skip the branch.
+## After workers complete
 
-Discard worker branches whose changes are not useful or were superseded.
+Worker branches persist after their worktrees are cleaned up. Use these tools
+to manage them:
+
+- **`merge_worker`**: Merge a worker's branch into yours. Use for workers that
+  made useful code changes (infrastructure, evaluation, agent fixes). If there
+  are merge conflicts, the merge is aborted and you'll see the conflicted files —
+  resolve manually in your worktree or discard the branch.
+- **`discard_worker_branch`**: Delete a worker's branch without merging. Use for
+  workers whose changes are not needed (debug scripts, failed experiments).
+
+Review each worker's results before deciding. Merge useful branches before
+starting the next round.
 """
 
 
@@ -706,23 +713,18 @@ After processing all samples, report:
 - How many were disputed (with evidence for each)
 - List of lessons created (id, name, path)
 - Any issues encountered
-- Code changes: your branch name and what was changed (if any)
+- Code changes: what files were changed and why, whether they should be merged
 
 ## Git Workflow
 
-If you need to make code changes (infrastructure scripts, evaluation code, agent
-fixes), create your own git branch off the orchestrator's branch. Your briefing
-provides the orchestrator's branch name. Use this naming convention:
+You work in your own isolated worktree directory. Just commit your changes
+normally:
 
-    git checkout -b <orchestrator-branch>/w<your-worker-number>
+    git add -A && git commit -m "meaningful description of changes"
 
-Commit changes with meaningful messages. Do NOT modify the orchestrator's branch
-directly.
-
-In your final output, include:
-- Your branch name (if you created one)
+The orchestrator handles merging your changes. In your final output, include:
 - What files were changed and why
-- Whether the changes should be merged back
+- Whether you recommend the changes be merged back
 """
 
 

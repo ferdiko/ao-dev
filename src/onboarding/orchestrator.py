@@ -97,33 +97,71 @@ def _load_skill_md() -> str:
     return ""
 
 
-def _setup_onboarding_branch(repo_path: str, run_id: str) -> str:
-    """Create and checkout an onboarding branch in the target repo.
-
-    On resume, checks out the existing branch. Otherwise creates a new one
-    from the current HEAD.  Returns the branch name.
-    """
+def _git(cwd: str, *args, check: bool = True) -> "subprocess.CompletedProcess":
+    """Run a git command in the given directory."""
     import subprocess
-
-    branch_name = f"ao-onboard/{run_id[:8]}"
-
-    # Check if branch already exists (resume case)
-    result = subprocess.run(
-        ["git", "rev-parse", "--verify", branch_name],
-        cwd=repo_path, capture_output=True, text=True,
+    return subprocess.run(
+        ["git"] + list(args),
+        cwd=cwd, check=check, capture_output=True, text=True, timeout=30,
     )
-    if result.returncode == 0:
-        subprocess.run(
-            ["git", "checkout", branch_name],
-            cwd=repo_path, check=True, capture_output=True, text=True,
-        )
-    else:
-        subprocess.run(
-            ["git", "checkout", "-b", branch_name],
-            cwd=repo_path, check=True, capture_output=True, text=True,
-        )
 
-    return branch_name
+
+def _setup_orchestrator_worktree(repo_path: str, run_id: str, session_folder: Path) -> tuple[str, str]:
+    """Create orchestrator worktree branching off HEAD.
+
+    On resume, reuses the existing worktree. Returns (worktree_dir, branch_name).
+    """
+    branch_name = f"ao-onboard/{run_id[:8]}"
+    worktree_dir = str(session_folder / "worktrees" / "orchestrator")
+
+    if os.path.isdir(worktree_dir):
+        # Resume: worktree already exists
+        return worktree_dir, branch_name
+
+    os.makedirs(str(session_folder / "worktrees"), exist_ok=True)
+
+    # Check if branch already exists (session folder was cleaned but branch persists)
+    result = _git(repo_path, "rev-parse", "--verify", branch_name, check=False)
+    if result.returncode == 0:
+        _git(repo_path, "worktree", "add", worktree_dir, branch_name)
+    else:
+        _git(repo_path, "worktree", "add", "-b", branch_name, worktree_dir, "HEAD")
+
+    return worktree_dir, branch_name
+
+
+def _create_worker_worktree(repo_path: str, orchestrator_branch: str,
+                            worker_num: int, session_folder: Path) -> str:
+    """Create an isolated worktree for a worker, branching off the orchestrator."""
+    branch = f"{orchestrator_branch}/w{worker_num}"
+    worktree_dir = str(session_folder / "worktrees" / f"worker-{worker_num}")
+
+    # Clean up stale worktree/branch if they exist from a previous run
+    if os.path.isdir(worktree_dir):
+        _git(repo_path, "worktree", "remove", worktree_dir, "--force", check=False)
+    _git(repo_path, "branch", "-D", branch, check=False)
+
+    _git(repo_path, "worktree", "add", "-b", branch, worktree_dir, orchestrator_branch)
+    return worktree_dir
+
+
+def _autocommit_worker(worktree_dir: str, worker_num: int) -> None:
+    """Commit any uncommitted changes in a worker worktree before removal."""
+    if not os.path.isdir(worktree_dir):
+        return
+    _git(worktree_dir, "add", "-A", check=False)
+    result = _git(worktree_dir, "diff", "--cached", "--quiet", check=False)
+    if result.returncode != 0:
+        _git(worktree_dir, "commit", "-m", f"auto-commit: worker {worker_num} final state",
+             check=False)
+
+
+def _remove_worker_worktree(repo_path: str, worker_num: int, session_folder: Path) -> None:
+    """Remove a worker's worktree directory (keeps the branch for merging)."""
+    worktree_dir = str(session_folder / "worktrees" / f"worker-{worker_num}")
+    if os.path.isdir(worktree_dir):
+        _git(repo_path, "worktree", "remove", worktree_dir, "--force", check=False)
+    _git(repo_path, "worktree", "prune", check=False)
 
 
 def _truncate(text: str, limit: int = 200) -> str:
@@ -174,6 +212,7 @@ class WorkerContext:
     num_turns: int = 0
     duration_s: float = 0.0
     kill_reason: str = ""
+    worktree_dir: str = ""         # isolated worktree path for this worker
     last_haiku_check: float = 0.0  # timestamp of last haiku assessment
     last_alerted: float = 0.0     # timestamp of last heartbeat alert (cooldown)
 
@@ -325,8 +364,11 @@ async def _run_single_worker(ctx: WorkerContext, worker_prompt: str, worker_mode
                                 ctx.recent_actions.append(action)
                                 if len(ctx.recent_actions) > 30:
                                     ctx.recent_actions = ctx.recent_actions[-30:]
+                                # Terminal: compact summary
                                 print(f"\n{_wtag()} {_BOLD}{block.name}{_RESET}  {detail}", flush=True)
-                                _append_worker_log(ctx.num, f"{block.name}: {detail}")
+                                # Log file: full tool input for debugging
+                                full_input = json.dumps(block.input, indent=2) if block.input else ""
+                                _append_worker_log(ctx.num, f"{block.name}:\n{full_input}")
 
                     elif isinstance(msg, UserMessage):
                         if isinstance(msg.content, list):
@@ -336,8 +378,10 @@ async def _run_single_worker(ctx: WorkerContext, worker_prompt: str, worker_mode
                                     text = str(content) if not isinstance(content, str) else content
                                     is_err = getattr(block, "is_error", False)
                                     rc = _RED if is_err else _DIM
+                                    # Terminal: truncated for readability
                                     print(f"{_wtag()} {rc}  └ {_truncate(text, 2000)}{_RESET}", flush=True)
-                                    _append_worker_log(ctx.num, f"{'ERROR' if is_err else 'result'}: {text}")
+                                    # Log file: full result for debugging
+                                    _append_worker_log(ctx.num, f"{'ERROR' if is_err else 'result'}:\n{text}")
 
                     elif isinstance(msg, ResultMessage):
                         ctx.result_text = msg.result or ""
@@ -570,12 +614,14 @@ def _classify_turn_end(result_msg) -> str:
 def _build_mcp_server(
     *,
     repo_path: str,
+    orchestrator_dir: str,
+    orchestrator_branch: str,
     worker_prompt: str,
     worker_model: str,
     max_parallel: int,
     session_folder: Path,
 ):
-    """Build an in-process MCP server with ask_human, dispatch_workers, and kill_worker.
+    """Build an in-process MCP server with agent tools.
 
     State (workers, tasks, heartbeat) persists across tool calls via closure.
     """
@@ -605,13 +651,27 @@ def _build_mcp_server(
     def _running_count():
         return sum(1 for t in worker_tasks.values() if not t.done())
 
+    def _worker_branch(num: int) -> str:
+        return f"{orchestrator_branch}/w{num}"
+
     def _fill_slots():
         while pending_queue and _running_count() < max_parallel:
             ctx = pending_queue.pop(0)
+            ctx.worktree_dir = _create_worker_worktree(
+                repo_path, orchestrator_branch, ctx.num, session_folder,
+            )
             task = asyncio.create_task(
-                _run_single_worker(ctx, worker_prompt, worker_model, repo_path)
+                _run_single_worker(ctx, worker_prompt, worker_model, ctx.worktree_dir)
             )
             worker_tasks[ctx.num] = task
+
+    def _cleanup_worker(ctx: WorkerContext) -> None:
+        """Auto-commit and remove a worker's worktree after it finishes."""
+        if not ctx.worktree_dir:
+            return
+        _autocommit_worker(ctx.worktree_dir, ctx.num)
+        _remove_worker_worktree(repo_path, ctx.num, session_folder)
+        ctx.worktree_dir = ""  # mark as cleaned up (idempotent)
 
     # ── ask_human ──
 
@@ -711,6 +771,10 @@ def _build_mcp_server(
             active_tasks = {num: t for num, t in worker_tasks.items() if not t.done()}
 
             if not active_tasks and not pending_queue:
+                # Clean up all finished workers' worktrees
+                for ctx in workers.values():
+                    if ctx.worktree_dir and ctx.status in ("completed", "errored"):
+                        _cleanup_worker(ctx)
                 return _format_result("all_done", workers, current_batch)
 
             # Build wait set: active worker tasks + alert sentinel
@@ -727,11 +791,19 @@ def _build_mcp_server(
                 # Cancel the unused alert sentinel
                 alert_sentinel.cancel()
 
-            # Some workers finished — refill slots from queue
+            # Some workers finished — auto-commit + remove their worktrees
+            for num, t in list(worker_tasks.items()):
+                if t.done() and workers[num].worktree_dir:
+                    _cleanup_worker(workers[num])
+
+            # Refill slots from queue
             _fill_slots()
 
-            # If everything is done now, return results
+            # If everything is done now, clean up and return results
             if not any(not t.done() for t in worker_tasks.values()) and not pending_queue:
+                for ctx in workers.values():
+                    if ctx.worktree_dir and ctx.status in ("completed", "errored"):
+                        _cleanup_worker(ctx)
                 return _format_result("all_done", workers, current_batch)
 
     # ── kill_worker ──
@@ -761,12 +833,74 @@ def _build_mcp_server(
         ctx.kill_reason = f"Killed by orchestrator"
         ctx.duration_s = time.time() - ctx.start_time
 
+        # Clean up worker's worktree
+        _cleanup_worker(ctx)
+
         color = _assign_worker_color(num)
         ts = datetime.now().strftime("%H:%M:%S")
         print(f"{_DIM}[{ts}]{_RESET} {color}✗ W{num} killed{_RESET}", flush=True)
         _append_worker_log(num, "Killed by orchestrator")
 
         return {"content": [{"type": "text", "text": f"Worker {num} killed."}]}
+
+    # ── merge_worker ──
+
+    @tool(
+        "merge_worker",
+        "Merge a completed worker's branch into the orchestrator branch. "
+        "Use after reviewing worker results to integrate useful code changes. "
+        "Returns merge result (success or conflict details). On success, the "
+        "worker branch is deleted.",
+        {"worker_num": int},
+    )
+    async def merge_worker_tool(args: dict) -> dict:
+        num = args["worker_num"]
+        branch = _worker_branch(num)
+
+        # Verify branch exists
+        result = _git(repo_path, "rev-parse", "--verify", branch, check=False)
+        if result.returncode != 0:
+            return {"content": [{"type": "text", "text": f"Branch {branch} not found."}]}
+
+        # Attempt merge in orchestrator worktree
+        result = _git(
+            orchestrator_dir, "merge", branch, "--no-edit",
+            "-m", f"merge worker {num}", check=False,
+        )
+
+        if result.returncode == 0:
+            # Clean merge — delete the worker branch
+            _git(repo_path, "branch", "-D", branch, check=False)
+            return {"content": [{"type": "text", "text": f"Merged worker {num} successfully."}]}
+
+        # Conflict — abort and report
+        _git(orchestrator_dir, "merge", "--abort", check=False)
+        # List conflicted files for the orchestrator to see
+        conflict_result = _git(
+            orchestrator_dir, "diff", "--name-only", "--diff-filter=U", check=False,
+        )
+        files = conflict_result.stdout.strip() or "(could not determine conflicted files)"
+        return {"content": [{"type": "text", "text":
+            f"Merge conflict for worker {num}. Aborted.\n"
+            f"Conflicted files:\n{files}\n"
+            f"Branch {branch} is still available. You can resolve manually "
+            f"in your worktree or discard with discard_worker_branch."}]}
+
+    # ── discard_worker_branch ──
+
+    @tool(
+        "discard_worker_branch",
+        "Delete a worker's branch without merging. Use for workers whose "
+        "code changes are not needed.",
+        {"worker_num": int},
+    )
+    async def discard_worker_branch_tool(args: dict) -> dict:
+        num = args["worker_num"]
+        branch = _worker_branch(num)
+        result = _git(repo_path, "branch", "-D", branch, check=False)
+        if result.returncode == 0:
+            return {"content": [{"type": "text", "text": f"Deleted branch {branch}."}]}
+        return {"content": [{"type": "text", "text": f"Branch {branch} not found or already deleted."}]}
 
     async def cleanup():
         """Cancel background tasks and close shared clients."""
@@ -781,7 +915,8 @@ def _build_mcp_server(
     server = create_sdk_mcp_server(
         name="onboarding",
         version="1.0.0",
-        tools=[ask_human, dispatch_workers_tool, kill_worker_tool],
+        tools=[ask_human, dispatch_workers_tool, kill_worker_tool,
+               merge_worker_tool, discard_worker_branch_tool],
     )
     return server, cleanup
 
@@ -854,9 +989,10 @@ async def _run_onboarding_async(args):
     print(f"{_DIM}Run: {run_id}{_RESET}", flush=True)
     print(f"{_DIM}State: {state_file}{_RESET}", flush=True)
 
-    # Create/checkout onboarding branch in target repo
-    branch_name = _setup_onboarding_branch(repo_path, run_id)
+    # Create orchestrator worktree (isolated from original repo)
+    orchestrator_dir, branch_name = _setup_orchestrator_worktree(repo_path, run_id, session_folder)
     print(f"{_DIM}Branch: {branch_name}{_RESET}", flush=True)
+    print(f"{_DIM}Worktree: {orchestrator_dir}{_RESET}", flush=True)
 
     # Save session metadata early (claude_session_id filled in after first turn)
     _save_session(run_id, args, branch_name=branch_name)
@@ -869,9 +1005,11 @@ async def _run_onboarding_async(args):
     # Set up worker state (color assignment + log dir)
     _worker_state.update(num_to_color={}, color_index=0, log_dir=str(session_folder))
 
-    # Build MCP server with ask_human, dispatch_workers, kill_worker
+    # Build MCP server with agent tools
     mcp_server, mcp_cleanup = _build_mcp_server(
         repo_path=repo_path,
+        orchestrator_dir=orchestrator_dir,
+        orchestrator_branch=branch_name,
         worker_prompt=worker_prompt,
         worker_model=worker_model,
         max_parallel=max_parallel,
@@ -880,9 +1018,12 @@ async def _run_onboarding_async(args):
 
     prompt_parts = [
         f"Onboard the repository at: {repo_path}",
+        f"Your working directory (orchestrator worktree): {orchestrator_dir}",
         f"Maximum parallel workers: {max_parallel}.",
         f"State file: {state_file}",
         f"Onboarding branch: {branch_name}",
+        "Workers get isolated worktrees automatically. After they finish, use "
+        "merge_worker to integrate useful code changes or discard_worker_branch to clean up.",
         "Follow the process described in your instructions.",
     ]
     if getattr(args, "instructions", None):
@@ -906,13 +1047,15 @@ async def _run_onboarding_async(args):
             "mcp__onboarding__ask_human",
             "mcp__onboarding__dispatch_workers",
             "mcp__onboarding__kill_worker",
+            "mcp__onboarding__merge_worker",
+            "mcp__onboarding__discard_worker_branch",
         ],
         mcp_servers={"onboarding": mcp_server},
         permission_mode="default",
         model=orchestrator_model,
         max_turns=1000,
         max_buffer_size=100_000_000,  # 100MB — default 1MB is too small for large tool results
-        cwd=repo_path,
+        cwd=orchestrator_dir,
         resume=resume_session,
         fork_session=fork_session,
         hooks={
