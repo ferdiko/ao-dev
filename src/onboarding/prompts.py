@@ -96,7 +96,7 @@ works on at least one sample.
 
 Run the full evaluation to establish the starting success rate. This is Round 0.
 
-Write the result to your **state file** at `{state_file}`.
+Write the result to your **state file** (path provided in your initial briefing).
 This file is your persistent memory across the entire onboarding process. Re-read it
 at the start of every round. It survives context compaction — if the conversation
 gets long and earlier details are lost, the state file has everything you need.
@@ -366,21 +366,43 @@ Each worker gets a briefing as its prompt. Include:
 
 ### 2.4 Dispatch Workers
 
-You are given a maximum number of parallel workers (from the user's --max-parallel
-setting). Manage a queue:
+Use `mcp__onboarding__dispatch_workers` to dispatch all workers for a round. Provide
+ALL worker briefings in a single call — the tool handles queuing and parallelism
+internally (respects max_parallel).
 
-1. Spawn the first batch of workers up to the max-parallel limit
-   (multiple Task tool calls in one turn)
-2. Wait for any workers to complete
-3. Spawn the next batch of workers to fill the freed slots
-4. Repeat until all chunks for this round have been processed
+Each worker entry needs:
+- `briefing`: The full worker prompt including all context from section 2.3
+- `max_turns`: Maximum turns (default 200, increase for complex chunks)
 
-**IMPORTANT**: Always set `max_turns` to a high value (e.g., 200) when spawning workers
-via the Task tool. Workers need many turns to run agents, evaluate, diagnose, create
-lessons, and verify. The default is too low and will cause workers to stop mid-task.
+The tool **blocks until either all workers complete or a heartbeat alert fires**.
 
-**Stage-wise rounds**: Workers for independent stages (no dependency between them)
-can be dispatched in the same round.
+**When all workers complete**: The tool returns per-worker results (status, output,
+cost, turns). Read each worker's result to track lessons created, samples processed,
+and disputed samples.
+
+**When a heartbeat alert fires**: The tool returns early with the alert — which worker
+is flagged, why (silence timeout or stuck-in-loop assessment), and their recent tool
+calls. YOU decide what to do:
+
+- **Kill and replace**: Call `mcp__onboarding__kill_worker` with the worker number,
+  then call `dispatch_workers` with a replacement briefing (adjust the approach based
+  on what the stuck worker was doing wrong). The still-running workers continue
+  uninterrupted.
+- **Kill and skip**: Kill the worker, then call `dispatch_workers` with no new workers
+  to resume waiting for the remaining healthy workers.
+- **Let it continue**: If you judge the worker is actually making progress (e.g., it's
+  running a legitimately slow evaluation), call `dispatch_workers` with no new workers
+  to resume waiting. The flagged worker keeps running.
+
+**IMPORTANT**: When you receive a heartbeat alert, ALWAYS explain your assessment and
+decision in text BEFORE calling any tool. State which worker was flagged, what the alert
+says, and whether you will kill, replace, or let it continue — and why. This reasoning
+is your only visible output; without it, the human cannot follow your decisions.
+
+After handling the alert (or choosing to wait), call `dispatch_workers` with an empty
+workers list to resume blocking until the next event.
+
+**Stage-wise rounds**: Workers for independent stages can be dispatched in the same call.
 
 ### 2.5 Run Evaluation
 
@@ -474,6 +496,31 @@ After the loop ends, summarize:
 - **Infrastructure built**: Any isolation scripts, oracle data, or evaluation
   functions created during pipeline analysis
 - **Recommendations**: Suggestions for further improvement beyond lessons
+- **Code changes**: Branches merged, what was changed and why
+
+# Git Workflow
+
+An onboarding branch has been created for this session (name provided in your
+initial briefing). All code changes during onboarding happen on branches — never
+modify the original branch directly.
+
+## Your branch
+
+You work on the onboarding branch. After each round, commit any code changes you
+made with a meaningful commit message summarizing what changed and why.
+
+## Worker branches
+
+When dispatching workers, include the onboarding branch name in their briefing.
+Workers that need to make code changes (infrastructure scripts, evaluation code,
+agent fixes) will create their own branches off yours and report them in their
+results.
+
+After reviewing worker results, merge branches with useful code changes into your
+onboarding branch before starting the next round. Use `git merge <worker-branch>`
+for clean merges. If a merge has conflicts, resolve them or skip the branch.
+
+Discard worker branches whose changes are not useful or were superseded.
 """
 
 
@@ -659,20 +706,36 @@ After processing all samples, report:
 - How many were disputed (with evidence for each)
 - List of lessons created (id, name, path)
 - Any issues encountered
+- Code changes: your branch name and what was changed (if any)
+
+## Git Workflow
+
+If you need to make code changes (infrastructure scripts, evaluation code, agent
+fixes), create your own git branch off the orchestrator's branch. Your briefing
+provides the orchestrator's branch name. Use this naming convention:
+
+    git checkout -b <orchestrator-branch>/w<your-worker-number>
+
+Commit changes with meaningful messages. Do NOT modify the orchestrator's branch
+directly.
+
+In your final output, include:
+- Your branch name (if you created one)
+- What files were changed and why
+- Whether the changes should be merged back
 """
 
 
-def build_orchestrator_prompt(skill_content: str, state_file: str = "onboarding_state.md") -> str:
-    """Build orchestrator system prompt with ao skill reference and state file path injected."""
-    prompt = ORCHESTRATOR_PROMPT.replace("{state_file}", state_file)
-    parts = [prompt]
+def build_orchestrator_prompt(skill_content: str) -> str:
+    """Build orchestrator system prompt (constant, suitable for cache-friendly append)."""
+    parts = [ORCHESTRATOR_PROMPT]
     if skill_content:
         parts.append(f"\n\n## ao-tool Reference\n\n{skill_content}")
     return "\n".join(parts)
 
 
 def build_worker_prompt(skill_content: str) -> str:
-    """Build worker system prompt with ao skill reference injected."""
+    """Build worker system prompt (constant, suitable for cache-friendly append)."""
     parts = [WORKER_BEHAVIOR]
     if skill_content:
         parts.append(f"\n\n## ao-tool Reference\n\n{skill_content}")

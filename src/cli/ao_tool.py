@@ -1286,9 +1286,14 @@ def create_parser() -> ArgumentParser:
         help="Maximum sub-agents running concurrently (default: 4)",
     )
     onboard.add_argument(
-        "--model", default="sonnet",
+        "--worker-model", default="sonnet",
         choices=["opus", "sonnet", "haiku"],
-        help="Model for sub-agents (default: sonnet). Orchestrator always uses opus.",
+        help="Model for worker agents (default: sonnet)",
+    )
+    onboard.add_argument(
+        "--orchestrator-model", default="opus",
+        choices=["opus", "sonnet", "haiku"],
+        help="Model for the orchestrator agent (default: opus)",
     )
     onboard.add_argument(
         "--instructions",
@@ -1537,8 +1542,10 @@ def main():
             script_args.append(args.repo_path)
         if args.max_parallel != 4:
             script_args.extend(["--max-parallel", str(args.max_parallel)])
-        if args.model != "sonnet":
-            script_args.extend(["--model", args.model])
+        if args.worker_model != "sonnet":
+            script_args.extend(["--worker-model", args.worker_model])
+        if args.orchestrator_model != "opus":
+            script_args.extend(["--orchestrator-model", args.orchestrator_model])
         if args.instructions:
             script_args.extend(["--instructions", args.instructions])
         if args.resume:
