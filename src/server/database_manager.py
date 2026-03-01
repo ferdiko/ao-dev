@@ -356,8 +356,14 @@ class DatabaseManager:
     def get_finished_runs(self):
         return self.backend.get_finished_runs_query()
 
-    def get_all_experiments_sorted(self):
-        return self.backend.get_all_experiments_sorted_query()
+    def get_all_experiments_sorted(self, limit=None, offset=0):
+        return self.backend.get_all_experiments_sorted_query(limit=limit, offset=offset)
+
+    def get_experiment_count(self):
+        return self.backend.get_experiment_count_query()
+
+    def get_experiment_detail(self, session_id):
+        return self.backend.get_experiment_detail_query(session_id)
 
     def get_graph(self, session_id):
         return self.backend.get_experiment_graph_topology_query(session_id)

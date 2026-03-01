@@ -134,7 +134,8 @@ def handle_update_notes(server, msg: dict) -> None:
     notes = msg.get("notes")
     if session_id and notes is not None:
         DB.update_notes(session_id, notes)
-        server.broadcast_experiment_list_to_uis()
+        # No broadcast needed — notes are not in the experiment list,
+        # and the editing UI already has the updated value locally.
     else:
         logger.error(
             f"handle_update_notes: Missing required fields: session_id={session_id}, notes={notes}"
@@ -190,6 +191,31 @@ def handle_get_all_experiments(server, conn: socket.socket) -> None:
         },
     )
     server.broadcast_experiment_list_to_uis(conn)
+
+
+def handle_get_more_experiments(server, msg: dict, conn: socket.socket) -> None:
+    """Handle paginated request for more experiments."""
+    offset = msg.get("offset", 0)
+    limit = server.EXPERIMENT_PAGE_SIZE
+    db_rows = DB.get_all_experiments_sorted(limit=limit, offset=offset)
+    total_count = DB.get_experiment_count()
+    has_more = (offset + limit) < total_count
+    session_map = {s.session_id: s for s in server.sessions.values()}
+
+    experiments = [server._format_experiment_row(row, session_map) for row in db_rows]
+    send_json(conn, {"type": "more_experiments", "experiments": experiments, "has_more": has_more})
+
+
+def handle_get_experiment_detail(server, msg: dict, conn: socket.socket) -> None:
+    """Handle request for experiment notes and log."""
+    session_id = msg.get("session_id")
+    if not session_id:
+        logger.error("get_experiment_detail missing session_id")
+        return
+    row = DB.get_experiment_detail(session_id)
+    notes = row["notes"] if row else ""
+    log = row["log"] if row else ""
+    send_json(conn, {"type": "experiment_detail", "session_id": session_id, "notes": notes, "log": log})
 
 
 def handle_get_lessons_applied(server, conn: socket.socket) -> None:

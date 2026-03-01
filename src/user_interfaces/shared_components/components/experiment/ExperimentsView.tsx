@@ -10,6 +10,8 @@ interface ExperimentsViewProps {
   showHeader?: boolean;
   onLessonsClick?: () => void;
   onRefresh?: () => void;
+  hasMoreFinished?: boolean;
+  onLoadMoreFinished?: () => void;
 }
 
 export const ExperimentsView: React.FC<ExperimentsViewProps> = ({
@@ -21,6 +23,8 @@ export const ExperimentsView: React.FC<ExperimentsViewProps> = ({
   showHeader = false,
   onLessonsClick,
   onRefresh,
+  hasMoreFinished = false,
+  onLoadMoreFinished,
 }) => {
   const [hoveredCards, setHoveredCards] = useState<Set<string>>(new Set());
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['running', 'finished']));
@@ -126,6 +130,22 @@ export const ExperimentsView: React.FC<ExperimentsViewProps> = ({
     });
   };
 
+  const loadMoreTriggeredRef = React.useRef(false);
+
+  // Reset the load-more guard when hasMoreFinished changes (new data arrived)
+  React.useEffect(() => {
+    loadMoreTriggeredRef.current = false;
+  }, [finishedProcesses.length]);
+
+  const handleFinishedScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (!hasMoreFinished || !onLoadMoreFinished || loadMoreTriggeredRef.current) return;
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 50) {
+      loadMoreTriggeredRef.current = true;
+      onLoadMoreFinished();
+    }
+  };
+
   const renderExperimentSection = (
     processes: ProcessInfo[],
     sectionTitle: string,
@@ -215,7 +235,7 @@ export const ExperimentsView: React.FC<ExperimentsViewProps> = ({
             <span>{sectionTitle}</span>
           </div>
           {isExpanded && (
-            <div style={listItemsStyle}>
+            <div style={listItemsStyle} onScroll={sectionPrefix === 'finished' ? handleFinishedScroll : undefined}>
               {processes.length > 0 ? (
                 (() => {
                   // Blue color cycle for code hash tags (2 shades for better distinction)

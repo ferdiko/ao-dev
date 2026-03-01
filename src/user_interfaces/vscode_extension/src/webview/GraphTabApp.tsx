@@ -101,6 +101,12 @@ const GraphTabAppInner: React.FC = () => {
             setExperiment(message.experiment);
           }
           break;
+        case 'experiment_detail':
+          // Update experiment with notes/log fetched on demand
+          if (message.session_id === sessionId) {
+            setExperiment(prev => prev ? { ...prev, notes: message.notes, log: message.log } : prev);
+          }
+          break;
         case 'experiment_list':
           // Experiment list is handled by the sidebar, not the graph tab
           break;

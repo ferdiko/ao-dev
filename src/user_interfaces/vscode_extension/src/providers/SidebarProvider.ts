@@ -123,6 +123,8 @@ _context: vscode.WebviewViewResolveContext,
                 case 'edit_output':
                 case 'get_graph':
                 case 'erase':
+                case 'get_more_experiments':
+                case 'get_experiment_detail':
                     this._pythonClient?.sendMessage(data);
                     break;
                 case 'ready':

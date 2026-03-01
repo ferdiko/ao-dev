@@ -368,11 +368,30 @@ def get_finished_runs_query():
     return query_all("SELECT session_id, timestamp FROM experiments ORDER BY timestamp DESC", ())
 
 
-def get_all_experiments_sorted_query():
-    """Get all experiments sorted by timestamp desc."""
+def get_all_experiments_sorted_query(limit=None, offset=0):
+    """Get experiments sorted by timestamp desc, with optional pagination."""
+    if limit is not None:
+        return query_all(
+            "SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
     return query_all(
-        "SELECT session_id, timestamp, color_preview, name, version_date, success, notes, log FROM experiments ORDER BY timestamp DESC",
+        "SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments ORDER BY timestamp DESC",
         (),
+    )
+
+
+def get_experiment_count_query():
+    """Get total number of experiments."""
+    row = query_one("SELECT COUNT(*) as count FROM experiments", ())
+    return row["count"] if row else 0
+
+
+def get_experiment_detail_query(session_id):
+    """Get notes and log for a single experiment."""
+    return query_one(
+        "SELECT notes, log FROM experiments WHERE session_id=?",
+        (session_id,),
     )
 
 
