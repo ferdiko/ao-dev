@@ -115,6 +115,7 @@ Our CI test suit comprises of ["non_billable"](/tests/non_billable) and ["billab
    1. Publish to TestPyPI first: `python -m twine upload --repository testpypi dist/*`. Then try to install from TestPyPi. Ask Ferdi if you don't have the key to our TestPyPI account.
    2. When installing from TestPyPI, do the following (just swap out the package name at the end of the command): `pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ ao-dev==0.0.1`
 8. Upload to PyPI: `python -m twine upload dist/*`. Ask Ferdi if you don't have the key to our PyPI account.
+9. Make a release on github: This is just to keep track of things, no need to put any description. Just go to "Releases" and do "Draft new release".
 
 
 ### VS Code extension
