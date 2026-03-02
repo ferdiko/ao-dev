@@ -381,6 +381,42 @@ def get_all_experiments_sorted_query(limit=None, offset=0):
     )
 
 
+def get_experiments_by_ids_query(session_ids):
+    """Get experiments for specific session IDs, sorted by timestamp desc."""
+    if not session_ids:
+        return []
+    placeholders = ",".join("?" * len(session_ids))
+    return query_all(
+        f"SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments WHERE session_id IN ({placeholders}) ORDER BY timestamp DESC",
+        tuple(session_ids),
+    )
+
+
+def get_experiments_excluding_ids_query(session_ids, limit=None, offset=0):
+    """Get experiments excluding specific session IDs, sorted by timestamp desc."""
+    if not session_ids:
+        return get_all_experiments_sorted_query(limit=limit, offset=offset)
+    placeholders = ",".join("?" * len(session_ids))
+    params = list(session_ids)
+    sql = f"SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments WHERE session_id NOT IN ({placeholders}) ORDER BY timestamp DESC"
+    if limit is not None:
+        sql += " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+    return query_all(sql, tuple(params))
+
+
+def get_experiment_count_excluding_ids_query(session_ids):
+    """Get count of experiments excluding specific session IDs."""
+    if not session_ids:
+        return get_experiment_count_query()
+    placeholders = ",".join("?" * len(session_ids))
+    row = query_one(
+        f"SELECT COUNT(*) as count FROM experiments WHERE session_id NOT IN ({placeholders})",
+        tuple(session_ids),
+    )
+    return row["count"] if row else 0
+
+
 def get_experiment_count_query():
     """Get total number of experiments."""
     row = query_one("SELECT COUNT(*) as count FROM experiments", ())
