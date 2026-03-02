@@ -75,6 +75,9 @@ class MainServer:
         self.rerun_sessions = set()  # Track sessions being rerun to avoid clearing llm_calls
         self._last_activity_time = time.time()  # Track last message received for inactivity timeout
         self._project_root = None  # Workspace root from VS Code UI
+        # Debounced broadcast: coalesces rapid state changes into one UI update
+        self._broadcast_timer: Optional[threading.Timer] = None
+        self._broadcast_lock = threading.Lock()
         # Git versioning state
         self._git_available: Optional[bool] = None
         self._git_initialized = False
@@ -123,6 +126,12 @@ class MainServer:
             return False
 
         try:
+            # Remove stale index.lock (left behind if server was killed during git operation)
+            lock_file = os.path.join(self._git_dir, "index.lock")
+            if os.path.exists(lock_file):
+                os.remove(lock_file)
+                logger.info("Removed stale git index.lock")
+
             # Check if already initialized
             if os.path.exists(os.path.join(self._git_dir, "HEAD")):
                 self._git_initialized = True
@@ -199,7 +208,7 @@ class MainServer:
         version_date = self._commit_and_get_version()
         if version_date:
             DB.update_experiment_version_date(session_id, version_date)
-        self.broadcast_experiment_list_to_uis()
+        self.notify_experiment_list_changed()
 
     # ============================================================
     # Inactivity Monitor
@@ -253,6 +262,24 @@ class MainServer:
             )
 
     EXPERIMENT_PAGE_SIZE = 50
+    BROADCAST_DEBOUNCE_MS = 100
+
+    def notify_experiment_list_changed(self) -> None:
+        """Schedule a debounced broadcast of the experiment list to all UIs.
+
+        Coalesces rapid state changes (e.g. 60 jobs registering simultaneously)
+        into a single broadcast, avoiding jitter from inconsistent reads of
+        in-memory session state vs database.
+        """
+        with self._broadcast_lock:
+            if self._broadcast_timer is not None:
+                self._broadcast_timer.cancel()
+            self._broadcast_timer = threading.Timer(
+                self.BROADCAST_DEBOUNCE_MS / 1000,
+                self.broadcast_experiment_list_to_uis,
+            )
+            self._broadcast_timer.daemon = True
+            self._broadcast_timer.start()
 
     def _format_experiment_row(self, row, session_map) -> dict:
         """Convert a DB experiment row to a dict for the frontend."""
@@ -290,13 +317,19 @@ class MainServer:
         }
 
     def broadcast_experiment_list_to_uis(self, conn=None) -> None:
-        """Broadcast first page of experiments (no notes/log) to one or all UIs."""
-        db_rows = DB.get_all_experiments_sorted(limit=self.EXPERIMENT_PAGE_SIZE)
-        total_count = DB.get_experiment_count()
-        has_more = total_count > self.EXPERIMENT_PAGE_SIZE
+        """Broadcast all running + first page of finished experiments to UIs."""
+        self._sweep_dead_sessions()
         session_map = {s.session_id: s for s in self.sessions.values()}
+        running_ids = {sid for sid, s in self.sessions.items() if s.status == "running"}
 
-        experiments = [self._format_experiment_row(row, session_map) for row in db_rows]
+        running_rows = DB.get_experiments_by_ids(running_ids)
+        finished_rows = DB.get_experiments_excluding_ids(
+            running_ids, limit=self.EXPERIMENT_PAGE_SIZE,
+        )
+        finished_count = DB.get_experiment_count_excluding_ids(running_ids)
+        has_more = finished_count > self.EXPERIMENT_PAGE_SIZE
+
+        experiments = [self._format_experiment_row(row, session_map) for row in running_rows + finished_rows]
         msg = {"type": "experiment_list", "experiments": experiments, "has_more": has_more}
 
         if conn:
@@ -383,10 +416,38 @@ class MainServer:
             if session:
                 session.status = "running"
                 DB.update_timestamp(child_session_id, datetime.now())
-                self.broadcast_experiment_list_to_uis()
+                self.notify_experiment_list_changed()
 
         except Exception as e:
             logger.error(f"Failed to rerun finished session: {e}")
+
+    def _sweep_dead_sessions(self) -> None:
+        """Mark sessions with dead connections as finished.
+
+        Catches orphaned sessions where the handler thread's cleanup
+        didn't properly mark the session (e.g., connection closed during
+        handshake, or handler thread was blocked).
+        """
+        changed = False
+        for session in list(self.sessions.values()):
+            if session.status != "running":
+                continue
+            conn = session.shim_conn
+            if conn is None:
+                # Handler thread already disconnected but didn't mark finished
+                logger.info(f"Sweeping orphaned session {session.session_id} (no connection)")
+                session.status = "finished"
+                changed = True
+                continue
+            # Check if the socket is still valid
+            try:
+                conn.fileno()
+            except OSError:
+                logger.info(f"Sweeping orphaned session {session.session_id} (dead socket)")
+                session.status = "finished"
+                changed = True
+        if changed:
+            self.notify_experiment_list_changed()
 
     def load_finished_runs(self):
         """Load finished runs from database into sessions dict."""
@@ -455,7 +516,7 @@ class MainServer:
         session = self.sessions.get(session_id)
         if session:
             session.status = "finished"
-            self.broadcast_experiment_list_to_uis()
+            self.notify_experiment_list_changed()
 
     def handle_shutdown(self) -> None:
         """Handle shutdown command by closing all connections."""
@@ -479,7 +540,7 @@ class MainServer:
         DB.clear_db()
         self.session_graphs.clear()
         self.sessions.clear()
-        self.broadcast_experiment_list_to_uis()
+        self.notify_experiment_list_changed()
         self.broadcast_to_all_uis(
             {"type": "graph_update", "session_id": None, "payload": {"nodes": [], "edges": []}}
         )
@@ -600,7 +661,7 @@ class MainServer:
                         "session_id": session_id,
                     },
                 )
-                self.broadcast_experiment_list_to_uis()
+                self.notify_experiment_list_changed()
 
             elif role == "ui":
                 # Always reload finished runs from the DB before sending experiment list
@@ -650,14 +711,17 @@ class MainServer:
             # Clean up connection
             info = self.conn_info.pop(conn, None)
             # Only mark session finished for agent-runner disconnects
-            if info and role == "agent-runner":
-                session = self.sessions.get(info["session_id"])
-                if session:
-                    with session.lock:
-                        session.shim_conn = None
-                    session.status = "finished"
-                    self.broadcast_experiment_list_to_uis()
-            elif info and role == "ui":
+            if role == "agent-runner":
+                # Use conn_info lookup, fall back to local session variable
+                cleanup_session = (
+                    self.sessions.get(info["session_id"]) if info else session
+                )
+                if cleanup_session:
+                    with cleanup_session.lock:
+                        cleanup_session.shim_conn = None
+                    cleanup_session.status = "finished"
+                    self.notify_experiment_list_changed()
+            elif role == "ui":
                 # Remove from global UI connections list
                 self.ui_connections.discard(conn)
             try:
