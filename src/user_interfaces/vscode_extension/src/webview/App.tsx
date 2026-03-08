@@ -61,9 +61,13 @@ export const App: React.FC = () => {
           console.log('[App] Received experiment_list:', message.experiments);
           const broadcastExperiments = message.experiments || [];
           const broadcastIds = new Set(broadcastExperiments.map((e: ProcessInfo) => e.session_id));
-          // Merge: use broadcast data for first page, keep previously paginated experiments
+          // Merge: use broadcast data for first page, keep previously paginated experiments.
+          // The broadcast is authoritative for ALL running experiments, so any extras
+          // not in the broadcast are necessarily finished.
           setProcesses(prev => {
-            const paginatedExtras = prev.filter((e: ProcessInfo) => !broadcastIds.has(e.session_id));
+            const paginatedExtras = prev
+              .filter((e: ProcessInfo) => !broadcastIds.has(e.session_id))
+              .map((e: ProcessInfo) => e.status === 'running' ? { ...e, status: 'finished' } : e);
             return [...broadcastExperiments, ...paginatedExtras];
           });
           setHasMoreFinished(!!message.has_more);

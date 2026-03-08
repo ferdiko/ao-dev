@@ -129,7 +129,7 @@ def handle_add_subrun(server, msg: dict, conn: socket.socket) -> None:
     with session.lock:
         session.shim_conn = conn
     session.status = "running"
-    server.broadcast_experiment_list_to_uis()
+    server.notify_experiment_list_changed()
     server.conn_info[conn] = {"role": "agent-runner", "session_id": session_id}
     response = {"type": "session_id", "session_id": session_id}
     request_id = msg.get("request_id")
@@ -145,7 +145,7 @@ def handle_deregister_message(server, msg: dict) -> None:
     if session:
         session.status = "finished"
         clear_matching_data(session_id)
-        server.broadcast_experiment_list_to_uis()
+        server.notify_experiment_list_changed()
 
 
 def handle_update_command(server, msg: dict) -> None:
@@ -165,4 +165,4 @@ def handle_log(server, msg: dict) -> None:
     success = msg["success"]
     entry = msg["entry"]
     DB.add_log(session_id, success, entry)
-    server.broadcast_experiment_list_to_uis()
+    server.notify_experiment_list_changed()

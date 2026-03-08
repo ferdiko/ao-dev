@@ -3,11 +3,6 @@
 import json
 import socket
 
-from ao.common.constants import (
-    AO_CONFIG,
-    PLAYBOOK_SERVER_URL,
-    PLAYBOOK_API_KEY,
-)
 from ao.server.database_manager import DB
 from ao.server.handlers.handler_utils import send_json, logger
 
@@ -108,7 +103,7 @@ def handle_update_run_name(server, msg: dict) -> None:
     run_name = msg.get("run_name")
     if session_id and run_name is not None:
         DB.update_run_name(session_id, run_name)
-        server.broadcast_experiment_list_to_uis()
+        server.notify_experiment_list_changed()
     else:
         logger.error(
             f"handle_update_run_name: Missing required fields: session_id={session_id}, run_name={run_name}"
@@ -121,7 +116,7 @@ def handle_update_result(server, msg: dict) -> None:
     result = msg.get("result")
     if session_id and result is not None:
         DB.update_result(session_id, result)
-        server.broadcast_experiment_list_to_uis()
+        server.notify_experiment_list_changed()
     else:
         logger.error(
             f"handle_update_result: Missing required fields: session_id={session_id}, result={result}"
@@ -180,26 +175,17 @@ def handle_erase(server, msg: dict) -> None:
 
 def handle_get_all_experiments(server, conn: socket.socket) -> None:
     """Handle request to refresh the experiment list (e.g., when VS Code window regains focus)."""
-    send_json(
-        conn,
-        {
-            "type": "session_id",
-            "session_id": None,
-            "config_path": AO_CONFIG,
-            "playbook_url": PLAYBOOK_SERVER_URL,
-            "playbook_api_key": PLAYBOOK_API_KEY,
-        },
-    )
     server.broadcast_experiment_list_to_uis(conn)
 
 
 def handle_get_more_experiments(server, msg: dict, conn: socket.socket) -> None:
-    """Handle paginated request for more experiments."""
+    """Handle paginated request for more (finished) experiments."""
     offset = msg.get("offset", 0)
     limit = server.EXPERIMENT_PAGE_SIZE
-    db_rows = DB.get_all_experiments_sorted(limit=limit, offset=offset)
-    total_count = DB.get_experiment_count()
-    has_more = (offset + limit) < total_count
+    running_ids = {sid for sid, s in server.sessions.items() if s.status == "running"}
+    db_rows = DB.get_experiments_excluding_ids(running_ids, limit=limit, offset=offset)
+    finished_count = DB.get_experiment_count_excluding_ids(running_ids)
+    has_more = (offset + limit) < finished_count
     session_map = {s.session_id: s for s in server.sessions.values()}
 
     experiments = [server._format_experiment_row(row, session_map) for row in db_rows]

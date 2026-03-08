@@ -359,8 +359,17 @@ class DatabaseManager:
     def get_all_experiments_sorted(self, limit=None, offset=0):
         return self.backend.get_all_experiments_sorted_query(limit=limit, offset=offset)
 
+    def get_experiments_by_ids(self, session_ids):
+        return self.backend.get_experiments_by_ids_query(session_ids)
+
+    def get_experiments_excluding_ids(self, session_ids, limit=None, offset=0):
+        return self.backend.get_experiments_excluding_ids_query(session_ids, limit=limit, offset=offset)
+
     def get_experiment_count(self):
         return self.backend.get_experiment_count_query()
+
+    def get_experiment_count_excluding_ids(self, session_ids):
+        return self.backend.get_experiment_count_excluding_ids_query(session_ids)
 
     def get_experiment_detail(self, session_id):
         return self.backend.get_experiment_detail_query(session_id)

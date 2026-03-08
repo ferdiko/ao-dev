@@ -59,7 +59,9 @@ export async function activate(context: vscode.ExtensionContext) {
     const graphTabProvider = new GraphTabProvider(context.extensionUri);
 
     context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider)
+        vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider, {
+            webviewOptions: { retainContextWhenHidden: true }
+        })
     );
 
     context.subscriptions.push(
