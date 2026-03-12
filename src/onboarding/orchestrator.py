@@ -133,7 +133,7 @@ def _setup_orchestrator_worktree(repo_path: str, run_id: str, session_folder: Pa
 def _create_worker_worktree(repo_path: str, orchestrator_branch: str,
                             worker_num: int, session_folder: Path) -> str:
     """Create an isolated worktree for a worker, branching off the orchestrator."""
-    branch = f"{orchestrator_branch}/w{worker_num}"
+    branch = f"{orchestrator_branch}-w{worker_num}"
     worktree_dir = str(session_folder / "worktrees" / f"worker-{worker_num}")
 
     # Clean up stale worktree/branch if they exist from a previous run
@@ -652,7 +652,7 @@ def _build_mcp_server(
         return sum(1 for t in worker_tasks.values() if not t.done())
 
     def _worker_branch(num: int) -> str:
-        return f"{orchestrator_branch}/w{num}"
+        return f"{orchestrator_branch}-w{num}"
 
     def _fill_slots():
         while pending_queue and _running_count() < max_parallel:
@@ -784,7 +784,7 @@ def _build_mcp_server(
             done, _ = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
 
             if alert_sentinel in done:
-                # Heartbeat alert fired — return early to orchestrator
+                # Heartbeat alert fired �� return early to orchestrator
                 alert = alert_sentinel.result()
                 return _format_result("heartbeat_alert", workers, current_batch, alert=alert)
             else:
@@ -1154,6 +1154,9 @@ def main():
             print(f"No saved session found for '{args.resume}'.", file=sys.stderr)
             sys.exit(1)
         # Restore claude_session_id for SDK resume and run_id for folder reuse
+        if not saved.get("claude_session_id"):
+            print("Session crashed before first turn — no SDK session to resume.", file=sys.stderr)
+            sys.exit(1)
         args.resume = saved["claude_session_id"]
         args._run_id = saved["run_id"]
         # Restore saved args (CLI flags override if explicitly provided)
