@@ -97,7 +97,7 @@ jobs:
       run: |
         export DB_PATH="$HOME/.cache/ao/tests/caching-edit"
         export PYTHON_PORT=5962
-        uv run ao-server start
+        uv run ao-server start --no-analysis
 
     - name: Run tests
       env:
@@ -146,7 +146,7 @@ jobs:
       run: |
         export DB_PATH="$HOME/.cache/ao/tests/caching"
         export PYTHON_PORT=5963
-        uv run ao-server start
+        uv run ao-server start --no-analysis
 
     - name: Run tests
       env:
