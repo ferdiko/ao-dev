@@ -62,6 +62,9 @@ def _add_node_to_session(server, sid: str, node: dict, incoming_edges: list) -> 
     server.broadcast_graph_update(sid)
     DB.update_graph_topology(sid, graph)
 
+    # Async label generation via local LLM
+    server._label_executor.submit(server._do_label_node, sid, node["id"])
+
 
 def handle_add_node(server, msg: dict) -> None:
     """Handle add_node message from runner."""

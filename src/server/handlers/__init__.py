@@ -26,6 +26,12 @@ from ao.server.handlers.runner_handlers import (
     handle_log,
 )
 
+from ao.server.handlers.analysis_handlers import (
+    start_model_server,
+    stop_model_server,
+    get_node_label,
+)
+
 __all__ = [
     # Utils
     "send_json",
@@ -50,4 +56,8 @@ __all__ = [
     "handle_deregister_message",
     "handle_update_command",
     "handle_log",
+    # Analysis handlers
+    "start_model_server",
+    "stop_model_server",
+    "get_node_label",
 ]

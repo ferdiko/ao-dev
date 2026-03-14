@@ -46,6 +46,10 @@ from ao.server.handlers import (
     handle_deregister_message,
     handle_update_command,
     handle_log,
+    # Analysis handlers
+    start_model_server,
+    stop_model_server,
+    get_node_label,
 )
 
 logger = create_file_logger(MAIN_SERVER_LOG)
@@ -86,6 +90,7 @@ class MainServer:
         from concurrent.futures import ThreadPoolExecutor
 
         self._git_executor = ThreadPoolExecutor(max_workers=1)
+        self._label_executor = ThreadPoolExecutor(max_workers=4)
 
     # ============================================================
     # Git Versioning
@@ -210,6 +215,28 @@ class MainServer:
             DB.update_experiment_version_date(session_id, version_date)
         self.notify_experiment_list_changed()
 
+    def _do_label_node(self, session_id: str, node_id: str) -> None:
+        """Background thread: generate a descriptive label for a node via the local LLM."""
+        try:
+            label = get_node_label(f"Give a short 3-5 word label for graph node {node_id}")
+        except Exception as e:
+            logger.error(f"[label] get_node_label failed: {e}")
+            return
+        if label is None:
+            logger.warning(f"[label] LLM returned None for node {node_id[:8]}")
+            return
+        graph = self.session_graphs.get(session_id)
+        if graph is None:
+            return
+        for node in graph.get("nodes", []):
+            if node["id"] == node_id:
+                node["label"] = label
+                break
+        else:
+            return
+        DB.update_graph_topology(session_id, graph)
+        self.broadcast_graph_update(session_id)
+
     # ============================================================
     # Inactivity Monitor
     # ============================================================
@@ -324,12 +351,15 @@ class MainServer:
 
         running_rows = DB.get_experiments_by_ids(running_ids)
         finished_rows = DB.get_experiments_excluding_ids(
-            running_ids, limit=self.EXPERIMENT_PAGE_SIZE,
+            running_ids,
+            limit=self.EXPERIMENT_PAGE_SIZE,
         )
         finished_count = DB.get_experiment_count_excluding_ids(running_ids)
         has_more = finished_count > self.EXPERIMENT_PAGE_SIZE
 
-        experiments = [self._format_experiment_row(row, session_map) for row in running_rows + finished_rows]
+        experiments = [
+            self._format_experiment_row(row, session_map) for row in running_rows + finished_rows
+        ]
         msg = {"type": "experiment_list", "experiments": experiments, "has_more": has_more}
 
         if conn:
@@ -467,7 +497,6 @@ class MainServer:
     # Admin Handlers (remain in main_server.py)
     # ============================================================
 
-
     def handle_erase(self, msg):
         session_id = msg.get("session_id")
 
@@ -521,6 +550,10 @@ class MainServer:
     def handle_shutdown(self) -> None:
         """Handle shutdown command by closing all connections."""
         logger.info("Shutdown command received. Closing all connections.")
+        # Stop background executors
+        self._label_executor.shutdown(wait=False)
+        # Stop the local model server
+        stop_model_server()
         # Close all client sockets
         for s in list(self.conn_info.keys()):
             try:
@@ -713,9 +746,7 @@ class MainServer:
             # Only mark session finished for agent-runner disconnects
             if role == "agent-runner":
                 # Use conn_info lookup, fall back to local session variable
-                cleanup_session = (
-                    self.sessions.get(info["session_id"]) if info else session
-                )
+                cleanup_session = self.sessions.get(info["session_id"]) if info else session
                 if cleanup_session:
                     with cleanup_session.lock:
                         cleanup_session.shim_conn = None
@@ -768,6 +799,9 @@ class MainServer:
 
         # Start inactivity monitor (shuts down after 1 hour of no messages)
         self._start_inactivity_monitor()
+
+        # Start local model server for graph analysis
+        start_model_server()
 
         # Load finished runs on startup
         logger.info(f"Loading finished runs... ({time.time() - _run_start:.2f}s)")
