@@ -29,7 +29,7 @@ jobs:
       run: |
         export DB_PATH="$HOME/.cache/ao/tests/non-billable"
         export PYTHON_PORT=5959
-        uv run ao-server start
+        uv run ao-server start --no-analysis
 
     - name: Run tests
       env:

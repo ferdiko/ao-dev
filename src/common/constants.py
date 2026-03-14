@@ -46,6 +46,8 @@ MESSAGE_POLL_INTERVAL = 0.1
 ORPHAN_POLL_INTERVAL = 60  # Interval in seconds for checking if parent process died
 SERVER_INACTIVITY_TIMEOUT = 1200  # Shutdown server after 20 min of inactivity
 SOCKET_TIMEOUT = 1
+LLAMAFILE_PORT = int(os.environ.get("LLAMAFILE_PORT", 8081))
+LLM_TIMEOUT = 1  # Seconds to wait for local LLM response
 SHUTDOWN_WAIT = 2
 
 # Experiment meta data.
@@ -119,6 +121,17 @@ os.makedirs(AO_LOG_DIR, exist_ok=True)
 MAIN_SERVER_LOG = os.path.join(AO_LOG_DIR, "main_server.log")
 FILE_WATCHER_LOG = os.path.join(AO_LOG_DIR, "file_watcher.log")  # Git versioning logs
 
+
+default_models_dir = os.path.join(AO_CACHE, "models")
+MODELS_DIR = os.path.expandvars(
+    os.path.expanduser(
+        os.getenv(
+            "AO_MODELS_DIR",
+            default_models_dir,
+        )
+    )
+)
+os.makedirs(MODELS_DIR, exist_ok=True)
 
 default_attachment_cache = os.path.join(AO_CACHE, "attachments")
 ATTACHMENT_CACHE = os.path.expandvars(
@@ -412,9 +425,11 @@ else:
         "https://ao-playbook-732575904722.us-central1.run.app",
     )
     PLAYBOOK_API_KEY = (
-        os.environ.get("AO_API_KEY", "")
-        or getattr(config, "playbook_api_key", "")
-        or ""
+        os.environ.get("AO_API_KEY", "") or getattr(config, "playbook_api_key", "") or ""
     )
 
 PLAYBOOK_SERVER_TIMEOUT = 30  # Seconds to wait for server startup
+
+# Local model server URLs
+LLAMAFILE_URL = "https://github.com/mozilla-ai/llamafile/releases/download/0.9.3/llamafile-0.9.3"
+GGUF_URL = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q8_0.gguf"
