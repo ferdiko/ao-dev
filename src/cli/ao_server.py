@@ -31,17 +31,21 @@ from ao.server.main_server import MainServer, send_json
 _server_logger = create_file_logger(MAIN_SERVER_LOG)
 
 
-def launch_daemon_server() -> None:
+def launch_daemon_server(no_analysis: bool = False) -> None:
     """
     Launch the main server as a detached daemon process with proper stdio handling.
     """
     # Ensure log directory exists
     os.makedirs(os.path.dirname(MAIN_SERVER_LOG), exist_ok=True)
 
+    cmd = [sys.executable, "-m", "ao.cli.ao_server", "_serve"]
+    if no_analysis:
+        cmd.append("--no-analysis")
+
     # Open log file for the daemon (all logs go to main_server.log)
     with open(MAIN_SERVER_LOG, "a+") as log_f:
         subprocess.Popen(
-            [sys.executable, "-m", "ao.cli.ao_server", "_serve"],
+            cmd,
             close_fds=True,
             start_new_session=True,
             stdin=subprocess.DEVNULL,
@@ -71,6 +75,11 @@ def server_command_parser():
         ],
         help="The command to execute for the server.",
     )
+    parser.add_argument(
+        "--no-analysis",
+        action="store_true",
+        help="Disable local LLM model server (no model download, no node labeling).",
+    )
     return parser
 
 
@@ -84,7 +93,7 @@ def execute_server_command(args):
         except Exception:
             pass
         # Launch the server as a detached background process (POSIX)
-        launch_daemon_server()
+        launch_daemon_server(no_analysis=args.no_analysis)
         logger.info("Main server started.")
 
     elif args.command == "stop":
@@ -120,7 +129,7 @@ def execute_server_command(args):
             except Exception:
                 pass
         # Start the server
-        launch_daemon_server()
+        launch_daemon_server(no_analysis=args.no_analysis)
         logger.info("Main server restarted.")
 
     elif args.command == "clear":
@@ -175,6 +184,11 @@ def execute_server_command(args):
     elif args.command == "_serve":
         # Internal: run the server loop (not meant to be called by users directly)
         _server_logger.info(f"Imports completed in {_time.time() - _import_start:.2f}s")
+
+        if args.no_analysis:
+            from ao.server.handlers import analysis_handlers
+
+            analysis_handlers.ANALYSIS_ENABLED = False
 
         # Save Python executable path to config for VS Code extension to use
         from ao.common.constants import AO_CONFIG

@@ -13,6 +13,9 @@ import urllib.request
 from ao.common.constants import MODELS_DIR, LLAMAFILE_PORT, LLM_TIMEOUT, LLAMAFILE_URL, GGUF_URL
 from ao.server.handlers.handler_utils import logger
 
+# Set to False via --no-analysis CLI flag to skip model download and inference
+ANALYSIS_ENABLED = True
+
 
 def _download_file(url, filename):
     path = os.path.join(MODELS_DIR, filename)
@@ -36,6 +39,8 @@ def _download_full_weights():
 
 def start_model_server():
     """Download model files if needed, then start llamafile server as a daemon. No-op if already running."""
+    if not ANALYSIS_ENABLED:
+        return
     try:
         socket.create_connection(("127.0.0.1", LLAMAFILE_PORT), timeout=1).close()
         print(f"Model server already running on port {LLAMAFILE_PORT}.")
@@ -80,6 +85,8 @@ def start_model_server():
 
 def stop_model_server():
     """Stop the llamafile server if it's running. No-op if not running."""
+    if not ANALYSIS_ENABLED:
+        return
     try:
         result = subprocess.run(
             ["lsof", "-ti", f":{LLAMAFILE_PORT}"],
@@ -123,4 +130,6 @@ def query_model(prompt):
 
 def get_node_label(prompt):
     """Generate a descriptive label for a graph node using the local LLM. Returns label string or None."""
+    if not ANALYSIS_ENABLED:
+        return None
     return query_model(prompt)

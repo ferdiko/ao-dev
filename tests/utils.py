@@ -18,7 +18,7 @@ def restart_server():
     import subprocess
     import time
 
-    subprocess.run(["ao-server", "restart"], check=False)
+    subprocess.run(["ao-server", "restart", "--no-analysis"], check=False)
     time.sleep(1)
 
 
