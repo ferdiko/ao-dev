@@ -38,7 +38,13 @@ class TestLoad:
         restart_server()
         existing = len(DB.get_all_experiments_sorted())
 
-        # 2. Write trivial dummy script
+        # 2. Write trivial dummy script with project config
+        from ao.common.project import write_project_config
+        write_project_config(str(tmp_path), {
+            "project_id": "test-load-project",
+            "name": "load-test",
+            "description": "",
+        })
         script = tmp_path / "dummy.py"
         script.write_text("import time; time.sleep(0.5)\n")
 
