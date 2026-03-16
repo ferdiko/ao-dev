@@ -43,7 +43,6 @@ CONNECTION_TIMEOUT = 20
 SERVER_START_TIMEOUT = 2
 PROCESS_TERMINATE_TIMEOUT = 5
 MESSAGE_POLL_INTERVAL = 0.1
-ORPHAN_POLL_INTERVAL = 60  # Interval in seconds for checking if parent process died
 SERVER_INACTIVITY_TIMEOUT = 1200  # Shutdown server after 20 min of inactivity
 SOCKET_TIMEOUT = 1
 SHUTDOWN_WAIT = 2
@@ -117,7 +116,6 @@ AO_LOG_DIR = os.path.expandvars(
 )
 os.makedirs(AO_LOG_DIR, exist_ok=True)
 MAIN_SERVER_LOG = os.path.join(AO_LOG_DIR, "main_server.log")
-FILE_WATCHER_LOG = os.path.join(AO_LOG_DIR, "file_watcher.log")  # Git versioning logs
 
 
 default_attachment_cache = os.path.join(AO_CACHE, "attachments")

@@ -59,12 +59,26 @@ def get_conn():
 def _init_db(conn):
     c = conn.cursor()
 
+    # Create projects table
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS projects (
+            project_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT (datetime('now')),
+            last_run_at TIMESTAMP
+        )
+    """
+    )
+
     # Create experiments table
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS experiments (
             session_id TEXT PRIMARY KEY,
             parent_session_id TEXT,
+            project_id TEXT,
             graph_topology TEXT,
             color_preview TEXT,
             timestamp TIMESTAMP DEFAULT (datetime('now')),
@@ -77,6 +91,7 @@ def _init_db(conn):
             notes TEXT,
             log TEXT,
             FOREIGN KEY (parent_session_id) REFERENCES experiments (session_id),
+            FOREIGN KEY (project_id) REFERENCES projects (project_id),
             UNIQUE (parent_session_id, name)
         )
     """
@@ -126,6 +141,11 @@ def _init_db(conn):
         CREATE INDEX IF NOT EXISTS experiments_timestamp_idx ON experiments(timestamp DESC)
     """
     )
+    c.execute(
+        """
+        CREATE INDEX IF NOT EXISTS experiments_project_idx ON experiments(project_id, timestamp DESC)
+    """
+    )
 
     # Create lessons_applied table (tracks which lessons from ao-playbook were applied to runs)
     c.execute(
@@ -146,6 +166,7 @@ def _init_db(conn):
         CREATE INDEX IF NOT EXISTS lessons_applied_lesson_idx ON lessons_applied(lesson_id)
     """
     )
+
     conn.commit()
 
 
@@ -198,13 +219,15 @@ def add_experiment_query(
     default_note,
     default_log,
     version_date,
+    project_id=None,
 ):
     """Execute SQLite-specific INSERT for experiments table"""
     execute(
-        "INSERT OR REPLACE INTO experiments (session_id, parent_session_id, name, graph_topology, timestamp, cwd, command, environment, version_date, success, notes, log) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO experiments (session_id, parent_session_id, project_id, name, graph_topology, timestamp, cwd, command, environment, version_date, success, notes, log) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_id,
             parent_session_id,
+            project_id,
             name,
             default_graph,
             timestamp,
@@ -363,63 +386,84 @@ def insert_llm_call_with_output_query(
 
 
 # Experiment list and graph queries
-def get_finished_runs_query():
+def get_finished_runs_query(project_id=None):
     """Get all finished runs ordered by timestamp."""
+    if project_id:
+        return query_all(
+            "SELECT session_id, timestamp FROM experiments WHERE project_id=? ORDER BY timestamp DESC",
+            (project_id,),
+        )
     return query_all("SELECT session_id, timestamp FROM experiments ORDER BY timestamp DESC", ())
 
 
-def get_all_experiments_sorted_query(limit=None, offset=0):
+def get_all_experiments_sorted_query(limit=None, offset=0, project_id=None):
     """Get experiments sorted by timestamp desc, with optional pagination."""
+    base = "SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments"
+    params = []
+    if project_id:
+        base += " WHERE project_id=?"
+        params.append(project_id)
+    base += " ORDER BY timestamp DESC"
     if limit is not None:
-        return query_all(
-            "SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments ORDER BY timestamp DESC LIMIT ? OFFSET ?",
-            (limit, offset),
-        )
-    return query_all(
-        "SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments ORDER BY timestamp DESC",
-        (),
-    )
+        base += " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+    return query_all(base, tuple(params))
 
 
-def get_experiments_by_ids_query(session_ids):
+def get_experiments_by_ids_query(session_ids, project_id=None):
     """Get experiments for specific session IDs, sorted by timestamp desc."""
     if not session_ids:
         return []
     placeholders = ",".join("?" * len(session_ids))
-    return query_all(
-        f"SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments WHERE session_id IN ({placeholders}) ORDER BY timestamp DESC",
-        tuple(session_ids),
-    )
+    params = list(session_ids)
+    sql = f"SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments WHERE session_id IN ({placeholders})"
+    if project_id:
+        sql += " AND project_id=?"
+        params.append(project_id)
+    sql += " ORDER BY timestamp DESC"
+    return query_all(sql, tuple(params))
 
 
-def get_experiments_excluding_ids_query(session_ids, limit=None, offset=0):
+def get_experiments_excluding_ids_query(session_ids, limit=None, offset=0, project_id=None):
     """Get experiments excluding specific session IDs, sorted by timestamp desc."""
     if not session_ids:
-        return get_all_experiments_sorted_query(limit=limit, offset=offset)
+        return get_all_experiments_sorted_query(limit=limit, offset=offset, project_id=project_id)
     placeholders = ",".join("?" * len(session_ids))
     params = list(session_ids)
-    sql = f"SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments WHERE session_id NOT IN ({placeholders}) ORDER BY timestamp DESC"
+    conditions = [f"session_id NOT IN ({placeholders})"]
+    if project_id:
+        conditions.append("project_id=?")
+        params.append(project_id)
+    sql = f"SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments WHERE {' AND '.join(conditions)} ORDER BY timestamp DESC"
     if limit is not None:
         sql += " LIMIT ? OFFSET ?"
         params.extend([limit, offset])
     return query_all(sql, tuple(params))
 
 
-def get_experiment_count_excluding_ids_query(session_ids):
+def get_experiment_count_excluding_ids_query(session_ids, project_id=None):
     """Get count of experiments excluding specific session IDs."""
     if not session_ids:
-        return get_experiment_count_query()
+        return get_experiment_count_query(project_id=project_id)
     placeholders = ",".join("?" * len(session_ids))
+    params = list(session_ids)
+    conditions = [f"session_id NOT IN ({placeholders})"]
+    if project_id:
+        conditions.append("project_id=?")
+        params.append(project_id)
     row = query_one(
-        f"SELECT COUNT(*) as count FROM experiments WHERE session_id NOT IN ({placeholders})",
-        tuple(session_ids),
+        f"SELECT COUNT(*) as count FROM experiments WHERE {' AND '.join(conditions)}",
+        tuple(params),
     )
     return row["count"] if row else 0
 
 
-def get_experiment_count_query():
+def get_experiment_count_query(project_id=None):
     """Get total number of experiments."""
-    row = query_one("SELECT COUNT(*) as count FROM experiments", ())
+    if project_id:
+        row = query_one("SELECT COUNT(*) as count FROM experiments WHERE project_id=?", (project_id,))
+    else:
+        row = query_one("SELECT COUNT(*) as count FROM experiments", ())
     return row["count"] if row else 0
 
 
@@ -516,9 +560,12 @@ def get_experiment_log_success_graph_query(session_id):
     )
 
 
-def get_next_run_index_query():
+def get_next_run_index_query(project_id=None):
     """Get the next run index based on how many runs already exist."""
-    row = query_one("SELECT COUNT(*) as count FROM experiments", ())
+    if project_id:
+        row = query_one("SELECT COUNT(*) as count FROM experiments WHERE project_id=?", (project_id,))
+    else:
+        row = query_one("SELECT COUNT(*) as count FROM experiments", ())
     if row:
         return row["count"] + 1
     return 1
@@ -616,3 +663,36 @@ def remove_lesson_applied_query(lesson_id, session_id, node_id=None):
 def delete_lessons_applied_for_lesson_query(lesson_id):
     """Delete all application records for a lesson (when lesson is deleted from ao-playbook)."""
     execute("DELETE FROM lessons_applied WHERE lesson_id = ?", (lesson_id,))
+
+
+# ============================================================
+# Project queries
+# ============================================================
+
+
+def upsert_project_query(project_id, name, description):
+    """Insert project if new, update name/description if existing."""
+    execute(
+        "INSERT OR IGNORE INTO projects (project_id, name, description) VALUES (?, ?, ?)",
+        (project_id, name, description),
+    )
+    execute(
+        "UPDATE projects SET name=?, description=? WHERE project_id=?",
+        (name, description, project_id),
+    )
+
+
+def update_project_last_run_at_query(project_id):
+    """Update project last_run_at to now."""
+    execute(
+        "UPDATE projects SET last_run_at=datetime('now') WHERE project_id=?",
+        (project_id,),
+    )
+
+
+def get_all_projects_query():
+    """Get all projects ordered by last_run_at desc."""
+    return query_all(
+        "SELECT project_id, name, description, created_at, last_run_at FROM projects ORDER BY last_run_at DESC",
+        (),
+    )

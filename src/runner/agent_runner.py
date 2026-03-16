@@ -25,6 +25,7 @@ from ao.common.constants import (
     MESSAGE_POLL_INTERVAL,
 )
 from ao.cli.ao_server import launch_daemon_server
+from ao.common.project import find_project_root, read_project_config, setup_project_interactive
 from ao.runner.context_manager import set_parent_session_id, set_server_connection
 from ao.runner.monkey_patching.apply_monkey_patches import apply_all_monkey_patches
 
@@ -350,6 +351,10 @@ class AgentRunner:
             "environment": dict(os.environ),
             "process_id": self.process_id,
             "prev_session_id": os.getenv("AO_SESSION_ID"),
+            "project_id": self.project_id,
+            "project_name": self.project_name,
+            "project_description": self.project_description,
+            "project_root": self.project_root,
         }
 
         try:
@@ -380,6 +385,20 @@ class AgentRunner:
 
     def _setup_environment(self) -> None:
         """Set up the execution environment for the agent runner."""
+        # Discover project
+        script_dir = os.path.dirname(os.path.abspath(self.script_path))
+        project_root = find_project_root(script_dir)
+        if project_root is None:
+            project_root = setup_project_interactive(
+                default_root=os.getcwd(),
+                must_contain=script_dir,
+            )
+        project_config = read_project_config(project_root)
+        self.project_id = project_config["project_id"]
+        self.project_name = project_config.get("name", "")
+        self.project_description = project_config.get("description", "")
+        self.project_root = project_root
+
         # Set random seed for reproducibility
         if not os.environ.get("AO_SEED"):
             os.environ["AO_SEED"] = str(random.randint(0, 2**31 - 1))

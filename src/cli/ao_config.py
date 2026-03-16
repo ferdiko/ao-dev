@@ -2,6 +2,11 @@ import argparse
 import os
 from ao.common.config import Config, _ask_field
 from ao.common.constants import AO_CONFIG
+from ao.common.project import (
+    find_project_root,
+    read_project_config,
+    setup_project_interactive,
+)
 
 
 def _convert_playbook_mode(value: str) -> str:
@@ -9,6 +14,33 @@ def _convert_playbook_mode(value: str) -> str:
     if value not in ("local", "cloud"):
         raise ValueError("Must be 'local' or 'cloud'")
     return value
+
+
+def _convert_yes_no(value: str) -> bool:
+    value = value.strip().lower()
+    if value not in ("y", "n"):
+        raise ValueError("Must be 'y' or 'n'")
+    return value == "y"
+
+
+def setup_project() -> None:
+    """Set up .ao/config.json, prompting the user."""
+    cwd = os.getcwd()
+    existing_root = find_project_root(cwd)
+
+    if existing_root == cwd:
+        existing = read_project_config(existing_root)
+        print(f"Project already configured: {existing.get('name')} ({existing.get('project_id')})")
+        overwrite = _ask_field(
+            "Overwrite? [y/N]\n> ",
+            _convert_yes_no,
+            default=False,
+            error_message="Please enter 'y' or 'n'.",
+        )
+        if not overwrite:
+            return
+
+    setup_project_interactive(default_root=cwd)
 
 
 def get_user_input() -> Config:
@@ -37,6 +69,8 @@ def get_user_input() -> Config:
 
 
 def config_command():
+    setup_project()
+    print()
     config = get_user_input()
     config_file = AO_CONFIG
     config.to_yaml_file(config_file)

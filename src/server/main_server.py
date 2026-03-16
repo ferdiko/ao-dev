@@ -54,8 +54,10 @@ logger = create_file_logger(MAIN_SERVER_LOG)
 class Session:
     """Represents a running develop process and its associated UI clients."""
 
-    def __init__(self, session_id: str):
+    def __init__(self, session_id: str, project_id: str = None, project_root: str = None):
         self.session_id = session_id
+        self.project_id = project_id
+        self.project_root = project_root
         self.shim_conn: Optional[socket.socket] = None
         self.status = "running"
         self.lock = threading.Lock()
@@ -74,14 +76,13 @@ class MainServer:
         self.sessions = {}  # session_id -> Session (only for agent runner connections)
         self.rerun_sessions = set()  # Track sessions being rerun to avoid clearing llm_calls
         self._last_activity_time = time.time()  # Track last message received for inactivity timeout
-        self._project_root = None  # Workspace root from VS Code UI
         # Debounced broadcast: coalesces rapid state changes into one UI update
         self._broadcast_timer: Optional[threading.Timer] = None
         self._broadcast_lock = threading.Lock()
         # Git versioning state
         self._git_available: Optional[bool] = None
-        self._git_initialized = False
-        self._git_dir = os.path.abspath(GIT_DIR)
+        self._git_initialized_projects: set = set()  # project_ids with initialized git repos
+        self._git_base_dir = os.path.abspath(GIT_DIR)
         # Git versioning executor (runs commits in background)
         from concurrent.futures import ThreadPoolExecutor
 
@@ -99,11 +100,15 @@ class MainServer:
                 logger.warning("git not found in PATH, code versioning disabled")
         return self._git_available
 
-    def _run_git(self, *args, check: bool = True) -> subprocess.CompletedProcess:
+    def _git_dir_for_project(self, project_id: str) -> str:
+        """Return the git directory for a specific project."""
+        return os.path.join(self._git_base_dir, project_id)
+
+    def _run_git(self, project_id: str, project_root: str, *args, check: bool = True) -> subprocess.CompletedProcess:
         """Run git command with GIT_DIR and GIT_WORK_TREE set."""
-        project_root = self._project_root or os.getcwd()
+        git_dir = self._git_dir_for_project(project_id)
         env = os.environ.copy()
-        env["GIT_DIR"] = self._git_dir
+        env["GIT_DIR"] = git_dir
         env["GIT_WORK_TREE"] = project_root
 
         cmd = ["git"] + list(args)
@@ -117,38 +122,40 @@ class MainServer:
             timeout=30,
         )
 
-    def _ensure_git_initialized(self) -> bool:
-        """Ensure the git repository is initialized. Returns True on success."""
-        if self._git_initialized:
+    def _ensure_git_initialized(self, project_id: str, project_root: str) -> bool:
+        """Ensure the git repository is initialized for a project. Returns True on success."""
+        if project_id in self._git_initialized_projects:
             return True
 
         if not self._is_git_available():
             return False
 
+        git_dir = self._git_dir_for_project(project_id)
+
         try:
             # Remove stale index.lock (left behind if server was killed during git operation)
-            lock_file = os.path.join(self._git_dir, "index.lock")
+            lock_file = os.path.join(git_dir, "index.lock")
             if os.path.exists(lock_file):
                 os.remove(lock_file)
-                logger.info("Removed stale git index.lock")
+                logger.info(f"Removed stale git index.lock for project {project_id}")
 
             # Check if already initialized
-            if os.path.exists(os.path.join(self._git_dir, "HEAD")):
-                self._git_initialized = True
+            if os.path.exists(os.path.join(git_dir, "HEAD")):
+                self._git_initialized_projects.add(project_id)
                 return True
 
             # Create git directory
-            os.makedirs(self._git_dir, exist_ok=True)
+            os.makedirs(git_dir, exist_ok=True)
 
             # Initialize repository
-            self._run_git("init")
+            self._run_git(project_id, project_root, "init")
 
             # Configure user for commits (required by git)
-            self._run_git("config", "user.name", "AO Code Versioner")
-            self._run_git("config", "user.email", "ao@localhost")
+            self._run_git(project_id, project_root, "config", "user.name", "AO Code Versioner")
+            self._run_git(project_id, project_root, "config", "user.email", "ao@localhost")
 
-            logger.info(f"Initialized git repository at {self._git_dir}")
-            self._git_initialized = True
+            logger.info(f"Initialized git repository at {git_dir}")
+            self._git_initialized_projects.add(project_id)
             return True
 
         except subprocess.SubprocessError as e:
@@ -158,27 +165,27 @@ class MainServer:
             logger.error(f"Failed to create git directory: {e}")
             return False
 
-    def _commit_and_get_version(self) -> Optional[str]:
+    def _commit_and_get_version(self, project_id: str, project_root: str) -> Optional[str]:
         """
         Commit all files in project root and return version string.
 
         Returns:
             Human-readable version string like "Version Dec 12, 8:45", or None if unavailable.
         """
-        if not self._ensure_git_initialized():
+        if not self._ensure_git_initialized(project_id, project_root):
             return None
 
         try:
             # Stage all files in project root
-            self._run_git("add", ".")
+            self._run_git(project_id, project_root, "add", ".")
 
             # Check if there are staged changes
-            result = self._run_git("diff", "--cached", "--quiet", check=False)
+            result = self._run_git(project_id, project_root, "diff", "--cached", "--quiet", check=False)
 
             if result.returncode == 0:
                 # No changes - return timestamp of current HEAD if it exists
                 try:
-                    result = self._run_git("log", "-1", "--format=%cI", "HEAD")
+                    result = self._run_git(project_id, project_root, "log", "-1", "--format=%cI", "HEAD")
                     timestamp_str = result.stdout.strip()
                     dt = datetime.fromisoformat(timestamp_str)
                     return f"Version {dt.strftime('%b')} {dt.day}, {dt.hour}:{dt.strftime('%M')}"
@@ -189,7 +196,7 @@ class MainServer:
             # There are changes - commit them
             now = datetime.now()
             commit_message = now.isoformat(timespec="seconds")
-            self._run_git("commit", "-m", commit_message)
+            self._run_git(project_id, project_root, "commit", "-m", commit_message)
 
             version_str = f"Version {now.strftime('%b')} {now.day}, {now.hour}:{now.strftime('%M')}"
             logger.info(f"Created git commit: {version_str}")
@@ -203,9 +210,9 @@ class MainServer:
             logger.error("Git operation timed out")
             return None
 
-    def _do_git_version(self, session_id: str) -> None:
+    def _do_git_version(self, session_id: str, project_id: str, project_root: str) -> None:
         """Background thread: commit files and update experiment version_date."""
-        version_date = self._commit_and_get_version()
+        version_date = self._commit_and_get_version(project_id, project_root)
         if version_date:
             DB.update_experiment_version_date(session_id, version_date)
         self.notify_experiment_list_changed()
@@ -619,6 +626,17 @@ class MainServer:
             session_id = None
             # Only assign session_id for agent-runner.
             if role == "agent-runner":
+                # Extract project info from handshake
+                project_id = handshake.get("project_id")
+                project_name = handshake.get("project_name", "")
+                project_description = handshake.get("project_description", "")
+                project_root = handshake.get("project_root")
+
+                # Upsert project and update last_run_at
+                if project_id:
+                    DB.upsert_project(project_id, project_name, project_description)
+                    DB.update_project_last_run_at(project_id)
+
                 # If rerun, use previous session_id. Else, assign new one.
                 prev_session_id = handshake.get("prev_session_id")
                 if prev_session_id:
@@ -632,7 +650,7 @@ class MainServer:
                     timestamp = datetime.now()
                     name = handshake.get("name")
                     if not name:
-                        run_index = DB.get_next_run_index()
+                        run_index = DB.get_next_run_index(project_id=project_id)
                         name = f"Run {run_index}"
                     # Create experiment with version_date=None, request async versioning
                     DB.add_experiment(
@@ -642,13 +660,15 @@ class MainServer:
                         cwd,
                         command,
                         environment,
+                        project_id=project_id,
                     )
                     # Request async git versioning
-                    self._git_executor.submit(self._do_git_version, session_id)
+                    if project_id and project_root:
+                        self._git_executor.submit(self._do_git_version, session_id, project_id, project_root)
                 # Insert session if not present.
                 with self.lock:
                     if session_id not in self.sessions:
-                        self.sessions[session_id] = Session(session_id)
+                        self.sessions[session_id] = Session(session_id, project_id=project_id, project_root=project_root)
                     session = self.sessions[session_id]
                 with session.lock:
                     session.shim_conn = conn
@@ -667,12 +687,6 @@ class MainServer:
                 # Always reload finished runs from the DB before sending experiment list
                 self.load_finished_runs()
                 self.ui_connections.add(conn)
-
-                # Extract workspace_root from VS Code for git versioning
-                workspace_root = handshake.get("workspace_root")
-                if workspace_root and workspace_root != self._project_root:
-                    logger.info(f"Setting workspace root to: {workspace_root}")
-                    self._project_root = workspace_root
 
                 # Send session_id and config_path to this UI connection (None for UI)
                 self.conn_info[conn] = {"role": role, "session_id": None}

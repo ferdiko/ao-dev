@@ -118,6 +118,7 @@ class DatabaseManager:
         environment,
         parent_session_id=None,
         version_date=None,
+        project_id=None,
     ):
         """Add experiment to database."""
         from ao.common.constants import DEFAULT_LOG, DEFAULT_NOTE, DEFAULT_SUCCESS
@@ -139,6 +140,7 @@ class DatabaseManager:
             DEFAULT_NOTE,
             DEFAULT_LOG,
             version_date,
+            project_id,
         )
 
     def update_graph_topology(self, session_id, graph_dict):
@@ -353,23 +355,23 @@ class DatabaseManager:
         cache_result.output = output_obj
         set_seed(node_id)
 
-    def get_finished_runs(self):
-        return self.backend.get_finished_runs_query()
+    def get_finished_runs(self, project_id=None):
+        return self.backend.get_finished_runs_query(project_id=project_id)
 
-    def get_all_experiments_sorted(self, limit=None, offset=0):
-        return self.backend.get_all_experiments_sorted_query(limit=limit, offset=offset)
+    def get_all_experiments_sorted(self, limit=None, offset=0, project_id=None):
+        return self.backend.get_all_experiments_sorted_query(limit=limit, offset=offset, project_id=project_id)
 
-    def get_experiments_by_ids(self, session_ids):
-        return self.backend.get_experiments_by_ids_query(session_ids)
+    def get_experiments_by_ids(self, session_ids, project_id=None):
+        return self.backend.get_experiments_by_ids_query(session_ids, project_id=project_id)
 
-    def get_experiments_excluding_ids(self, session_ids, limit=None, offset=0):
-        return self.backend.get_experiments_excluding_ids_query(session_ids, limit=limit, offset=offset)
+    def get_experiments_excluding_ids(self, session_ids, limit=None, offset=0, project_id=None):
+        return self.backend.get_experiments_excluding_ids_query(session_ids, limit=limit, offset=offset, project_id=project_id)
 
-    def get_experiment_count(self):
-        return self.backend.get_experiment_count_query()
+    def get_experiment_count(self, project_id=None):
+        return self.backend.get_experiment_count_query(project_id=project_id)
 
-    def get_experiment_count_excluding_ids(self, session_ids):
-        return self.backend.get_experiment_count_excluding_ids_query(session_ids)
+    def get_experiment_count_excluding_ids(self, session_ids, project_id=None):
+        return self.backend.get_experiment_count_excluding_ids_query(session_ids, project_id=project_id)
 
     def get_experiment_detail(self, session_id):
         return self.backend.get_experiment_detail_query(session_id)
@@ -418,8 +420,18 @@ class DatabaseManager:
     def query_one_llm_call_output(self, session_id, node_id):
         return self.backend.get_llm_call_output_api_type_query(session_id, node_id)
 
-    def get_next_run_index(self):
-        return self.backend.get_next_run_index_query()
+    def get_next_run_index(self, project_id=None):
+        return self.backend.get_next_run_index_query(project_id=project_id)
+
+    # Project operations
+    def upsert_project(self, project_id, name, description):
+        self.backend.upsert_project_query(project_id, name, description)
+
+    def update_project_last_run_at(self, project_id):
+        self.backend.update_project_last_run_at_query(project_id)
+
+    def get_all_projects(self):
+        return self.backend.get_all_projects_query()
 
     # Probe-related methods for ao-tool
     def get_experiment_metadata(self, session_id):

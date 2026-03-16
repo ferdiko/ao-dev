@@ -94,6 +94,13 @@ def handle_add_subrun(server, msg: dict, conn: socket.socket) -> None:
     from ao.server.main_server import Session
 
     prev_session_id = msg.get("prev_session_id")
+    parent_session_id = msg.get("parent_session_id")
+
+    # Inherit project info from parent session
+    parent_session = server.sessions.get(parent_session_id) if parent_session_id else None
+    project_id = parent_session.project_id if parent_session else None
+    project_root = parent_session.project_root if parent_session else None
+
     if prev_session_id:
         session_id = prev_session_id
     else:
@@ -104,9 +111,8 @@ def handle_add_subrun(server, msg: dict, conn: socket.socket) -> None:
         timestamp = datetime.now()
         name = msg.get("name")
         if not name:
-            run_index = DB.get_next_run_index()
+            run_index = DB.get_next_run_index(project_id=project_id)
             name = f"Run {run_index}"
-        parent_session_id = msg.get("parent_session_id")
 
         DB.add_experiment(
             session_id,
@@ -117,14 +123,16 @@ def handle_add_subrun(server, msg: dict, conn: socket.socket) -> None:
             environment,
             parent_session_id,
             None,  # version_date will be set async
+            project_id=project_id,
         )
         # Request async git versioning
-        server._git_executor.submit(server._do_git_version, session_id)
+        if project_id and project_root:
+            server._git_executor.submit(server._do_git_version, session_id, project_id, project_root)
 
     # Insert session if not present
     with server.lock:
         if session_id not in server.sessions:
-            server.sessions[session_id] = Session(session_id)
+            server.sessions[session_id] = Session(session_id, project_id=project_id, project_root=project_root)
         session = server.sessions[session_id]
     with session.lock:
         session.shim_conn = conn
