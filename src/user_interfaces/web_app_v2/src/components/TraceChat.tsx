@@ -51,7 +51,7 @@ export function TraceChat() {
         <div className="trace-chat-header-title">
           <div className="trace-chat-title">
             <Sparkles size={13} />
-            <span>Sovara</span>
+            <span>Sovara Trace Analysis</span>
           </div>
         </div>
       </div>

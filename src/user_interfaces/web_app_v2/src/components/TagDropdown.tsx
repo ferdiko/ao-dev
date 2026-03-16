@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { X, Plus, Check } from "lucide-react";
 import type { Tag } from "../data/mock";
-import { TAG_COLORS, mockTags } from "../data/mock";
+import { TAG_COLORS } from "../data/mock";
 
 // ── Tag badge (reusable) ──────────────────────────────
 
@@ -95,7 +95,7 @@ export function TagDropdown({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
-  const [newColor, setNewColor] = useState(TAG_COLORS[0]);
+  const [newColor, setNewColor] = useState<string>(TAG_COLORS[0]);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 

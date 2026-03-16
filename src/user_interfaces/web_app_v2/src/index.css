@@ -7,7 +7,7 @@
 }
 
 :root {
-  --sidebar-width: 400px;
+  --sidebar-width: 350px;
 
   /* Layout: shared dimensions (sidebar & main content stay aligned) */
   --header-row-1: 51px;   /* breadcrumb / logo row */

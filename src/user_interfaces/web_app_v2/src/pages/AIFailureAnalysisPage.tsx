@@ -17,7 +17,6 @@ import {
   Send,
   Folder,
   X,
-  MessageSquareWarning,
   Check,
   ShieldAlert,
 } from "lucide-react";

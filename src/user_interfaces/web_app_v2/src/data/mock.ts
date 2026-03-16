@@ -47,6 +47,8 @@ export interface Project {
   lastModified: string;
   numRuns: number;
   numUsers: number;
+  tags?: string[];
+  comment?: string;
 }
 
 export interface Run {

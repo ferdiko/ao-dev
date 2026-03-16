@@ -11,7 +11,7 @@ import "./App.css";
 
 const SIDEBAR_MIN = 140;
 const SIDEBAR_MAX = 500;
-const SIDEBAR_DEFAULT = 240;
+const SIDEBAR_DEFAULT = Math.round(window.innerWidth * 0.16);
 
 function AppLayout({ projectId, children }: { projectId?: string; children: React.ReactNode }) {
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);

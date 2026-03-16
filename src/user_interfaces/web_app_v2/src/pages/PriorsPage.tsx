@@ -676,8 +676,6 @@ function DiffLine({ type, text }: { type: "add" | "remove" | "context"; text: st
 function computeLineDiff(original: string, proposed: string): { type: "add" | "remove" | "context"; text: string }[] {
   const origLines = original.split("\n");
   const propLines = proposed.split("\n");
-  const lines: { type: "add" | "remove" | "context"; text: string }[] = [];
-
   // Simple LCS-based diff
   const m = origLines.length, n = propLines.length;
   const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
@@ -702,7 +700,7 @@ function computeLineDiff(original: string, proposed: string): { type: "add" | "r
   return result.reverse();
 }
 
-function DiffFileViewer({ entry, nodes, onClose }: { entry: DiffEntry; nodes: FSNode[]; onClose: () => void }) {
+function DiffFileViewer({ entry, nodes, onClose: _onClose }: { entry: DiffEntry; nodes: FSNode[]; onClose: () => void }) {
   const fileData = DIFF_FILE_CONTENT[entry.name];
 
   // For unchanged files, look up content from the filesystem

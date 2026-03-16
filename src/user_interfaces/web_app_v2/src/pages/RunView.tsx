@@ -4,7 +4,6 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
-  Controls,
   type Node,
   type Edge,
   type NodeTypes,
@@ -19,7 +18,6 @@ import "@xyflow/react/dist/style.css";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { Breadcrumb } from "../components/Breadcrumb";
 import { AttachmentStrip, extractAttachments } from "../components/AttachmentPreview";
 import { mockProjects, mockRuns, mockGraphs, mockTags, resolveTagNames } from "../data/mock";
 import type { GraphNode, Tag, Span } from "../data/mock";
@@ -391,7 +389,7 @@ function IOPanel({
   const [editValue, setEditValue] = useState("");
   const [suggesting, setSuggesting] = useState(false);
   const [ghost, setGhost] = useState("");
-  const ghostTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ghostTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const myKey: EditKey = `${nodeId}:${label as "Input" | "Output"}`;
   const isActiveEdit = editLock === myKey;
@@ -569,16 +567,6 @@ function IOPanel({
   );
 }
 
-function TokenBadge({ usage }: { usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }) {
-  return (
-    <div className="token-badge-row">
-      <span className="token-badge"><span className="token-label">Prompt</span> {usage.prompt_tokens}</span>
-      <span className="token-badge"><span className="token-label">Completion</span> {usage.completion_tokens}</span>
-      <span className="token-badge total"><span className="token-label">Total</span> {usage.total_tokens}</span>
-    </div>
-  );
-}
-
 // ── Node header (shared between single-node and full-trace views) ──
 
 function NodeHeader({ node }: { node: GraphNode }) {
@@ -620,7 +608,7 @@ function FullTraceFlow({
   nodes,
   edges,
   viewMode,
-  selectedNodeId,
+  selectedNodeId: _selectedNodeId,
   focusedNodeId,
   nodeRefs,
   onCardClick,
@@ -731,7 +719,7 @@ function GraphFlowBridge({
 }) {
   const { setCenter, getNodes, getViewport } = useReactFlow();
   const viewport = useViewport();
-  const snapTimer = useRef<ReturnType<typeof setTimeout>>();
+  const snapTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // When true, all viewport-change logic is suppressed (we're animating).
   // Starts true to suppress the initial onInit centering animation.
   const animating = useRef(true);
@@ -1000,13 +988,13 @@ export function RunView() {
     const scrollParent = el.closest(".run-detail-io-scroll");
     if (scrollParent) {
       const marginTop = parseInt(getComputedStyle(el).marginTop, 10) || 0;
-      scrollParent.scrollTo({ top: el.offsetTop - scrollParent.offsetTop - marginTop, behavior });
+      scrollParent.scrollTo({ top: (el as HTMLElement).offsetTop - (scrollParent as HTMLElement).offsetTop - marginTop, behavior });
     }
   }, []);
 
   // Synced scroll: when graph viewport moves, scroll detail panel to match
   const isUserScrolling = useRef(false);
-  const scrollTimeout = useRef<ReturnType<typeof setTimeout>>();
+  const scrollTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const onViewportTopNode = useCallback((nodeId: string) => {
     setFocusedNodeId(nodeId);
@@ -1067,19 +1055,12 @@ export function RunView() {
 
   return (
     <div className="run-view">
-      <Breadcrumb
-        items={[
-          { label: "Organization", to: "/" },
-          { label: project.name, to: `/project/${project.id}` },
-          { label: run.name },
-        ]}
-      />
       <div className="run-view-columns">
       <div className="run-view-left">
 
       {/* Top bar for trace panel */}
       <div className="run-top-bar">
-        <div className="run-detail-header-title">Full Trace</div>
+        <div className="run-detail-header-title">{run?.name ?? "Full Trace"}</div>
         <TagDropdown
           selectedTags={runTags}
           allTags={allTags}
@@ -1102,25 +1083,6 @@ export function RunView() {
               JSON
             </button>
           </div>
-          <button
-            className="run-rerun-btn"
-            onClick={handleRerun}
-            disabled={rerunning}
-            title="Re-run with edits"
-          >
-            {rerunning ? (
-              <><Loader2 size={13} className="fa-spinner" /> Re-running…</>
-            ) : (
-              <><RotateCcw size={13} /> Re-run</>
-            )}
-          </button>
-          <button
-            className="run-rerun-btn run-reset-btn"
-            onClick={handleErase}
-            title="Reset run to original state"
-          >
-            <Undo2 size={13} /> Reset All Edits
-          </button>
         </div>
       </div>
 
@@ -1172,60 +1134,9 @@ export function RunView() {
               </div>
             )}
 
-            {/* Focus brackets — static viewfinder marks at vertical center, both sides */}
-            <div className="graph-focus-bracket bracket-left bracket-top" />
-            <div className="graph-focus-bracket bracket-left bracket-bottom" />
-            <div className="graph-focus-bracket bracket-right bracket-top" />
-            <div className="graph-focus-bracket bracket-right bracket-bottom" />
 
-            {/* Abstraction controls (bottom-left, vertical, small) */}
-            <div className="graph-abstraction-controls">
-              <button
-                className="graph-abstraction-btn"
-                title="Zoom in (more detail)"
-                onClick={handleZoomIn}
-                disabled={abstractionLevel === 0}
-              >
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M4.5 0v10h1V0zM0 4.5h10v1H0z"/></svg>
-              </button>
-              <button
-                className="graph-abstraction-btn"
-                title="Zoom out (more abstract)"
-                onClick={handleZoomOut}
-                disabled={abstractionLevel >= maxAbstractionLevel}
-              >
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M0 4.5h10v1H0z"/></svg>
-              </button>
-            </div>
-
-            {/* Unified controls (bottom-right) */}
-            <div className="graph-controls-panel">
-              <button className="graph-controls-btn" title="Pause">
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="#d4a825"><path d="M5.5 2.75V13.25C5.5 13.664 5.164 14 4.75 14C4.336 14 4 13.664 4 13.25V2.75C4 2.336 4.336 2 4.75 2C5.164 2 5.5 2.336 5.5 2.75ZM11.25 2C10.836 2 10.5 2.336 10.5 2.75V13.25C10.5 13.664 10.836 14 11.25 14C11.664 14 12 13.664 12 13.25V2.75C12 2.336 11.664 2 11.25 2Z"/></svg>
-              </button>
-              <button className="graph-controls-btn" title="Continue">
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="#7fc17b"><path d="M14.578 7.149L7.578 2.186C7.397 2.058 7.198 2 7.003 2C6.484 2 6 2.411 6 3.002V13.003C6 13.594 6.485 14.005 7.004 14.005C7.201 14.005 7.403 13.946 7.585 13.815L14.585 8.777C15.142 8.376 15.139 7.546 14.579 7.15L14.578 7.149ZM7.5 12.027V3.969L13.14 7.968L7.5 12.027ZM3.5 2.75V13.25C3.5 13.664 3.164 14 2.75 14C2.336 14 2 13.664 2 13.25V2.75C2 2.336 2.336 2 2.75 2C3.164 2 3.5 2.336 3.5 2.75Z"/></svg>
-              </button>
-              <button className="graph-controls-btn" title="Abort">
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="#e05252"><path d="M12.5 3.5V12.5H3.5V3.5H12.5ZM12.5 2H3.5C2.672 2 2 2.672 2 3.5V12.5C2 13.328 2.672 14 3.5 14H12.5C13.328 14 14 13.328 14 12.5V3.5C14 2.672 13.328 2 12.5 2Z"/></svg>
-              </button>
-              <div className="graph-controls-spacer" />
-              <button
-                className={`graph-controls-btn${runResult === "satisfactory" ? " active-pass" : ""}`}
-                title={runResult === "satisfactory" ? "Clear result" : "Mark as Satisfactory"}
-                onClick={() => handleResultToggle("satisfactory")}
-              >
-                <ThumbsUp size={12} color={runResult === "satisfactory" ? "#fff" : "#4caf50"} />
-              </button>
-              <button
-                className={`graph-controls-btn${runResult === "failed" ? " active-fail" : ""}`}
-                title={runResult === "failed" ? "Clear result" : "Mark as Failed"}
-                onClick={() => handleResultToggle("failed")}
-              >
-                <ThumbsDown size={12} color={runResult === "failed" ? "#fff" : "#e05252"} />
-              </button>
-            </div>
           </div>
+          {focusedNodeId && <div className="graph-focus-triangle" />}
         </div>
 
         {/* Center: I/O Detail */}
@@ -1259,6 +1170,61 @@ export function RunView() {
         </div>
 
       </div>
+
+      {/* Bottom bar — mirrors run-top-bar */}
+      <div className="run-bottom-bar">
+        <div className="run-bottom-bar-left">
+          <button className="run-rerun-btn">Collapse</button>
+          <button className="run-rerun-btn">Unfold</button>
+        </div>
+        <div className="run-bottom-bar-divider" />
+        <div className="run-bottom-bar-controls">
+          <button className="graph-controls-btn" title="Pause">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="#d4a825"><path d="M5.5 2.75V13.25C5.5 13.664 5.164 14 4.75 14C4.336 14 4 13.664 4 13.25V2.75C4 2.336 4.336 2 4.75 2C5.164 2 5.5 2.336 5.5 2.75ZM11.25 2C10.836 2 10.5 2.336 10.5 2.75V13.25C10.5 13.664 10.836 14 11.25 14C11.664 14 12 13.664 12 13.25V2.75C12 2.336 11.664 2 11.25 2Z"/></svg>
+          </button>
+          <button className="graph-controls-btn" title="Continue">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="#7fc17b"><path d="M14.578 7.149L7.578 2.186C7.397 2.058 7.198 2 7.003 2C6.484 2 6 2.411 6 3.002V13.003C6 13.594 6.485 14.005 7.004 14.005C7.201 14.005 7.403 13.946 7.585 13.815L14.585 8.777C15.142 8.376 15.139 7.546 14.579 7.15L14.578 7.149ZM7.5 12.027V3.969L13.14 7.968L7.5 12.027ZM3.5 2.75V13.25C3.5 13.664 3.164 14 2.75 14C2.336 14 2 13.664 2 13.25V2.75C2 2.336 2.336 2 2.75 2C3.164 2 3.5 2.336 3.5 2.75Z"/></svg>
+          </button>
+          <button className="graph-controls-btn" title="Abort">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="#e05252"><path d="M12.5 3.5V12.5H3.5V3.5H12.5ZM12.5 2H3.5C2.672 2 2 2.672 2 3.5V12.5C2 13.328 2.672 14 3.5 14H12.5C13.328 14 14 13.328 14 12.5V3.5C14 2.672 13.328 2 12.5 2Z"/></svg>
+          </button>
+          <button
+            className="run-rerun-btn"
+            onClick={handleRerun}
+            disabled={rerunning}
+            title="Re-run with edits"
+          >
+            {rerunning ? (
+              <><Loader2 size={13} className="fa-spinner" /> Re-running…</>
+            ) : (
+              <><RotateCcw size={13} /> Re-run</>
+            )}
+          </button>
+          <button
+            className="run-rerun-btn run-reset-btn"
+            onClick={handleErase}
+            title="Reset run to original state"
+          >
+            <Undo2 size={13} /> Reset All Edits
+          </button>
+          <div className="run-bottom-bar-divider" />
+          <button
+            className={`run-rerun-btn${runResult === "satisfactory" ? " run-result-active-pass" : ""}`}
+            onClick={() => handleResultToggle("satisfactory")}
+            title={runResult === "satisfactory" ? "Clear result" : "Mark as Satisfactory"}
+          >
+            <ThumbsUp size={13} /> Satisfactory
+          </button>
+          <button
+            className={`run-rerun-btn run-reset-btn${runResult === "failed" ? " run-result-active-fail" : ""}`}
+            onClick={() => handleResultToggle("failed")}
+            title={runResult === "failed" ? "Clear result" : "Mark as Failed"}
+          >
+            <ThumbsDown size={13} /> Failed
+          </button>
+        </div>
+      </div>
+
       </div>{/* end run-view-left */}
 
       {/* Right: Chat (full height) */}
