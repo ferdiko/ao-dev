@@ -4,14 +4,9 @@ from ao.common.config import Config
 
 
 # default home directory for configs and temporary/cached files
-default_home: str = os.path.join(os.path.expanduser("~"), ".cache")
+default_home: str = os.path.join(os.path.expanduser("~"), ".ao")
 AO_HOME: str = os.path.expandvars(
-    os.path.expanduser(
-        os.getenv(
-            "AO_HOME",
-            os.path.join(os.getenv("XDG_CACHE_HOME", default_home), "ao"),
-        )
-    )
+    os.path.expanduser(os.getenv("AO_HOME", default_home))
 )
 os.makedirs(AO_HOME, exist_ok=True)
 
@@ -68,12 +63,12 @@ SUCCESS_COLORS = {
 }
 
 # Anything cache-related should be stored here
-default_cache_path = os.path.join(AO_HOME, "cache")
+default_cache_path = os.path.join(os.path.expanduser("~"), ".cache")
 AO_CACHE = os.path.expandvars(
     os.path.expanduser(
         os.getenv(
             "AO_CACHE",
-            default_cache_path,
+            os.path.join(os.getenv("XDG_CACHE_HOME", default_cache_path), ".ao"),
         )
     )
 )

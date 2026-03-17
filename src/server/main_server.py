@@ -632,6 +632,15 @@ class MainServer:
                 project_description = handshake.get("project_description", "")
                 project_root = handshake.get("project_root")
 
+                # Extract user info from handshake
+                user_id = handshake.get("user_id")
+                user_full_name = handshake.get("user_full_name", "")
+                user_email = handshake.get("user_email", "")
+
+                # Upsert user
+                if user_id:
+                    DB.upsert_user(user_id, user_full_name, user_email)
+
                 # Upsert project and update last_run_at
                 if project_id:
                     DB.upsert_project(project_id, project_name, project_description)
@@ -661,6 +670,7 @@ class MainServer:
                         command,
                         environment,
                         project_id=project_id,
+                        user_id=user_id,
                     )
                     # Request async git versioning
                     if project_id and project_root:

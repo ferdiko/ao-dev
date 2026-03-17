@@ -2,11 +2,9 @@ import argparse
 import os
 from ao.common.config import Config, _ask_field
 from ao.common.constants import AO_CONFIG
-from ao.common.project import (
-    find_project_root,
-    read_project_config,
-    setup_project_interactive,
-)
+from ao.common.user import read_user_id, setup_user_interactive
+from ao.common.project import find_project_root, read_project_id, setup_project_interactive
+from ao.server.database_manager import DB
 
 
 def _convert_playbook_mode(value: str) -> str:
@@ -16,35 +14,7 @@ def _convert_playbook_mode(value: str) -> str:
     return value
 
 
-def _convert_yes_no(value: str) -> bool:
-    value = value.strip().lower()
-    if value not in ("y", "n"):
-        raise ValueError("Must be 'y' or 'n'")
-    return value == "y"
-
-
-def setup_project() -> None:
-    """Set up .ao/config.json, prompting the user."""
-    cwd = os.getcwd()
-    existing_root = find_project_root(cwd)
-
-    if existing_root == cwd:
-        existing = read_project_config(existing_root)
-        print(f"Project already configured: {existing.get('name')} ({existing.get('project_id')})")
-        overwrite = _ask_field(
-            "Overwrite? [y/N]\n> ",
-            _convert_yes_no,
-            default=False,
-            error_message="Please enter 'y' or 'n'.",
-        )
-        if not overwrite:
-            return
-
-    setup_project_interactive(default_root=cwd)
-
-
-def get_user_input() -> Config:
-    # --- Playbook configuration ---
+def get_playbook_input() -> Config:
     playbook_mode = _ask_field(
         "Where do you want to host lessons? [local/cloud] (default: local)\n> ",
         _convert_playbook_mode,
@@ -61,19 +31,59 @@ def get_user_input() -> Config:
             error_message="Please enter your API key.",
         )
 
-    config = Config(
+    return Config(
         playbook_mode=playbook_mode,
         playbook_api_key=playbook_api_key,
     )
-    return config
 
 
 def config_command():
-    setup_project()
+    # --- User identity ---
+    user_id = read_user_id()
+    existing_user = None
+    if user_id:
+        row = DB.get_user(user_id)
+        if row:
+            existing_user = {"user_id": user_id, "full_name": row["full_name"], "email": row["email"]}
+
+    if existing_user:
+        print(f"User: {existing_user['full_name']} <{existing_user['email']}>\n"
+              "Press enter to keep current values, or type to change.\n")
+    else:
+        print("Welcome to AO! Let's get you set up.\n")
+
+    user = setup_user_interactive(existing_user)
+    DB.upsert_user(user["user_id"], user["full_name"], user["email"])
+
+    # --- Project ---
+    cwd = os.getcwd()
+    existing_root = find_project_root(cwd)
+    existing_project = None
+    if existing_root:
+        project_id = read_project_id(existing_root)
+        row = DB.get_project(project_id)
+        if row:
+            existing_project = {"project_id": project_id, "name": row["name"], "description": row["description"] or ""}
+        else:
+            # .project_id exists but no DB entry — keep UUID, treat as partially configured
+            existing_project = {"project_id": project_id, "name": os.path.basename(existing_root), "description": ""}
+
+    if existing_project:
+        print(f"\nProject: {existing_project['name']}\n"
+              "Press enter to keep current values, or type to change.\n")
+    else:
+        print("\nNo AO project found in this directory. Let's create one.\n")
+
+    _, project = setup_project_interactive(
+        default_root=existing_root or cwd,
+        existing=existing_project,
+    )
+    DB.upsert_project(project["project_id"], project["name"], project["description"])
+
+    # --- Playbook ---
     print()
-    config = get_user_input()
-    config_file = AO_CONFIG
-    config.to_yaml_file(config_file)
+    config = get_playbook_input()
+    config.to_yaml_file(AO_CONFIG)
 
 
 def config_command_parser():

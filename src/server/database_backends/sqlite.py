@@ -59,6 +59,18 @@ def get_conn():
 def _init_db(conn):
     c = conn.cursor()
 
+    # Create users table
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            full_name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT (datetime('now'))
+        )
+    """
+    )
+
     # Create projects table
     c.execute(
         """
@@ -79,6 +91,7 @@ def _init_db(conn):
             session_id TEXT PRIMARY KEY,
             parent_session_id TEXT,
             project_id TEXT,
+            user_id TEXT,
             graph_topology TEXT,
             color_preview TEXT,
             timestamp TIMESTAMP DEFAULT (datetime('now')),
@@ -92,6 +105,7 @@ def _init_db(conn):
             log TEXT,
             FOREIGN KEY (parent_session_id) REFERENCES experiments (session_id),
             FOREIGN KEY (project_id) REFERENCES projects (project_id),
+            FOREIGN KEY (user_id) REFERENCES users (user_id),
             UNIQUE (parent_session_id, name)
         )
     """
@@ -206,6 +220,23 @@ def clear_connections():
         logger.debug("Closed thread-local SQLite connection")
 
 
+def upsert_user_query(user_id, full_name, email):
+    """Insert user if new, update name/email if existing."""
+    execute(
+        "INSERT OR IGNORE INTO users (user_id, full_name, email) VALUES (?, ?, ?)",
+        (user_id, full_name, email),
+    )
+    execute(
+        "UPDATE users SET full_name=?, email=? WHERE user_id=?",
+        (full_name, email, user_id),
+    )
+
+
+def get_user_query(user_id):
+    """Get user by user_id."""
+    return query_one("SELECT user_id, full_name, email FROM users WHERE user_id=?", (user_id,))
+
+
 def add_experiment_query(
     session_id,
     parent_session_id,
@@ -220,14 +251,16 @@ def add_experiment_query(
     default_log,
     version_date,
     project_id=None,
+    user_id=None,
 ):
     """Execute SQLite-specific INSERT for experiments table"""
     execute(
-        "INSERT OR REPLACE INTO experiments (session_id, parent_session_id, project_id, name, graph_topology, timestamp, cwd, command, environment, version_date, success, notes, log) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO experiments (session_id, parent_session_id, project_id, user_id, name, graph_topology, timestamp, cwd, command, environment, version_date, success, notes, log) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_id,
             parent_session_id,
             project_id,
+            user_id,
             name,
             default_graph,
             timestamp,
@@ -686,6 +719,14 @@ def update_project_last_run_at_query(project_id):
     """Update project last_run_at to now."""
     execute(
         "UPDATE projects SET last_run_at=datetime('now') WHERE project_id=?",
+        (project_id,),
+    )
+
+
+def get_project_query(project_id):
+    """Get project by project_id."""
+    return query_one(
+        "SELECT project_id, name, description FROM projects WHERE project_id=?",
         (project_id,),
     )
 

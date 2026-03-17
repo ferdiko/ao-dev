@@ -11,6 +11,11 @@ import yaml
 from ao.common.logger import logger
 
 
+def green(text: str) -> str:
+    """Wrap text in ANSI green. Works on light and dark terminals."""
+    return f"\033[32m{text}\033[0m"
+
+
 @dataclass
 class Config:
     python_executable: str = None  # Auto-populated when ao-server runs

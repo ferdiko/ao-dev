@@ -108,6 +108,12 @@ class DatabaseManager:
         self.backend.delete_llm_calls_query(session_id)
         self.backend.update_experiment_graph_topology_query(default_graph, session_id)
 
+    def get_user(self, user_id):
+        return self.backend.get_user_query(user_id)
+
+    def upsert_user(self, user_id, full_name, email):
+        self.backend.upsert_user_query(user_id, full_name, email)
+
     def add_experiment(
         self,
         session_id,
@@ -119,6 +125,7 @@ class DatabaseManager:
         parent_session_id=None,
         version_date=None,
         project_id=None,
+        user_id=None,
     ):
         """Add experiment to database."""
         from ao.common.constants import DEFAULT_LOG, DEFAULT_NOTE, DEFAULT_SUCCESS
@@ -141,6 +148,7 @@ class DatabaseManager:
             DEFAULT_LOG,
             version_date,
             project_id,
+            user_id,
         )
 
     def update_graph_topology(self, session_id, graph_dict):
@@ -424,6 +432,9 @@ class DatabaseManager:
         return self.backend.get_next_run_index_query(project_id=project_id)
 
     # Project operations
+    def get_project(self, project_id):
+        return self.backend.get_project_query(project_id)
+
     def upsert_project(self, project_id, name, description):
         self.backend.upsert_project_query(project_id, name, description)
 
