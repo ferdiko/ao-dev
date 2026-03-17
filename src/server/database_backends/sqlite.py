@@ -564,6 +564,31 @@ def delete_all_llm_calls_query():
     execute("DELETE FROM llm_calls")
 
 
+def _delete_sessions_data(session_ids):
+    """Delete llm_calls, lessons_applied, and experiments for the given session IDs."""
+    if not session_ids:
+        return
+    placeholders = ",".join("?" * len(session_ids))
+    ids = tuple(session_ids)
+    execute(f"DELETE FROM llm_calls WHERE session_id IN ({placeholders})", ids)
+    execute(f"DELETE FROM lessons_applied WHERE session_id IN ({placeholders})", ids)
+    execute(f"DELETE FROM experiments WHERE session_id IN ({placeholders})", ids)
+
+
+def delete_project_query(project_id):
+    """Delete a project and all associated experiments, llm_calls, and lessons_applied."""
+    sessions = query_all("SELECT session_id FROM experiments WHERE project_id=?", (project_id,))
+    _delete_sessions_data([s["session_id"] for s in sessions])
+    execute("DELETE FROM projects WHERE project_id=?", (project_id,))
+
+
+def delete_user_query(user_id):
+    """Delete a user and all associated experiments, llm_calls, and lessons_applied."""
+    sessions = query_all("SELECT session_id FROM experiments WHERE user_id=?", (user_id,))
+    _delete_sessions_data([s["session_id"] for s in sessions])
+    execute("DELETE FROM users WHERE user_id=?", (user_id,))
+
+
 def get_session_name_query(session_id):
     """Get session name by session_id."""
     return query_one("SELECT name FROM experiments WHERE session_id=?", (session_id,))

@@ -13,3 +13,5 @@ def ensure_test_user_and_project():
     DB.upsert_project(TEST_PROJECT_ID, "ao-test", "")
     yield
     os.environ.pop("_AO_TESTING", None)
+    DB.delete_project(TEST_PROJECT_ID)
+    DB.delete_user(TEST_USER_ID)

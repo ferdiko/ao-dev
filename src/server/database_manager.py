@@ -416,6 +416,12 @@ class DatabaseManager:
         self.backend.delete_all_experiments_query()
         self.backend.delete_all_llm_calls_query()
 
+    def delete_project(self, project_id):
+        self.backend.delete_project_query(project_id)
+
+    def delete_user(self, user_id):
+        self.backend.delete_user_query(user_id)
+
     def get_session_name(self, session_id):
         row = self.backend.get_session_name_query(session_id)
         if not row:
