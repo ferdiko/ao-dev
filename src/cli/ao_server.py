@@ -121,14 +121,17 @@ def execute_server_command(args):
         logger.info("Main server restarted.")
 
     elif args.command == "clear":
-        # Connect to the server and send a clear command
+        confirm = input("This will delete all experiments and LLM call data. Continue? [y/N] ")
+        if confirm.strip().lower() != "y":
+            print("Aborted.")
+            return
         try:
             sock = socket.create_connection((HOST, PORT), timeout=SOCKET_TIMEOUT)
             handshake = {"type": "hello", "role": "admin", "script": "clearer"}
             send_json(sock, handshake)
             send_json(sock, {"type": "clear"})
             sock.close()
-            logger.info("Main server clear signal sent.")
+            logger.info("All data cleared.")
         except Exception:
             logger.warning("No running server found.")
             sys.exit(1)

@@ -1,23 +1,15 @@
 import os
-import shutil
 import pytest
 
-from ao.common.project import write_project_config
-
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-AO_DIR = os.path.join(REPO_ROOT, ".ao")
+from ao.common.constants import TEST_USER_ID, TEST_PROJECT_ID
+from ao.server.database_manager import DB
 
 
 @pytest.fixture(autouse=True, scope="session")
-def ensure_test_project():
-    """Create a temporary .ao/config.json at repo root so ao-record works in tests."""
-    already_existed = os.path.isdir(AO_DIR)
-    if not already_existed:
-        write_project_config(REPO_ROOT, {
-            "project_id": "test-project",
-            "name": "ao-test",
-            "description": "",
-        })
+def ensure_test_user_and_project():
+    """Ensure a test user and project exist for ao-record to work in tests."""
+    os.environ["_AO_TESTING"] = "1"
+    DB.upsert_user(TEST_USER_ID, "Test User", "test@test.com")
+    DB.upsert_project(TEST_PROJECT_ID, "ao-test", "")
     yield
-    if not already_existed:
-        shutil.rmtree(AO_DIR, ignore_errors=True)
+    os.environ.pop("_AO_TESTING", None)

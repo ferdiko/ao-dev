@@ -10,16 +10,10 @@ import os
 import select
 import socket
 import subprocess
-import sys
 import threading
 import time
 
 from ao.common.constants import HOST, PORT
-
-try:
-    from tests.billable.caching_utils import restart_server
-except ImportError:
-    from caching_utils import restart_server
 
 
 class NodeTimingListener:
@@ -169,12 +163,15 @@ def run_and_measure_node_timing(
     listener.reset()
 
     env = os.environ.copy()
-    env["AO_DATABASE_MODE"] = "local"
+    env["AO_NO_DEBUG_MODE"] = "True"
     if session_id:
         env["AO_SESSION_ID"] = session_id
 
+    script_dir = os.path.dirname(os.path.abspath(script_path))
+    script_name = os.path.basename(script_path)
+
     result = subprocess.run(
-        [sys.executable, "-m", "ao.cli.ao_record", script_path],
+        ["uv", "run", "--directory", script_dir, "ao-record", script_name],
         env=env,
         capture_output=True,
         text=True,
@@ -205,8 +202,6 @@ def test_cache_edit_timing():
     - Run 3: Edit last node - should be ~1/3 of T (between 1/9 and 5/9)
     """
     script_path = "./example_workflows/debug_examples/anthropic/debate.py"
-
-    restart_server()
 
     # Start listening for node messages
     listener = NodeTimingListener()

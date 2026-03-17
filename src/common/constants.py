@@ -411,3 +411,7 @@ else:
     )
 
 PLAYBOOK_SERVER_TIMEOUT = 30  # Seconds to wait for server startup
+
+# Testing constants
+TEST_USER_ID = "test-user"
+TEST_PROJECT_ID = "test-project"
