@@ -60,13 +60,14 @@ def setup_project_interactive(default_root: str, must_contain: str = None) -> st
         must_contain: If set, the chosen root must be an ancestor of (or equal to) this path.
                       Used to prevent creating a project root deeper than the script being run.
     """
-    print("No AO project found. Let's set one up.\n")
+    print(f"No AO project associated with this agent. Enter the project root ({default_root}):")
 
     while True:
         root = _ask_field(
-            f"Project root (default: {default_root})\n> ",
+            "> ",
             lambda v: os.path.abspath(v.strip()),
             default=os.path.abspath(default_root),
+            path_completion=True,
         )
         if not os.path.isdir(root):
             print(f"Directory does not exist: {root}")

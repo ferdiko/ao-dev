@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
 import os
-from pathlib import Path
-
 try:
     import readline
 except ImportError:
@@ -55,24 +53,34 @@ class Config:
 
 
 def complete_path(text, state):
-    incomplete_path = Path(text)
-    if incomplete_path.is_dir():
-        completions = [p.as_posix() for p in incomplete_path.iterdir()]
-    elif incomplete_path.exists():
-        completions = [incomplete_path]
-    else:
-        exists_parts = Path(".")
-        for part in incomplete_path.parts:
-            test_next_part = exists_parts / part
-            if test_next_part.exists():
-                exists_parts = test_next_part
+    """Readline completer for filesystem paths."""
+    try:
+        expanded = os.path.expanduser(text)
+        if os.path.isdir(expanded):
+            parent = expanded
+            prefix = expanded.rstrip(os.sep) + os.sep
+        else:
+            parent = os.path.dirname(expanded) or "."
+            prefix = expanded
 
         completions = []
-        for p in exists_parts.iterdir():
-            p_str = p.as_posix()
-            if p_str.startswith(text):
-                completions.append(p_str)
-    return completions[state]
+        if os.path.isdir(parent):
+            for entry in os.listdir(parent):
+                candidate = os.path.join(parent, entry)
+                if candidate.startswith(prefix) or not text:
+                    if text.startswith("~"):
+                        home = os.path.expanduser("~")
+                        candidate = "~" + candidate[len(home):]
+                    if os.path.isdir(candidate):
+                        candidate += "/"
+                    completions.append(candidate)
+
+        completions.sort()
+        if state < len(completions):
+            return completions[state]
+        return None
+    except Exception:
+        return None
 
 
 def _ask_field(
@@ -80,11 +88,18 @@ def _ask_field(
     convert_value: Callable[[Any], Any] | None = None,
     default: Any | None = None,
     error_message: str | None = None,
+    path_completion: bool = False,
 ):
-    # we want to treat '/' as part of a word, so override the delimiters
-    readline.set_completer_delims(" \t\n;")
-    readline.parse_and_bind("tab: complete")
-    readline.set_completer(complete_path)
+    if path_completion:
+        readline.set_completer_delims(" \t\n;")
+        # libedit (macOS) uses different syntax than GNU readline
+        if "libedit" in (readline.__doc__ or ""):
+            readline.parse_and_bind("bind ^I rl_complete")
+        else:
+            readline.parse_and_bind("tab: complete")
+        readline.set_completer(complete_path)
+    else:
+        readline.set_completer(None)
     ask_again = True
     while ask_again:
         result = input(input_text)
