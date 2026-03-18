@@ -72,7 +72,6 @@ export class PythonServerClient {
                 type: "hello",
                 role: "ui",
                 script: "vscode-extension",
-                workspace_root: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
             };
 
             this.client.write(JSON.stringify(handshake) + "\n");

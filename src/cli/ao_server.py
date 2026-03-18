@@ -18,7 +18,6 @@ from ao.common.logger import logger, create_file_logger
 
 from ao.common.constants import (
     MAIN_SERVER_LOG,
-    FILE_WATCHER_LOG,
     HOST,
     PORT,
     SOCKET_TIMEOUT,
@@ -52,7 +51,7 @@ def launch_daemon_server() -> None:
 
 def server_command_parser():
     parser = ArgumentParser(
-        usage="ao-server {start, stop, restart, clear, logs, git-logs, clear-logs}",
+        usage="ao-server {start, stop, restart, clear, logs, clear-logs}",
         description="Server utilities.",
         allow_abbrev=False,
     )
@@ -65,7 +64,6 @@ def server_command_parser():
             "restart",
             "clear",
             "logs",
-            "git-logs",
             "clear-logs",
             "_serve",
         ],
@@ -112,26 +110,28 @@ def execute_server_command(args):
             time.sleep(SHUTDOWN_WAIT)
         except Exception:
             logger.info("No running server found. Proceeding to start.")
-        # Clear log files before starting fresh
-        for log_path in [MAIN_SERVER_LOG, FILE_WATCHER_LOG]:
-            try:
-                with open(log_path, "w"):
-                    pass
-            except Exception:
+        # Clear log file before starting fresh
+        try:
+            with open(MAIN_SERVER_LOG, "w"):
                 pass
+        except Exception:
+            pass
         # Start the server
         launch_daemon_server()
         logger.info("Main server restarted.")
 
     elif args.command == "clear":
-        # Connect to the server and send a clear command
+        confirm = input("This will delete all experiments and LLM call data. Continue? [y/N] ")
+        if confirm.strip().lower() != "y":
+            print("Aborted.")
+            return
         try:
             sock = socket.create_connection((HOST, PORT), timeout=SOCKET_TIMEOUT)
             handshake = {"type": "hello", "role": "admin", "script": "clearer"}
             send_json(sock, handshake)
             send_json(sock, {"type": "clear"})
             sock.close()
-            logger.info("Main server clear signal sent.")
+            logger.info("All data cleared.")
         except Exception:
             logger.warning("No running server found.")
             sys.exit(1)
@@ -148,28 +148,15 @@ def execute_server_command(args):
             logger.error(f"Error reading log file: {e}")
         return
 
-    elif args.command == "git-logs":
-        # Print the contents of the git versioning log file (file_watcher.py)
-        try:
-            with open(FILE_WATCHER_LOG, "r") as log_file:
-                print(log_file.read(), end="")
-        except FileNotFoundError:
-            logger.error(f"Log file not found at {FILE_WATCHER_LOG}")
-        except Exception as e:
-            logger.error(f"Error reading log file: {e}")
-        return
-
     elif args.command == "clear-logs":
-        # Clear all server log files
-        log_files = [MAIN_SERVER_LOG, FILE_WATCHER_LOG]
-        for log_path in log_files:
-            try:
-                os.makedirs(os.path.dirname(log_path), exist_ok=True)
-                with open(log_path, "w"):
-                    pass  # Opening in 'w' mode truncates the file
-            except Exception as e:
-                logger.error(f"Error clearing log file {log_path}: {e}")
-        logger.info("Server log files cleared.")
+        # Clear server log file
+        try:
+            os.makedirs(os.path.dirname(MAIN_SERVER_LOG), exist_ok=True)
+            with open(MAIN_SERVER_LOG, "w"):
+                pass
+        except Exception as e:
+            logger.error(f"Error clearing log file {MAIN_SERVER_LOG}: {e}")
+        logger.info("Server log file cleared.")
         return
 
     elif args.command == "_serve":

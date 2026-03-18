@@ -30,11 +30,6 @@ def print_graph(graph: dict, label: str) -> None:
     print("=" * 60 + "\n")
 
 
-def restart_server():
-    """Clear server state to ensure clean state for tests."""
-    subprocess.run(["ao-server", "clear"], check=False)
-
-
 def _run_script_with_ao_record(script_path: str, env: dict) -> tuple[int, str]:
     """
     Run a script using ao-record via uv and return (return_code, session_id).
@@ -90,9 +85,6 @@ async def run_test(script_path: str):
     5. Captures LLM calls and graph again
     6. Returns both sets of data for comparison
     """
-    # Restart server to ensure clean state for this test
-    restart_server()
-
     # Set up environment
     env = os.environ.copy()
     ao_random_seed = random.randint(0, 2**31 - 1)

@@ -2,6 +2,9 @@ import argparse
 import os
 from ao.common.config import Config, _ask_field
 from ao.common.constants import AO_CONFIG
+from ao.common.user import read_user_id, setup_user_interactive
+from ao.common.project import find_project_root, read_project_id, setup_project_interactive
+from ao.server.database_manager import DB
 
 
 def _convert_playbook_mode(value: str) -> str:
@@ -11,8 +14,7 @@ def _convert_playbook_mode(value: str) -> str:
     return value
 
 
-def get_user_input() -> Config:
-    # --- Playbook configuration ---
+def get_playbook_input() -> Config:
     playbook_mode = _ask_field(
         "Where do you want to host lessons? [local/cloud] (default: local)\n> ",
         _convert_playbook_mode,
@@ -29,17 +31,61 @@ def get_user_input() -> Config:
             error_message="Please enter your API key.",
         )
 
-    config = Config(
+    return Config(
         playbook_mode=playbook_mode,
         playbook_api_key=playbook_api_key,
     )
-    return config
+
+
+from ao.common.constants import WELCOME_ART
 
 
 def config_command():
-    config = get_user_input()
-    config_file = AO_CONFIG
-    config.to_yaml_file(config_file)
+    print("Press Ctrl+C to exit at any time.\n")
+
+    # --- User identity ---
+    user_id = read_user_id()
+    existing_user = None
+    if user_id:
+        row = DB.get_user(user_id)
+        if row:
+            existing_user = {"user_id": user_id, "full_name": row["full_name"], "email": row["email"]}
+
+    if existing_user:
+        print(f"User: {existing_user['full_name']} <{existing_user['email']}>\n"
+              "Press enter to keep current values, or type to change.\n")
+    else:
+        print(WELCOME_ART)
+        print("Welcome to Sovara! Let's get you set up.\n")
+
+    user = setup_user_interactive(existing_user)
+    DB.upsert_user(user["user_id"], user["full_name"], user["email"])
+
+    # --- Project (reconfigure only, no creation) ---
+    cwd = os.getcwd()
+    existing_root = find_project_root(cwd)
+    if existing_root:
+        project_id = read_project_id(existing_root)
+        row = DB.get_project(project_id)
+        if row:
+            existing_project = {"project_id": project_id, "name": row["name"], "description": row["description"] or ""}
+        else:
+            existing_project = {"project_id": project_id, "name": os.path.basename(existing_root), "description": ""}
+
+        print(f"\nProject: {existing_project['name']}\n"
+              "Press enter to keep current values, or type to change.\n")
+        _, project = setup_project_interactive(
+            default_root=existing_root,
+            existing=existing_project,
+        )
+        DB.upsert_project(project["project_id"], project["name"], project["description"])
+    else:
+        print("\nNo AO project in this directory. Run ao-record to create one.\n")
+
+    # --- Playbook ---
+    print()
+    config = get_playbook_input()
+    config.to_yaml_file(AO_CONFIG)
 
 
 def config_command_parser():
@@ -56,7 +102,11 @@ def config_command_parser():
 def main():
     parser = config_command_parser()
     parser.parse_args()
-    config_command()
+    try:
+        config_command()
+    except (KeyboardInterrupt, EOFError):
+        print("\nAborted.")
+        return
 
 
 if __name__ == "__main__":

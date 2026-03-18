@@ -4,17 +4,18 @@ from ao.common.config import Config
 
 
 # default home directory for configs and temporary/cached files
-default_home: str = os.path.join(os.path.expanduser("~"), ".cache")
+default_home: str = os.path.join(os.path.expanduser("~"), ".ao")
 AO_HOME: str = os.path.expandvars(
-    os.path.expanduser(
-        os.getenv(
-            "AO_HOME",
-            os.path.join(os.getenv("XDG_CACHE_HOME", default_home), "ao"),
-        )
-    )
+    os.path.expanduser(os.getenv("AO_HOME", default_home))
 )
 os.makedirs(AO_HOME, exist_ok=True)
 
+# User identity file
+USER_ID_PATH = os.path.join(AO_HOME, ".user_id")
+
+# Project config directory and file
+PROJECT_CONFIG_DIR = ".ao"
+PROJECT_ID_FILE = ".project_id"
 
 # Path to config.yaml.
 default_config_path = os.path.join(AO_HOME, "config.yaml")
@@ -43,7 +44,6 @@ CONNECTION_TIMEOUT = 20
 SERVER_START_TIMEOUT = 2
 PROCESS_TERMINATE_TIMEOUT = 5
 MESSAGE_POLL_INTERVAL = 0.1
-ORPHAN_POLL_INTERVAL = 60  # Interval in seconds for checking if parent process died
 SERVER_INACTIVITY_TIMEOUT = 1200  # Shutdown server after 20 min of inactivity
 SOCKET_TIMEOUT = 1
 SHUTDOWN_WAIT = 2
@@ -69,12 +69,12 @@ SUCCESS_COLORS = {
 }
 
 # Anything cache-related should be stored here
-default_cache_path = os.path.join(AO_HOME, "cache")
+default_cache_path = os.path.join(os.path.expanduser("~"), ".cache")
 AO_CACHE = os.path.expandvars(
     os.path.expanduser(
         os.getenv(
             "AO_CACHE",
-            default_cache_path,
+            os.path.join(os.getenv("XDG_CACHE_HOME", default_cache_path), ".ao"),
         )
     )
 )
@@ -117,7 +117,6 @@ AO_LOG_DIR = os.path.expandvars(
 )
 os.makedirs(AO_LOG_DIR, exist_ok=True)
 MAIN_SERVER_LOG = os.path.join(AO_LOG_DIR, "main_server.log")
-FILE_WATCHER_LOG = os.path.join(AO_LOG_DIR, "file_watcher.log")  # Git versioning logs
 
 
 default_attachment_cache = os.path.join(AO_CACHE, "attachments")
@@ -418,3 +417,16 @@ else:
     )
 
 PLAYBOOK_SERVER_TIMEOUT = 30  # Seconds to wait for server startup
+
+# Testing constants
+TEST_USER_ID = "test-user"
+TEST_PROJECT_ID = "test-project"
+
+# Welcome banner
+WELCOME_ART = """\033[32m
+  ____
+ / ___|  _____   ____ _ _ __ __ _
+ \\___ \\ / _ \\ \\ / / _` | '__/ _` |
+  ___) | (_) \\ V / (_| | | | (_| |
+ |____/ \\___/ \\_/ \\__,_|_|  \\__,_|
+\033[0m"""

@@ -25,6 +25,7 @@ from ao.common.constants import (
     MESSAGE_POLL_INTERVAL,
 )
 from ao.cli.ao_server import launch_daemon_server
+from ao.common.project import ensure_project_configured
 from ao.runner.context_manager import set_parent_session_id, set_server_connection
 from ao.runner.monkey_patching.apply_monkey_patches import apply_all_monkey_patches
 
@@ -350,6 +351,13 @@ class AgentRunner:
             "environment": dict(os.environ),
             "process_id": self.process_id,
             "prev_session_id": os.getenv("AO_SESSION_ID"),
+            "project_id": self.project_id,
+            "project_name": self.project_name,
+            "project_description": self.project_description,
+            "project_root": self.project_root,
+            "user_id": self.user_id,
+            "user_full_name": self.user_full_name,
+            "user_email": self.user_email,
         }
 
         try:
@@ -380,6 +388,29 @@ class AgentRunner:
 
     def _setup_environment(self) -> None:
         """Set up the execution environment for the agent runner."""
+        if os.environ.get("_AO_TESTING"):
+            from ao.common.constants import TEST_USER_ID, TEST_PROJECT_ID
+            self.user_id = TEST_USER_ID
+            self.user_full_name = "Test User"
+            self.user_email = "test@test.com"
+            self.project_id = TEST_PROJECT_ID
+            self.project_name = "ao-test"
+            self.project_description = ""
+            self.project_root = os.getcwd()
+        else:
+            from ao.common.user import ensure_user_configured
+            user_config = ensure_user_configured()
+            self.user_id = user_config["user_id"]
+            self.user_full_name = user_config["full_name"]
+            self.user_email = user_config["email"]
+
+            script_dir = os.path.dirname(os.path.abspath(self.script_path))
+            project_config = ensure_project_configured(self.user_id, script_dir)
+            self.project_id = project_config["project_id"]
+            self.project_name = project_config["name"]
+            self.project_description = project_config["description"]
+            self.project_root = project_config["project_root"]
+
         # Set random seed for reproducibility
         if not os.environ.get("AO_SEED"):
             os.environ["AO_SEED"] = str(random.randint(0, 2**31 - 1))
