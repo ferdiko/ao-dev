@@ -25,7 +25,7 @@ from ao.common.constants import (
     MESSAGE_POLL_INTERVAL,
 )
 from ao.cli.ao_server import launch_daemon_server
-from ao.common.project import find_project_root, read_project_id, setup_project_interactive
+from ao.common.project import ensure_project_configured
 from ao.runner.context_manager import set_parent_session_id, set_server_connection
 from ao.runner.monkey_patching.apply_monkey_patches import apply_all_monkey_patches
 
@@ -388,8 +388,6 @@ class AgentRunner:
 
     def _setup_environment(self) -> None:
         """Set up the execution environment for the agent runner."""
-        from ao.server.database_manager import DB
-
         if os.environ.get("_AO_TESTING"):
             from ao.common.constants import TEST_USER_ID, TEST_PROJECT_ID
             self.user_id = TEST_USER_ID
@@ -407,34 +405,11 @@ class AgentRunner:
             self.user_email = user_config["email"]
 
             script_dir = os.path.dirname(os.path.abspath(self.script_path))
-            project_root = find_project_root(script_dir)
-            if project_root is None:
-                print("\nNo AO project found. Let's create one.\n")
-                project_root, project_config = setup_project_interactive(
-                    default_root=os.getcwd(),
-                    must_contain=script_dir,
-                )
-                DB.upsert_project(project_config["project_id"], project_config["name"], project_config["description"])
-                self.project_id = project_config["project_id"]
-                self.project_name = project_config["name"]
-                self.project_description = project_config["description"]
-            else:
-                self.project_id = read_project_id(project_root)
-                row = DB.get_project(self.project_id)
-                if row:
-                    self.project_name = row["name"]
-                    self.project_description = row["description"] or ""
-                else:
-                    print(f"\nAO project found at {project_root} but not yet configured.\n")
-                    _, project_config = setup_project_interactive(
-                        default_root=project_root,
-                        existing={"project_id": self.project_id, "name": os.path.basename(project_root), "description": ""},
-                        must_contain=script_dir,
-                    )
-                    DB.upsert_project(project_config["project_id"], project_config["name"], project_config["description"])
-                    self.project_name = project_config["name"]
-                    self.project_description = project_config["description"]
-            self.project_root = project_root
+            project_config = ensure_project_configured(self.user_id, script_dir)
+            self.project_id = project_config["project_id"]
+            self.project_name = project_config["name"]
+            self.project_description = project_config["description"]
+            self.project_root = project_config["project_root"]
 
         # Set random seed for reproducibility
         if not os.environ.get("AO_SEED"):

@@ -450,6 +450,24 @@ class DatabaseManager:
     def get_all_projects(self):
         return self.backend.get_all_projects_query()
 
+    # User-project location operations
+    def upsert_project_location(self, user_id, project_id, project_location):
+        self.backend.upsert_project_location_query(user_id, project_id, project_location)
+
+    def find_project_for_location(self, user_id, path):
+        """Find a project whose known location is an ancestor of (or equal to) the given path."""
+        rows = self.backend.get_project_at_location_query(user_id, path)
+        import os
+        path = os.path.abspath(path) + os.sep
+        for row in rows:
+            loc = os.path.abspath(row["project_location"]) + os.sep
+            if path.startswith(loc):
+                return row["project_id"], row["project_location"]
+        return None
+
+    def get_project_locations(self, user_id, project_id):
+        return self.backend.get_project_locations_query(user_id, project_id)
+
     # Probe-related methods for ao-tool
     def get_experiment_metadata(self, session_id):
         return self.backend.get_experiment_metadata_query(session_id)

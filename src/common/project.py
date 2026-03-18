@@ -105,3 +105,63 @@ def setup_project_interactive(default_root: str, existing: dict = None, must_con
         "description": description,
     }
     return root, config
+
+
+def ensure_project_configured(user_id: str, script_dir: str) -> dict:
+    """Return project dict, restoring or prompting interactively as needed.
+
+    Flow:
+    1. Walk up from script_dir looking for .ao/.project_id
+    2. If not found, check DB for a known project location that covers this path → restore .project_id
+    3. If still not found, prompt user to create a new project
+    4. If found but no DB entry, prompt for metadata
+    5. Record location in DB for future restoration
+
+    Returns dict with project_id, name, description, project_root.
+    """
+    from ao.common.logger import logger
+    from ao.server.database_manager import DB
+
+    project_root = find_project_root(script_dir)
+
+    # Try to restore from known locations if .project_id is missing
+    if project_root is None:
+        result = DB.find_project_for_location(user_id, script_dir)
+        if result:
+            project_id, project_location = result
+            write_project_id(project_location, project_id)
+            project_root = project_location
+            logger.info(f"Restored .ao/.project_id at {project_location}")
+
+    if project_root is None:
+        # No project found anywhere — prompt to create
+        print("\nNo AO project found. Let's create one.\n")
+        project_root, project_config = setup_project_interactive(
+            default_root=os.getcwd(),
+            must_contain=script_dir,
+        )
+        DB.upsert_project(project_config["project_id"], project_config["name"], project_config["description"])
+    else:
+        project_id = read_project_id(project_root)
+        row = DB.get_project(project_id)
+        if row:
+            project_config = {"project_id": project_id, "name": row["name"], "description": row["description"] or ""}
+        else:
+            # .project_id exists but no DB entry — keep UUID, prompt for metadata
+            print(f"\nAO project found at {project_root} but not yet configured.\n")
+            _, project_config = setup_project_interactive(
+                default_root=project_root,
+                existing={"project_id": project_id, "name": os.path.basename(project_root), "description": ""},
+                must_contain=script_dir,
+            )
+            DB.upsert_project(project_config["project_id"], project_config["name"], project_config["description"])
+
+    # Keep location table in sync
+    DB.upsert_project_location(user_id, project_config["project_id"], project_root)
+
+    return {
+        "project_id": project_config["project_id"],
+        "name": project_config["name"],
+        "description": project_config["description"],
+        "project_root": project_root,
+    }

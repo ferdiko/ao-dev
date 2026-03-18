@@ -30,23 +30,31 @@ def write_user_id(user_id: str) -> None:
         f.write(user_id + "\n")
 
 
-def setup_user_interactive(existing: dict = None) -> dict:
-    """Prompt user for full name and email. Returns dict with user_id, full_name, email.
-
-    If existing is provided (from DB), shows current values in green as defaults.
-    """
+def _prompt_user_metadata(existing: dict = None) -> tuple[str, str]:
+    """Prompt for full name and email. Shows existing values in green if provided."""
     if existing:
         print(f"Full name: {green(existing['full_name'])}")
         full_name = _ask_field("> ", str, default=existing["full_name"])
         print(f"Email: {green(existing['email'])}")
         email = _ask_field("> ", str, default=existing["email"])
-        user_id = existing["user_id"]
     else:
         full_name = _ask_field("Full name\n> ", str)
         email = _ask_field("Email\n> ", str)
+    return full_name, email
+
+
+def setup_user_interactive(existing: dict = None) -> dict:
+    """Prompt user for full name and email. Returns dict with user_id, full_name, email.
+
+    If existing is provided (from DB), shows current values in green as defaults.
+    If not, generates a new UUID and writes it to disk.
+    """
+    full_name, email = _prompt_user_metadata(existing)
+    if existing:
+        user_id = existing["user_id"]
+    else:
         user_id = str(uuid.uuid4())
         write_user_id(user_id)
-
     return {"user_id": user_id, "full_name": full_name, "email": email}
 
 
@@ -65,10 +73,12 @@ def ensure_user_configured() -> dict:
             return {"user_id": user_id, "full_name": row["full_name"], "email": row["email"]}
         # .user_id file exists but no DB entry — keep UUID, ask for metadata
         print("AO user identity found but not yet configured.\n")
-        user = setup_user_interactive()
-        user["user_id"] = user_id  # preserve existing UUID
+        full_name, email = _prompt_user_metadata()
+        user = {"user_id": user_id, "full_name": full_name, "email": email}
     else:
-        print("Welcome to AO! Let's set up your identity.\n")
+        from ao.common.constants import WELCOME_ART
+        print(WELCOME_ART)
+        print("Welcome to Sovara! Let's set up your identity.\n")
         user = setup_user_interactive()
 
     DB.upsert_user(user["user_id"], user["full_name"], user["email"])

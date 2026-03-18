@@ -161,6 +161,20 @@ def _init_db(conn):
     """
     )
 
+    # Create user_project_locations table (links users to project locations on disk)
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_project_locations (
+            user_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            project_location TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (user_id),
+            FOREIGN KEY (project_id) REFERENCES projects (project_id),
+            UNIQUE (user_id, project_location)
+        )
+    """
+    )
+
     # Create lessons_applied table (tracks which lessons from ao-playbook were applied to runs)
     c.execute(
         """
@@ -761,4 +775,34 @@ def get_all_projects_query():
     return query_all(
         "SELECT project_id, name, description, created_at, last_run_at FROM projects ORDER BY last_run_at DESC",
         (),
+    )
+
+
+# User-project location queries
+
+def upsert_project_location_query(user_id, project_id, project_location):
+    """Record that a user has a project at this location. Updates project_id if location already known."""
+    execute(
+        """INSERT INTO user_project_locations (user_id, project_id, project_location)
+           VALUES (?, ?, ?)
+           ON CONFLICT (user_id, project_location)
+           DO UPDATE SET project_id=excluded.project_id""",
+        (user_id, project_id, project_location),
+    )
+
+
+def get_project_at_location_query(user_id, project_location):
+    """Find a project for this user whose known location is an ancestor of (or equal to) the given path."""
+    rows = query_all(
+        "SELECT project_id, project_location FROM user_project_locations WHERE user_id=?",
+        (user_id,),
+    )
+    return rows
+
+
+def get_project_locations_query(user_id, project_id):
+    """Get all known locations for a project belonging to a user."""
+    return query_all(
+        "SELECT project_location FROM user_project_locations WHERE user_id=? AND project_id=?",
+        (user_id, project_id),
     )

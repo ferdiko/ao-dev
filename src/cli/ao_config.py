@@ -37,7 +37,12 @@ def get_playbook_input() -> Config:
     )
 
 
+from ao.common.constants import WELCOME_ART
+
+
 def config_command():
+    print("Press Ctrl+C to exit at any time.\n")
+
     # --- User identity ---
     user_id = read_user_id()
     existing_user = None
@@ -50,35 +55,32 @@ def config_command():
         print(f"User: {existing_user['full_name']} <{existing_user['email']}>\n"
               "Press enter to keep current values, or type to change.\n")
     else:
-        print("Welcome to AO! Let's get you set up.\n")
+        print(WELCOME_ART)
+        print("Welcome to Sovara! Let's get you set up.\n")
 
     user = setup_user_interactive(existing_user)
     DB.upsert_user(user["user_id"], user["full_name"], user["email"])
 
-    # --- Project ---
+    # --- Project (reconfigure only, no creation) ---
     cwd = os.getcwd()
     existing_root = find_project_root(cwd)
-    existing_project = None
     if existing_root:
         project_id = read_project_id(existing_root)
         row = DB.get_project(project_id)
         if row:
             existing_project = {"project_id": project_id, "name": row["name"], "description": row["description"] or ""}
         else:
-            # .project_id exists but no DB entry — keep UUID, treat as partially configured
             existing_project = {"project_id": project_id, "name": os.path.basename(existing_root), "description": ""}
 
-    if existing_project:
         print(f"\nProject: {existing_project['name']}\n"
               "Press enter to keep current values, or type to change.\n")
+        _, project = setup_project_interactive(
+            default_root=existing_root,
+            existing=existing_project,
+        )
+        DB.upsert_project(project["project_id"], project["name"], project["description"])
     else:
-        print("\nNo AO project found in this directory. Let's create one.\n")
-
-    _, project = setup_project_interactive(
-        default_root=existing_root or cwd,
-        existing=existing_project,
-    )
-    DB.upsert_project(project["project_id"], project["name"], project["description"])
+        print("\nNo AO project in this directory. Run ao-record to create one.\n")
 
     # --- Playbook ---
     print()
@@ -100,7 +102,11 @@ def config_command_parser():
 def main():
     parser = config_command_parser()
     parser.parse_args()
-    config_command()
+    try:
+        config_command()
+    except (KeyboardInterrupt, EOFError):
+        print("\nAborted.")
+        return
 
 
 if __name__ == "__main__":

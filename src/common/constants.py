@@ -415,3 +415,12 @@ PLAYBOOK_SERVER_TIMEOUT = 30  # Seconds to wait for server startup
 # Testing constants
 TEST_USER_ID = "test-user"
 TEST_PROJECT_ID = "test-project"
+
+# Welcome banner
+WELCOME_ART = """\033[32m
+  ____
+ / ___|  _____   ____ _ _ __ __ _
+ \\___ \\ / _ \\ \\ / / _` | '__/ _` |
+  ___) | (_) \\ V / (_| | | | (_| |
+ |____/ \\___/ \\_/ \\__,_|_|  \\__,_|
+\033[0m"""
