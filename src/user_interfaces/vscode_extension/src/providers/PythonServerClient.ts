@@ -1,31 +1,23 @@
-import * as net from 'net';
 import * as child_process from 'child_process';
 import * as vscode from 'vscode';
+import WebSocket from 'ws';
 
 export class PythonServerClient {
     private static instance: PythonServerClient;
-    private client: any = undefined;
+    private client: WebSocket | undefined;
     private messageQueue: string[] = [];
-    private onMessageCallback?: (msg: any) => void;
     private messageCallbacks: ((msg: any) => void)[] = [];
     private connectionCallbacks: (() => void)[] = [];
     private serverHost: string;
     private serverPort: number;
-    private serverUrl?: string;
-    private useWebSocket = false;
     private reconnectTimer: NodeJS.Timeout | undefined;
     private _playbookUrl?: string;
     private _playbookApiKey?: string;
 
     private constructor() {
-        // Read server configuration from VSCode settings
         const config = vscode.workspace.getConfiguration('ao');
         this.serverHost = config.get('pythonServerHost') || '127.0.0.1';
         this.serverPort = config.get('pythonServerPort') || 5959;
-        this.serverUrl = config.get('pythonServerUrl');
-        this.useWebSocket = !!(this.serverUrl && typeof this.serverUrl === 'string' && this.serverUrl.startsWith('ws'));
-
-        // Don't auto-connect - let the extension control when to connect
     }
 
     public static getInstance(): PythonServerClient {
@@ -50,103 +42,72 @@ export class PythonServerClient {
 
     public async ensureConnected() {
         console.log('[AO] ensureConnected called, client exists:', !!this.client);
-        if (!this.client) {
+        if (!this.client || this.client.readyState === WebSocket.CLOSED || this.client.readyState === WebSocket.CLOSING) {
             this.connect();
         }
     }
 
     private connect() {
         console.log('[AO] connect() called');
-        // Clean up existing client before reconnecting
+        // Clean up existing client
         if (this.client) {
             this.client.removeAllListeners();
-            this.client.destroy();
+            try { this.client.close(); } catch { /* ignore */ }
         }
 
-        // Create a new socket for each connection attempt
-        this.client = new net.Socket();
+        const wsUrl = `ws://${this.serverHost}:${this.serverPort}/ws`;
+        this.client = new WebSocket(wsUrl);
 
-        this.client.connect(5959, '127.0.0.1', () => {
-            console.log('[AO] Connected successfully');
-            const handshake = {
-                type: "hello",
-                role: "ui",
-                script: "vscode-extension",
-            };
-
-            this.client.write(JSON.stringify(handshake) + "\n");
-            this.messageQueue.forEach(msg => this.client.write(msg));
+        this.client.on('open', () => {
+            console.log('[AO] WebSocket connected');
+            // No handshake needed — the server sends session_id on connect
+            // Flush queued messages
+            this.messageQueue.forEach(msg => this.client!.send(msg));
             this.messageQueue = [];
-
-            // Notify connection listeners (e.g., to request experiment list)
+            // Notify connection listeners
             this.connectionCallbacks.forEach(callback => callback());
         });
 
-        let buffer = '';
-        this.client.on('data', (data: Buffer) => {
-            buffer += data.toString();
-            let idx;
-            while ((idx = buffer.indexOf('\n')) !== -1) {
-                const line = buffer.slice(0, idx);
-                buffer = buffer.slice(idx + 1);
-                const msg = JSON.parse(line);
-                // Call all registered callbacks
+        this.client.on('message', (data: WebSocket.Data) => {
+            const text = data.toString();
+            try {
+                const msg = JSON.parse(text);
                 this.messageCallbacks.forEach(callback => callback(msg));
+            } catch {
+                console.log('[AO] Failed to parse message:', text.slice(0, 100));
             }
         });
 
         this.client.on('close', () => {
-            console.log('[AO] Connection closed');
-            this.client = undefined;  // Reset so ensureConnected() will reconnect
-            // Clear any pending reconnect
+            console.log('[AO] WebSocket closed');
+            this.client = undefined;
             if (this.reconnectTimer) {
                 clearTimeout(this.reconnectTimer);
             }
-            // Use ensureConnected for reconnections to check auth first
             this.reconnectTimer = setTimeout(() => this.ensureConnected(), 2000);
         });
 
-        this.client.on('error', (err: any) => {
-            console.log('[AO] Connection error:', err.code, err.message);
-            // Connection refused means server isn't running - try to start it
-            if (err.code === 'ECONNREFUSED') {
+        this.client.on('error', (err: Error) => {
+            console.log('[AO] WebSocket error:', err.message);
+            if (err.message.includes('ECONNREFUSED')) {
                 console.log('[AO] Server not running, starting...');
                 this.startServerIfNeeded();
             }
-            // Don't reconnect here - 'close' event fires after 'error' and handles reconnection
         });
     }
 
     public sendMessage(message: any) {
-        const msgStr = JSON.stringify(message) + "\n";
-        // WebSocket client (ws) has send() and numeric readyState
-        if (this.client) {
-            // WebSocket
-            if (typeof this.client.send === 'function') {
-                const isOpen = (typeof this.client.readyState === 'number' && this.client.readyState === 1); // 1 === OPEN
-                if (isOpen) {
-                    try { this.client.send(msgStr); } catch (e) { this.messageQueue.push(msgStr); }
-                } else {
-                    this.messageQueue.push(msgStr);
-                }
-                return;
+        const msgStr = JSON.stringify(message);
+        if (this.client && this.client.readyState === WebSocket.OPEN) {
+            try {
+                this.client.send(msgStr);
+            } catch {
+                this.messageQueue.push(msgStr);
             }
-
-            // TCP socket (net.Socket)
-            if (typeof this.client.write === 'function') {
-                if (this.client.writable) {
-                    try { this.client.write(msgStr); } catch (e) { this.messageQueue.push(msgStr); }
-                } else {
-                    this.messageQueue.push(msgStr);
-                }
-                return;
-            }
+        } else {
+            this.messageQueue.push(msgStr);
+            this.ensureConnected();
         }
-
-        // No connection - queue message and trigger reconnection
-        console.log('[AO] No connection, queuing message and triggering reconnect');
-        this.messageQueue.push(msgStr);
-        this.ensureConnected();
     }
 
     public startServerIfNeeded() {
@@ -154,7 +115,6 @@ export class PythonServerClient {
         const pythonPath = this.getPythonPath();
         console.log(`[AO] Starting server with: ${pythonPath} -m ao.cli.ao_server start`);
 
-        // Pass workspace root to server via environment variable
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         const env: NodeJS.ProcessEnv = { ...process.env };
         if (workspaceRoot) {
@@ -175,13 +135,11 @@ export class PythonServerClient {
     }
 
     private getPythonPath(): string {
-        // Read python_executable from ~/.cache/ao/config.yaml
-        const configPath = require('path').join(require('os').homedir(), '.cache', 'ao', 'config.yaml');
+        const configPath = require('path').join(require('os').homedir(), '.ao', 'config.yaml');
         try {
             const fs = require('fs');
             if (fs.existsSync(configPath)) {
                 const content = fs.readFileSync(configPath, 'utf8');
-                // Simple YAML parsing for python_executable field
                 const match = content.match(/python_executable:\s*(.+)/);
                 if (match && match[1]) {
                     const pythonPath = match[1].trim();
@@ -216,21 +174,16 @@ export class PythonServerClient {
     }
 
     public dispose() {
-        // Clear reconnect timeout
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = undefined;
         }
-
-        // Clean up socket
         if (this.client) {
             this.client.removeAllListeners();
-            this.client.destroy();
+            try { this.client.close(); } catch { /* ignore */ }
         }
-
-        // Clear callbacks
         this.messageCallbacks = [];
         this.connectionCallbacks = [];
         this.messageQueue = [];
     }
-} 
+}

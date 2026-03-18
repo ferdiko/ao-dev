@@ -21,7 +21,8 @@ packages = [
     "ao.runner.monkey_patching.patches",
     "ao.server",
     "ao.server.database_backends",
-    "ao.server.handlers"
+    "ao.server.handlers",
+    "ao.server.routes"
 ]
 
 [project.scripts]
@@ -54,6 +55,8 @@ dependencies = [
     "psycopg2-binary",
     "python-dotenv",
     "fastapi",
+    "uvicorn[standard]",
+    "httpx",
     "flatten_dict",
     "flatten_json"
 ]

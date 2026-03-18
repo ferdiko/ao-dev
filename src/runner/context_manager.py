@@ -2,23 +2,15 @@ import contextvars
 import threading
 from contextlib import contextmanager
 import json
-import queue
 from ao.server.database_manager import DB
-from ao.common.utils import send_to_server, send_to_server_and_receive
+from ao.common.utils import http_post
+from ao.common.logger import logger
 
 
 # Process's session id stored as parent_session_id. Subruns have their own
 # session_id and current_session_id maps thread -> session_id.
 current_session_id = contextvars.ContextVar("session_id", default=None)
 parent_session_id = None
-
-# Connection to server, which is shared throughout the process.
-server_conn = None
-server_file = None
-
-# Response queue for synchronous request-response patterns.
-# The listener thread in AgentRunner routes responses here.
-response_queue: queue.Queue = None
 
 # Names of all subruns in the process. Used to ensure they are unique.
 run_names = None
@@ -46,38 +38,26 @@ def ao_launch(run_name="Workflow run"):
     """
     Context manager for launching runs with a specific name.
     NOTE: Upon rerun of one subrun, we rerun all subruns. Other
-    subruns' expensive calls should be cached though. We also
-    hide this somewhat in the UI.
-
-    Args:
-        run_name (str): Name of the run to launch
-
-    Usage:
-        with ao_launch(run_name="my_eval"):
-            # User code runs here
-            result = some_function()
+    subruns' expensive calls should be cached though.
     """
     # Get unique run name.
     run_name = get_run_name(run_name)
 
     # Get rerun environment from parent
-    # BUG: If parent sets env vars before calling this, these env vars are lost upon restart.
     parent_env = DB.get_parent_environment(parent_session_id)
 
     # If rerun, get previous's runs session_id, else None.
     prev_session_id = DB.get_subrun_id(parent_session_id, run_name)
 
-    # Register new subrun with server.
-    msg = {
-        "type": "add_subrun",
+    # Register new subrun with server via HTTP.
+    response = http_post("/runner/subrun", {
         "name": run_name,
         "parent_session_id": parent_session_id,
         "cwd": parent_env["cwd"],
         "command": parent_env["command"],
         "environment": json.loads(parent_env["environment"]),
         "prev_session_id": prev_session_id,
-    }
-    response = send_to_server_and_receive(msg)
+    })
     session_id = response["session_id"]
     current_session_id.set(session_id)
 
@@ -85,9 +65,11 @@ def ao_launch(run_name="Workflow run"):
         # Run user code
         yield run_name
     finally:
-        # Deregister
-        deregister_msg = {"type": "deregister", "session_id": session_id}
-        send_to_server(deregister_msg)
+        # Deregister (best-effort -- don't crash user code if server is down)
+        try:
+            http_post("/runner/deregister", {"session_id": session_id})
+        except Exception as e:
+            logger.warning(f"Failed to deregister subrun {session_id}: {e}")
 
 
 def log(entry=None, success=None):
@@ -97,7 +79,10 @@ def log(entry=None, success=None):
     if success is not None and not isinstance(success, bool):
         raise TypeError(f"`success` must be a boolean or None, got {type(success).__name__}")
 
-    send_to_server({"type": "log", "session_id": get_session_id(), "success": success, "entry": entry})
+    try:
+        http_post("/runner/log", {"session_id": get_session_id(), "success": success, "entry": entry})
+    except Exception as e:
+        logger.warning(f"Failed to send log: {e}")
 
 
 def get_session_id():
@@ -110,15 +95,8 @@ def get_session_id():
 
 
 def set_parent_session_id(session_id):
-    # Called by sitecustomize.py: set session id of `ao-record`
+    # Called by agent_runner: set session id of `ao-record`
     global parent_session_id, current_session_id, run_names
     parent_session_id = session_id
     current_session_id.set(session_id)
     run_names = set(DB.get_session_name(parent_session_id))
-
-
-def set_server_connection(server_connection, rsp_queue=None):
-    global server_conn, server_file, response_queue
-    server_conn = server_connection
-    server_file = server_connection.makefile("rw")
-    response_queue = rsp_queue

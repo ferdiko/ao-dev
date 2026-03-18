@@ -40,12 +40,10 @@ config = Config.from_yaml_file(AO_CONFIG)
 # server-related constants
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PYTHON_PORT", 5959))
-CONNECTION_TIMEOUT = 20
 SERVER_START_TIMEOUT = 2
 PROCESS_TERMINATE_TIMEOUT = 5
 MESSAGE_POLL_INTERVAL = 0.1
 SERVER_INACTIVITY_TIMEOUT = 1200  # Shutdown server after 20 min of inactivity
-SOCKET_TIMEOUT = 1
 SHUTDOWN_WAIT = 2
 
 # Experiment meta data.
