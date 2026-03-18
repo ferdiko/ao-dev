@@ -9,9 +9,7 @@ import os
 import uuid
 
 from ao.common.config import _ask_field, green
-from ao.common.constants import AO_HOME
-
-USER_ID_PATH = os.path.join(AO_HOME, ".user_id")
+from ao.common.constants import USER_ID_PATH
 
 
 def read_user_id() -> str | None:

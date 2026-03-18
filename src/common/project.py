@@ -10,16 +10,14 @@ import os
 import uuid
 
 from ao.common.config import _ask_field, green
-
-CONFIG_DIR = ".ao"
-PROJECT_ID_FILE = ".project_id"
+from ao.common.constants import PROJECT_CONFIG_DIR, PROJECT_ID_FILE
 
 
 def find_project_root(start_path: str) -> str | None:
     """Walk up from start_path looking for .ao/.project_id. Return the directory or None."""
     path = os.path.abspath(start_path)
     while True:
-        id_path = os.path.join(path, CONFIG_DIR, PROJECT_ID_FILE)
+        id_path = os.path.join(path, PROJECT_CONFIG_DIR, PROJECT_ID_FILE)
         if os.path.isfile(id_path):
             return path
         parent = os.path.dirname(path)
@@ -30,14 +28,14 @@ def find_project_root(start_path: str) -> str | None:
 
 def read_project_id(project_root: str) -> str:
     """Read project UUID from .ao/.project_id."""
-    id_path = os.path.join(project_root, CONFIG_DIR, PROJECT_ID_FILE)
+    id_path = os.path.join(project_root, PROJECT_CONFIG_DIR, PROJECT_ID_FILE)
     with open(id_path, encoding="utf-8") as f:
         return f.read().strip()
 
 
 def write_project_id(project_root: str, project_id: str) -> None:
     """Write project UUID to .ao/.project_id."""
-    ao_dir = os.path.join(project_root, CONFIG_DIR)
+    ao_dir = os.path.join(project_root, PROJECT_CONFIG_DIR)
     os.makedirs(ao_dir, exist_ok=True)
     id_path = os.path.join(ao_dir, PROJECT_ID_FILE)
     with open(id_path, "w", encoding="utf-8") as f:

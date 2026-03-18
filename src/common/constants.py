@@ -10,6 +10,12 @@ AO_HOME: str = os.path.expandvars(
 )
 os.makedirs(AO_HOME, exist_ok=True)
 
+# User identity file
+USER_ID_PATH = os.path.join(AO_HOME, ".user_id")
+
+# Project config directory and file
+PROJECT_CONFIG_DIR = ".ao"
+PROJECT_ID_FILE = ".project_id"
 
 # Path to config.yaml.
 default_config_path = os.path.join(AO_HOME, "config.yaml")
