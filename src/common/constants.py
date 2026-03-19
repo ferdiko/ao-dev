@@ -44,6 +44,7 @@ SERVER_START_TIMEOUT = 2
 PROCESS_TERMINATE_TIMEOUT = 5
 MESSAGE_POLL_INTERVAL = 0.1
 SERVER_INACTIVITY_TIMEOUT = 1200  # Shutdown server after 20 min of inactivity
+SESSION_ORPHAN_TIMEOUT = 5  # Seconds before a session without SSE is considered dead
 SHUTDOWN_WAIT = 2
 
 # Experiment meta data.

@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import Optional
 
 from ao.common.logger import create_file_logger
-from ao.common.constants import MAIN_SERVER_LOG, SERVER_INACTIVITY_TIMEOUT, GIT_DIR
+from ao.common.constants import MAIN_SERVER_LOG, SERVER_INACTIVITY_TIMEOUT, SESSION_ORPHAN_TIMEOUT, GIT_DIR
 from ao.server.database_manager import DB
 
 logger = create_file_logger(MAIN_SERVER_LOG)
@@ -32,6 +32,8 @@ class Session:
         self.project_root = project_root
         self.status = "running"
         self.command: Optional[str] = None
+        self.sse_connected = False
+        self.registered_at = time.time()
 
 
 class ServerState:
@@ -211,15 +213,17 @@ class ServerState:
         })
 
     def _sweep_dead_sessions(self) -> None:
-        """Mark sessions that have no active runner as finished.
-
-        In the HTTP architecture, runners don't hold persistent connections.
-        Sessions are marked finished via deregister. This sweep catches any
-        that slipped through (e.g. runner crashed without deregistering).
-        """
-        # No-op for now: runners deregister explicitly via HTTP POST.
-        # Could check runner_event_queues in the future.
-        pass
+        """Mark sessions whose runner died before SSE connected as finished."""
+        now = time.time()
+        for session in list(self.sessions.values()):
+            if (
+                session.status == "running"
+                and session.session_id in self.runner_event_queues
+                and not session.sse_connected
+                and now - session.registered_at > SESSION_ORPHAN_TIMEOUT
+            ):
+                logger.info(f"Sweeping orphaned session {session.session_id}")
+                session.status = "finished"
 
     def load_finished_runs(self) -> None:
         """Load finished runs from database into sessions dict."""
@@ -364,19 +368,23 @@ class ServerState:
     # Sync scheduling helpers (for use from def endpoints in thread pool)
     # ============================================================
 
-    def _schedule_async(self, coro) -> None:
-        """Schedule a coroutine on the event loop from a sync context."""
-        if self._loop and self._loop.is_running():
-            asyncio.run_coroutine_threadsafe(coro, self._loop)
+    def _can_schedule(self) -> bool:
+        return self._loop is not None and self._loop.is_running()
+
+    # Cosmetic: we only create the coroutine after checking the loop is running,
+    # to avoid "coroutine was never awaited" RuntimeWarnings during startup/shutdown.
 
     def schedule_broadcast(self, msg: dict) -> None:
         """Schedule a broadcast to all UIs from sync context."""
-        self._schedule_async(self.broadcast_to_all_uis(msg))
+        if self._can_schedule():
+            asyncio.run_coroutine_threadsafe(self.broadcast_to_all_uis(msg), self._loop)
 
     def schedule_graph_update(self, session_id: str) -> None:
         """Schedule a graph update broadcast from sync context."""
-        self._schedule_async(self.broadcast_graph_update(session_id))
+        if self._can_schedule():
+            asyncio.run_coroutine_threadsafe(self.broadcast_graph_update(session_id), self._loop)
 
     def schedule_runner_event(self, session_id: str, event: dict) -> None:
         """Schedule an SSE event push from sync context."""
-        self._schedule_async(self.send_runner_event(session_id, event))
+        if self._can_schedule():
+            asyncio.run_coroutine_threadsafe(self.send_runner_event(session_id, event), self._loop)

@@ -28,6 +28,11 @@ async def runner_events(session_id: str, request: Request):
         from starlette.responses import JSONResponse
         return JSONResponse({"error": "Session not registered"}, status_code=404)
 
+    # Mark SSE as connected so the orphan sweep knows this runner is alive
+    session = state.sessions.get(session_id)
+    if session:
+        session.sse_connected = True
+
     async def event_generator():
         try:
             while True:
@@ -89,10 +94,11 @@ async def ui_websocket(websocket: WebSocket):
             state.touch_activity()
             try:
                 msg = json.loads(data)
+                await _handle_ws_message(websocket, state, msg)
             except json.JSONDecodeError:
                 continue
-
-            await _handle_ws_message(websocket, state, msg)
+            except Exception as e:
+                logger.error(f"Error handling WebSocket message: {e}")
 
     except WebSocketDisconnect:
         pass

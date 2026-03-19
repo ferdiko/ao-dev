@@ -2,6 +2,7 @@ import hashlib
 import random
 import os
 import sys
+import threading
 import importlib
 from ao.common.logger import logger
 
@@ -50,25 +51,22 @@ def get_module_file_path(module_name: str) -> str | None:
 # Communication with server via HTTP.
 # ==============================================================================
 
-_http_client = None
 _server_base_url = None
+_local = threading.local()
 
 
 def set_server_url(url: str) -> None:
     """Set the server base URL for HTTP communication."""
-    global _server_base_url, _http_client
+    global _server_base_url
     _server_base_url = url
-    # Reset client so it picks up the new URL
-    _http_client = None
 
 
 def _get_http_client():
-    """Lazy-initialize and return the shared httpx client."""
-    global _http_client
-    if _http_client is None:
+    """Return a per-thread httpx client (httpx.Client is not thread-safe)."""
+    if not hasattr(_local, "client"):
         import httpx
-        _http_client = httpx.Client(timeout=30.0)
-    return _http_client
+        _local.client = httpx.Client(timeout=30.0)
+    return _local.client
 
 
 def http_post(endpoint: str, data: dict) -> dict:

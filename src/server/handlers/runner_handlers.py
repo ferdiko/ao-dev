@@ -58,22 +58,25 @@ def handle_add_node(state, msg: dict) -> None:
     node = msg["node"]
     incoming_edges = msg.get("incoming_edges", [])
 
-    # Check if any incoming edges reference nodes from other sessions
-    cross_session_sources = []
-    target_sessions = set()
+    # Lock protects session_graphs: concurrent add_node calls (e.g. ensemble
+    # workers) could otherwise write a stale snapshot to the DB.
+    with state.lock:
+        # Check if any incoming edges reference nodes from other sessions
+        cross_session_sources = []
+        target_sessions = set()
 
-    for source in incoming_edges:
-        source_sessions = _find_sessions_with_node(state, source)
-        if source_sessions:
-            for source_session in source_sessions:
-                target_sessions.add(source_session)
-                cross_session_sources.append(source)
+        for source in incoming_edges:
+            source_sessions = _find_sessions_with_node(state, source)
+            if source_sessions:
+                for source_session in source_sessions:
+                    target_sessions.add(source_session)
+                    cross_session_sources.append(source)
 
-    if target_sessions:
-        for target_sid in target_sessions:
-            _add_node_to_session(state, target_sid, node, cross_session_sources)
-    else:
-        _add_node_to_session(state, sid, node, incoming_edges)
+        if target_sessions:
+            for target_sid in target_sessions:
+                _add_node_to_session(state, target_sid, node, cross_session_sources)
+        else:
+            _add_node_to_session(state, sid, node, incoming_edges)
 
 
 def handle_deregister_message(state, msg: dict) -> None:

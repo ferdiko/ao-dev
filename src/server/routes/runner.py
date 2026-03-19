@@ -108,10 +108,12 @@ def register(req: RegisterRequest, state: ServerState = Depends(get_state)):
     # Create/update session
     with state.lock:
         if session_id not in state.sessions:
-            state.sessions[session_id] = Session(
+            session = Session(
                 session_id, project_id=req.project_id, project_root=req.project_root,
             )
-        session = state.sessions[session_id]
+            state.sessions[session_id] = session
+        else:
+            session = state.sessions[session_id]
     session.status = "running"
 
     # Create SSE queue for this runner
