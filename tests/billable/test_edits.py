@@ -118,14 +118,16 @@ class NodeTimingListener:
             if not edit_prompt_field(input_dict):
                 raise ValueError("Could not find prompt field to edit")
 
-            edit_msg = {
-                "type": "edit_input",
-                "session_id": self.session_id,
-                "node_id": self.last_node_id,
-                "value": json.dumps(input_dict),
-            }
-        self._ws.send(json.dumps(edit_msg))
-        time.sleep(0.5)  # Give server time to process
+            import httpx
+            httpx.post(
+                f"http://{HOST}:{PORT}/ui/edit-input",
+                json={
+                    "session_id": self.session_id,
+                    "node_id": self.last_node_id,
+                    "value": json.dumps(input_dict),
+                },
+                timeout=5.0,
+            ).raise_for_status()
 
     def stop(self):
         """Stop listening and close connection."""
