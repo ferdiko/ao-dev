@@ -9,15 +9,49 @@ const cors = require("cors");
 const HOST = process.env.PYTHON_HOST || "127.0.0.1";
 const PORT = process.env.PYTHON_PORT ? parseInt(process.env.PYTHON_PORT) : 5959;
 const WS_PORT = process.env.WS_PORT ? parseInt(process.env.WS_PORT) : 4000;
+const BACKEND_URL = `http://${HOST}:${PORT}`;
 const MAX_RETRIES = 10;
 const RETRY_DELAY_MS = 1500;
 
 const app = express();
 app.use(cors());
+app.use(express.json());
+
+// ============================================================
+// HTTP proxy — forward /ui/* and /runner/* to Python backend
+// ============================================================
+
+app.all("/ui/{*path}", async (req, res) => {
+  try {
+    const resp = await fetch(`${BACKEND_URL}${req.originalUrl}`, {
+      method: req.method,
+      headers: { "Content-Type": "application/json" },
+      ...(req.method !== "GET" && { body: JSON.stringify(req.body) }),
+    });
+    const data = await resp.json();
+    res.status(resp.status).json(data);
+  } catch (err) {
+    res.status(502).json({ error: "Backend unavailable" });
+  }
+});
+
+app.get("/health", async (_req, res) => {
+  try {
+    const resp = await fetch(`${BACKEND_URL}/health`);
+    const data = await resp.json();
+    res.json(data);
+  } catch {
+    res.status(502).json({ error: "Backend unavailable" });
+  }
+});
 
 const server = app.listen(WS_PORT, "0.0.0.0", () =>
-  console.log(`Web proxy running on ws://0.0.0.0:${WS_PORT}`)
+  console.log(`Web proxy running on http://0.0.0.0:${WS_PORT}`)
 );
+
+// ============================================================
+// Server auto-start
+// ============================================================
 
 function getConfigPath() {
   const aoHome = process.env.AO_HOME || path.join(os.homedir(), ".ao");
@@ -46,23 +80,20 @@ function startServer() {
   proc.unref();
 }
 
+// ============================================================
+// WebSocket — push-only (server→browser broadcasts)
+// ============================================================
+
 function connectToBackend(ws, attempt = 0) {
   const backend = new WebSocket(`ws://${HOST}:${PORT}/ws`);
 
   backend.on("open", () => {
     console.log(`Connected to Python backend at ${HOST}:${PORT}`);
 
-    // Forward Python server → browser
+    // Forward server pushes → browser
     backend.on("message", (data) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(data.toString());
-      }
-    });
-
-    // Forward browser → Python server
-    ws.on("message", (msg) => {
-      if (backend.readyState === WebSocket.OPEN) {
-        backend.send(msg.toString());
       }
     });
 

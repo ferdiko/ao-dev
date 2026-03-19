@@ -230,52 +230,52 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         this._pythonClient = PythonServerClient.getInstance();
                         this._pythonClient.ensureConnected(); // async but don't await
                     }
-                    // Request graph data, experiment detail (notes/log), and experiment list
+                    // Fetch initial data via HTTP and post to webview
                     if (this._pythonClient) {
-                        this._pythonClient.sendMessage({
-                            type: 'get_graph',
-                            session_id: sessionId
-                        });
-                        this._pythonClient.sendMessage({
-                            type: 'get_experiment_detail',
-                            session_id: sessionId
-                        });
-                        this._pythonClient.sendMessage({
-                            type: 'get_lessons_applied',
-                            session_id: sessionId
-                        });
-                        this._pythonClient.sendMessage({
-                            type: 'get_all_experiments'
-                        });
+                        this._pythonClient.httpGet(`/ui/graph/${sessionId}`).then(r => panel.webview.postMessage(r));
+                        this._pythonClient.httpGet(`/ui/experiment/${sessionId}`).then(r => panel.webview.postMessage(r));
+                        this._pythonClient.httpGet(`/ui/lessons-applied/${sessionId}`).then(r => panel.webview.postMessage(r));
+                        this._pythonClient.httpGet('/ui/experiments').then(r => panel.webview.postMessage(r));
                     } else {
                         console.error('[GraphTabProvider] Still no Python client available after getInstance()');
                     }
                     break;
                 case 'restart':
-                    if (this._pythonClient) {
-                        this._pythonClient.sendMessage({
-                            type: 'restart',
-                            session_id: sessionId
-                        });
-                    }
+                    this._pythonClient?.httpPost('/ui/restart', { session_id: sessionId });
                     break;
                 case 'erase':
-                    if (this._pythonClient) {
-                        this._pythonClient.sendMessage({
-                            type: 'erase',
-                            session_id: sessionId
-                        });
-                    }
+                    this._pythonClient?.httpPost('/ui/erase', { session_id: sessionId });
+                    break;
+                case 'edit_input':
+                    this._pythonClient?.httpPost('/ui/edit-input', {
+                        session_id: data.session_id, node_id: data.node_id, value: data.value,
+                    });
+                    break;
+                case 'edit_output':
+                    this._pythonClient?.httpPost('/ui/edit-output', {
+                        session_id: data.session_id, node_id: data.node_id, value: data.value,
+                    });
                     break;
                 case 'update_node':
-                case 'edit_input':
-                case 'edit_output':
+                    this._pythonClient?.httpPost('/ui/update-node', {
+                        session_id: data.session_id, node_id: data.node_id,
+                        field: data.field, value: data.value,
+                    });
+                    break;
                 case 'update_run_name':
+                    this._pythonClient?.httpPost('/ui/update-run-name', {
+                        session_id: data.session_id, run_name: data.run_name,
+                    });
+                    break;
                 case 'update_result':
+                    this._pythonClient?.httpPost('/ui/update-result', {
+                        session_id: data.session_id, result: data.result,
+                    });
+                    break;
                 case 'update_notes':
-                    if (this._pythonClient) {
-                        this._pythonClient.sendMessage(data);
-                    }
+                    this._pythonClient?.httpPost('/ui/update-notes', {
+                        session_id: data.session_id, notes: data.notes,
+                    });
                     break;
                 case 'navigateToCode':
                     const { filePath, line } = this._parseStackTrace(data.payload.stack_trace);
@@ -325,19 +325,10 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         if (sessionRef) {
                             sessionRef.current = data.sessionId;
                         }
-                        // Request graph data and detail for the new session
-                        this._pythonClient.sendMessage({
-                            type: 'get_graph',
-                            session_id: data.sessionId
-                        });
-                        this._pythonClient.sendMessage({
-                            type: 'get_experiment_detail',
-                            session_id: data.sessionId
-                        });
-                        this._pythonClient.sendMessage({
-                            type: 'get_lessons_applied',
-                            session_id: data.sessionId
-                        });
+                        // Fetch data for the new session via HTTP
+                        this._pythonClient.httpGet(`/ui/graph/${data.sessionId}`).then(r => panel.webview.postMessage(r));
+                        this._pythonClient.httpGet(`/ui/experiment/${data.sessionId}`).then(r => panel.webview.postMessage(r));
+                        this._pythonClient.httpGet(`/ui/lessons-applied/${data.sessionId}`).then(r => panel.webview.postMessage(r));
                         // Update tab title
                         if (data.experiment?.run_name) {
                             panel.title = `Graph: ${data.experiment.run_name}`;
@@ -441,6 +432,12 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                     break;
                 case 'get_lesson':
                     this._handleGetLesson(panel, data.lesson_id);
+                    break;
+                case 'get_sessions_for_lesson':
+                    if (data.lesson_id && this._pythonClient) {
+                        this._pythonClient.httpGet(`/ui/sessions-for-lesson/${data.lesson_id}`)
+                            .then(r => panel.webview.postMessage(r));
+                    }
                     break;
                 case 'navigateToRun':
                     // Navigate to a specific run's graph - handled by opening a new graph tab
@@ -568,11 +565,14 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                     });
                     break;
                 case 'edit_input':
+                    this._pythonClient?.httpPost('/ui/edit-input', {
+                        session_id: data.session_id, node_id: data.node_id, value: data.value,
+                    });
+                    break;
                 case 'edit_output':
-                    // Forward to Python server
-                    if (this._pythonClient) {
-                        this._pythonClient.sendMessage(data);
-                    }
+                    this._pythonClient?.httpPost('/ui/edit-output', {
+                        session_id: data.session_id, node_id: data.node_id, value: data.value,
+                    });
                     break;
                 case 'openDocument':
                     this._handleOpenDocument(data.payload, panel);

@@ -25,6 +25,7 @@ export const LessonsTabApp: React.FC = () => {
   const [lessonContentUpdate, setLessonContentUpdate] = useState<{
     id: string; content: string;
   } | null>(null);
+  const pendingAppliedResolvers = useRef<Map<string, (sessions: any[]) => void>>(new Map());
 
   // Track expanded folders so we can re-fetch them on lessons_refresh
   const expandedFoldersRef = useRef<Set<string>>(new Set(['']));
@@ -71,6 +72,15 @@ export const LessonsTabApp: React.FC = () => {
               id: message.lesson.id,
               content: message.lesson.content,
             });
+          }
+          break;
+        case 'sessions_for_lesson':
+          if (message.lesson_id) {
+            const resolve = pendingAppliedResolvers.current.get(message.lesson_id);
+            if (resolve) {
+              resolve(message.records || []);
+              pendingAppliedResolvers.current.delete(message.lesson_id);
+            }
           }
           break;
         case 'lesson_error':
@@ -225,6 +235,14 @@ export const LessonsTabApp: React.FC = () => {
           if (window.vscode) {
             window.vscode.postMessage({ type: 'get_lesson', lesson_id: id });
           }
+        }}
+        onFetchAppliedSessions={(lessonId: string) => {
+          return new Promise((resolve) => {
+            pendingAppliedResolvers.current.set(lessonId, resolve);
+            if (window.vscode) {
+              window.vscode.postMessage({ type: 'get_sessions_for_lesson', lesson_id: lessonId });
+            }
+          });
         }}
       />
     </div>

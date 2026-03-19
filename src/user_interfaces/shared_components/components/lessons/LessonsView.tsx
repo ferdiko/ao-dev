@@ -52,6 +52,8 @@ interface LessonsViewProps {
   folderResult?: { path: string; folders: FolderEntry[]; lessons: Lesson[]; lessonCount?: number } | null;
   /** Incoming lesson content update */
   lessonContentUpdate?: { id: string; content: string } | null;
+  /** Fetch sessions a lesson was applied to (lazy, per-lesson). Returns a Promise so each result is handled independently. */
+  onFetchAppliedSessions?: (lessonId: string) => Promise<{ sessionId: string; nodeId?: string; runName: string }[]>;
 }
 
 // Loading spinner component
@@ -104,6 +106,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
   apiKeyError,
   folderResult,
   lessonContentUpdate,
+  onFetchAppliedSessions,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
@@ -167,6 +170,33 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
       return next;
     });
   }, [lessonContentUpdate]);
+
+  // Fetch applied-session counts when new lessons become visible
+  const fetchedAppliedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!folderResult || !onFetchAppliedSessions) return;
+    for (const lesson of folderResult.lessons) {
+      if (!fetchedAppliedRef.current.has(lesson.id)) {
+        fetchedAppliedRef.current.add(lesson.id);
+        const lessonId = lesson.id;
+        onFetchAppliedSessions(lessonId).then(sessions => {
+          setFolderData((prev) => {
+            const next = new Map(prev);
+            for (const [path, data] of next) {
+              const idx = data.lessons.findIndex((l) => l.id === lessonId);
+              if (idx !== -1) {
+                const updatedLessons = [...data.lessons];
+                updatedLessons[idx] = { ...updatedLessons[idx], appliedTo: sessions };
+                next.set(path, { ...data, lessons: updatedLessons });
+                break;
+              }
+            }
+            return next;
+          });
+        });
+      }
+    }
+  }, [folderResult, onFetchAppliedSessions]);
 
   // Collect all loaded lessons for search
   const allLoadedLessons = useCallback((): Lesson[] => {

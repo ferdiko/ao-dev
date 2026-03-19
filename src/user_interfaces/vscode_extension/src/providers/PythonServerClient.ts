@@ -5,7 +5,6 @@ import WebSocket from 'ws';
 export class PythonServerClient {
     private static instance: PythonServerClient;
     private client: WebSocket | undefined;
-    private messageQueue: string[] = [];
     private messageCallbacks: ((msg: any) => void)[] = [];
     private connectionCallbacks: (() => void)[] = [];
     private serverHost: string;
@@ -47,6 +46,28 @@ export class PythonServerClient {
         }
     }
 
+    private get baseUrl(): string {
+        return `http://${this.serverHost}:${this.serverPort}`;
+    }
+
+    /** HTTP GET to the ao server. Returns parsed JSON. */
+    public async httpGet(path: string): Promise<any> {
+        const url = `${this.baseUrl}${path}`;
+        const resp = await fetch(url);
+        return resp.json();
+    }
+
+    /** HTTP POST to the ao server. Returns parsed JSON. */
+    public async httpPost(path: string, body: any = {}): Promise<any> {
+        const url = `${this.baseUrl}${path}`;
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        return resp.json();
+    }
+
     private connect() {
         console.log('[AO] connect() called');
         // Clean up existing client
@@ -60,10 +81,6 @@ export class PythonServerClient {
 
         this.client.on('open', () => {
             console.log('[AO] WebSocket connected');
-            // No handshake needed — the server sends session_id on connect
-            // Flush queued messages
-            this.messageQueue.forEach(msg => this.client!.send(msg));
-            this.messageQueue = [];
             // Notify connection listeners
             this.connectionCallbacks.forEach(callback => callback());
         });
@@ -94,20 +111,6 @@ export class PythonServerClient {
                 this.startServerIfNeeded();
             }
         });
-    }
-
-    public sendMessage(message: any) {
-        const msgStr = JSON.stringify(message);
-        if (this.client && this.client.readyState === WebSocket.OPEN) {
-            try {
-                this.client.send(msgStr);
-            } catch {
-                this.messageQueue.push(msgStr);
-            }
-        } else {
-            this.messageQueue.push(msgStr);
-            this.ensureConnected();
-        }
     }
 
     public startServerIfNeeded() {
@@ -156,7 +159,7 @@ export class PythonServerClient {
     }
 
     public stopServer() {
-        this.sendMessage({ type: "shutdown" });
+        this.httpPost('/ui/shutdown').catch(() => {});
     }
 
     public onMessage(cb: (msg: any) => void) {
@@ -185,6 +188,5 @@ export class PythonServerClient {
         }
         this.messageCallbacks = [];
         this.connectionCallbacks = [];
-        this.messageQueue = [];
     }
 }

@@ -80,13 +80,28 @@ async function playbookSseMutation(baseUrl: string, method: string, path: string
   return { error: 'SSE stream ended unexpectedly' };
 }
 
+async function httpGet(path: string): Promise<any> {
+  const base = `${window.location.protocol}//${window.location.hostname}:${window.location.port || '4000'}`;
+  const resp = await fetch(`${base}${path}`);
+  return resp.json();
+}
+
+async function httpPost(path: string, body: any = {}): Promise<any> {
+  const base = `${window.location.protocol}//${window.location.hostname}:${window.location.port || '4000'}`;
+  const resp = await fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return resp.json();
+}
+
 function App() {
-  const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5958";
   const [experiments, setExperiments] = useState<ProcessInfo[]>([]);
   const [hasMoreFinished, setHasMoreFinished] = useState(false);
   const [selectedExperiment, setSelectedExperiment] = useState<ProcessInfo | null>(null);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
-  const [ws, setWs] = useState<WebSocket | null>(null);
+  const [appliedLessonIds, setAppliedLessonIds] = useState<Set<string>>(new Set());
   const [showDetailsPanel, setShowDetailsPanel] = useState(false);
   // const [sidebarOpen, setSidebarOpen] = useState(true);
   const [editDialog, setEditDialog] = useState<{
@@ -233,17 +248,14 @@ function App() {
     } catch (e: any) { console.error('Failed to fetch lessons list:', e); }
   }, []);
 
-  // Create webapp MessageSender that always uses the current WebSocket from the ref
+  // Create webapp MessageSender that routes to HTTP or window events
   const messageSender: MessageSender = {
     send: (message: any) => {
       if (message.type === "showNodeEditModal") {
-        // Handle showNodeEditModal by dispatching window event (same as VS Code)
         window.dispatchEvent(new CustomEvent('show-node-edit-modal', {
           detail: message.payload
         }));
       } else if (message.type === "openNodeEditorTab") {
-        // Handle openNodeEditorTab by dispatching window event to show inline modal
-        // This is sent by CustomNode when clicking "Edit input" or "Edit output"
         window.dispatchEvent(new CustomEvent('show-node-edit-modal', {
           detail: {
             nodeId: message.nodeId,
@@ -256,8 +268,10 @@ function App() {
         }));
       } else if (message.type === "navigateToCode") {
         // Code navigation not available in webapp
-      } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify(message));
+      } else if (message.type === "restart") {
+        httpPost('/ui/restart', { session_id: message.session_id });
+      } else if (message.type === "erase") {
+        httpPost('/ui/erase', { session_id: message.session_id });
       }
     },
   };
@@ -273,16 +287,17 @@ function App() {
     })();
     
     const socket = new WebSocket(baseWsUrl);
-    setWs(socket);
-    wsRef.current = socket; // Keep ref in sync
+    wsRef.current = socket;
 
     socket.onopen = () => {
       console.log("Connected to backend");
-      // Note: The WebSocket proxy (server.js) automatically sends the handshake
-      // with role: "ui". We should NOT send our own handshake here.
-
-      // Request the experiment list (lessons are fetched directly from ao-playbook)
-      socket.send(JSON.stringify({ type: "get_all_experiments" }));
+      // Fetch initial experiment list via HTTP
+      httpGet('/ui/experiments').then(msg => {
+        if (msg.experiments) {
+          setExperiments(msg.experiments as ProcessInfo[]);
+          setHasMoreFinished(!!msg.has_more);
+        }
+      });
     };
 
     socket.onmessage = (event: MessageEvent) => {
@@ -325,29 +340,6 @@ function App() {
               return updated || current;
             });
           }
-          break;
-
-        case "more_experiments":
-          if (msg.experiments) {
-            setExperiments(prev => {
-              const existingIds = new Set(prev.map(p => p.session_id));
-              const newExperiments = (msg.experiments || []).filter(
-                (e: ProcessInfo) => !existingIds.has(e.session_id)
-              );
-              return [...prev, ...newExperiments];
-            });
-            setHasMoreFinished(!!(msg as any).has_more);
-          }
-          break;
-
-        case "experiment_detail":
-          // Update selected experiment with notes/log fetched on demand
-          setSelectedExperiment((current) => {
-            if (current && (msg as any).session_id === current.session_id) {
-              return { ...current, notes: (msg as any).notes, log: (msg as any).log };
-            }
-            return current;
-          });
           break;
 
         case "graph_update":
@@ -415,55 +407,56 @@ function App() {
     field: string,
     value: string,
     sessionId?: string,
-    attachments?: any
+    _attachments?: any
   ) => {
-    if (selectedExperiment && ws) {
-      const currentSessionId = sessionId || selectedExperiment.session_id;
-      const baseMsg = {
-        session_id: currentSessionId,
-        node_id: nodeId,
-        value,
-        ...(attachments && { attachments }),
-      };
+    if (!selectedExperiment) return;
+    const sid = sessionId || selectedExperiment.session_id;
 
-      if (field === "input") {
-        ws.send(JSON.stringify({ type: "edit_input", ...baseMsg }));
-      } else if (field === "output") {
-        ws.send(JSON.stringify({ type: "edit_output", ...baseMsg }));
-      } else {
-        ws.send(
-          JSON.stringify({
-            type: "updateNode",
-            session_id: currentSessionId,
-            nodeId,
-            field,
-            value,
-            ...(attachments && { attachments }),
-          })
-        );
-      }
+    if (field === "input") {
+      httpPost('/ui/edit-input', { session_id: sid, node_id: nodeId, value });
+    } else if (field === "output") {
+      httpPost('/ui/edit-output', { session_id: sid, node_id: nodeId, value });
+    } else {
+      httpPost('/ui/update-node', { session_id: sid, node_id: nodeId, field, value });
     }
   };
 
   const handleExperimentClick = (experiment: ProcessInfo) => {
-    // Clear graph data when switching experiments to avoid showing stale data
     setGraphData(null);
+    setAppliedLessonIds(new Set());
     setSelectedExperiment(experiment);
     setShowLessons(false);
     setShowAppliedLessons(false);
 
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "get_graph", session_id: experiment.session_id }));
-      // Fetch notes/log on demand (not included in experiment list)
-      ws.send(JSON.stringify({ type: "get_experiment_detail", session_id: experiment.session_id }));
-    }
+    httpGet(`/ui/graph/${experiment.session_id}`).then(msg => {
+      if (msg.payload) setGraphData(msg.payload);
+    });
+    httpGet(`/ui/experiment/${experiment.session_id}`).then(msg => {
+      setSelectedExperiment(prev =>
+        prev && msg.session_id === prev.session_id
+          ? { ...prev, notes: msg.notes, log: msg.log }
+          : prev
+      );
+    });
+    httpGet(`/ui/lessons-applied/${experiment.session_id}`).then(msg => {
+      const ids = new Set<string>((msg.records || []).map((r: any) => r.lesson_id));
+      setAppliedLessonIds(ids);
+    });
   };
 
   const handleLoadMoreFinished = () => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      // Offset is total experiments loaded (DB query includes both running and finished)
-      ws.send(JSON.stringify({ type: "get_more_experiments", offset: experiments.length }));
-    }
+    httpGet(`/ui/experiments/more?offset=${experiments.length}`).then(msg => {
+      if (msg.experiments) {
+        setExperiments(prev => {
+          const existingIds = new Set(prev.map(p => p.session_id));
+          const newExps = (msg.experiments || []).filter(
+            (e: ProcessInfo) => !existingIds.has(e.session_id)
+          );
+          return [...prev, ...newExps];
+        });
+        setHasMoreFinished(!!msg.has_more);
+      }
+    });
   };
 
   const handleLessonsClick = () => {
@@ -540,9 +533,7 @@ function App() {
         )}
         {showAppliedLessons && selectedExperiment ? (
           <AppliedLessonsView
-            lessons={allLessons.filter((l) =>
-              l.appliedTo?.some((a) => a.sessionId === selectedExperiment.session_id)
-            )}
+            lessons={allLessons.filter((l) => appliedLessonIds.has(l.id))}
             isDarkTheme={isDarkTheme}
             onBack={() => setShowAppliedLessons(false)}
             onFetchLessonContent={fetchLessonContent}
@@ -613,17 +604,21 @@ function App() {
                 else { refreshExpandedFolders(); }
               } catch (e: any) { handleLessonError(e.message); }
             }}
-            onNavigateToRun={(sessionId: string, nodeId?: string) => {
+            onNavigateToRun={(sessionId: string, _nodeId?: string) => {
               const experiment = experiments.find(e => e.session_id === sessionId);
               if (experiment) {
                 setShowLessons(false);
                 setSelectedExperiment(experiment);
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({ type: "get_graph", session_id: sessionId }));
-                }
+                httpGet(`/ui/graph/${sessionId}`).then(msg => {
+                  if (msg.payload) setGraphData(msg.payload);
+                });
               }
             }}
             onFetchLessonContent={fetchLessonContent}
+            onFetchAppliedSessions={async (lessonId: string) => {
+              const msg = await httpGet(`/ui/sessions-for-lesson/${lessonId}`);
+              return msg.records || [];
+            }}
           />
         ) : selectedExperiment && graphData ? (
           <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "auto", position: "relative" }}>
@@ -633,6 +628,7 @@ function App() {
               isDarkTheme={isDarkTheme}
               sessionId={selectedExperiment.session_id}
               lessons={allLessons}
+              lessonsAppliedCount={appliedLessonIds.size}
               onNavigateToLessons={() => setShowLessons(true)}
               onNavigateToAppliedLessons={() => setShowAppliedLessons(true)}
             />

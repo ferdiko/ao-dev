@@ -18,9 +18,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     constructor(private readonly _extensionUri: vscode.Uri, private readonly _context: vscode.ExtensionContext) {
         // Set up window focus detection to request experiments when VS Code regains focus
         this._windowStateListener = vscode.window.onDidChangeWindowState((state) => {
-            if (state.focused && this._pythonClient) {
+            if (state.focused && this._pythonClient && this._view) {
                 // Window regained focus - request fresh experiment list from server
-                this._pythonClient.sendMessage({ type: 'get_all_experiments' });
+                this._pythonClient.httpGet('/ui/experiments').then(r => this._view?.webview.postMessage(r));
             }
         });
     }
@@ -80,7 +80,7 @@ _context: vscode.WebviewViewResolveContext,
         // Request fresh experiment list when the webview becomes visible
         webviewView.onDidChangeVisibility(() => {
             if (webviewView.visible && this._pythonClient) {
-                this._pythonClient.sendMessage({ type: 'get_all_experiments' });
+                this._pythonClient.httpGet('/ui/experiments').then(r => this._view?.webview.postMessage(r));
             }
         });
 
@@ -110,22 +110,45 @@ _context: vscode.WebviewViewResolveContext,
             switch (data.type) {
                 case 'restart':
                     if (!data.session_id) {
-                        console.error('Restart message missing session_id! Not forwarding to Python server.');
+                        console.error('Restart message missing session_id!');
                         return;
                     }
-                    this._pythonClient?.sendMessage({ type: 'restart', session_id: data.session_id });
+                    this._pythonClient?.httpPost('/ui/restart', { session_id: data.session_id });
                     break;
                 case 'open_log_tab_side_by_side':
                     console.warn('NotesLogTabProvider not available');
                     break;
                 case 'update_node':
+                    this._pythonClient?.httpPost('/ui/update-node', {
+                        session_id: data.session_id, node_id: data.node_id,
+                        field: data.field, value: data.value,
+                    });
+                    break;
                 case 'edit_input':
+                    this._pythonClient?.httpPost('/ui/edit-input', {
+                        session_id: data.session_id, node_id: data.node_id, value: data.value,
+                    });
+                    break;
                 case 'edit_output':
+                    this._pythonClient?.httpPost('/ui/edit-output', {
+                        session_id: data.session_id, node_id: data.node_id, value: data.value,
+                    });
+                    break;
                 case 'get_graph':
+                    if (data.session_id) {
+                        this._pythonClient?.httpGet(`/ui/graph/${data.session_id}`).then(r => this._view?.webview.postMessage(r));
+                    }
+                    break;
                 case 'erase':
+                    this._pythonClient?.httpPost('/ui/erase', { session_id: data.session_id });
+                    break;
                 case 'get_more_experiments':
+                    this._pythonClient?.httpGet(`/ui/experiments/more?offset=${data.offset || 0}`).then(r => this._view?.webview.postMessage(r));
+                    break;
                 case 'get_experiment_detail':
-                    this._pythonClient?.sendMessage(data);
+                    if (data.session_id) {
+                        this._pythonClient?.httpGet(`/ui/experiment/${data.session_id}`).then(r => this._view?.webview.postMessage(r));
+                    }
                     break;
                 case 'ready':
                     // Webview is ready - now connect to the Python server and set up message forwarding
@@ -134,7 +157,7 @@ _context: vscode.WebviewViewResolveContext,
                         this._pythonClient.ensureConnected(); // async but don't await - webview is ready
                         // Request experiment list on every connection (including reconnections after server restart)
                         this._pythonClient.onConnection(() => {
-                            this._pythonClient?.sendMessage({ type: 'get_all_experiments' });
+                            this._pythonClient?.httpGet('/ui/experiments').then(r => this._view?.webview.postMessage(r));
                         });
                         // Create message handler and store reference for cleanup
                         this._messageHandler = (msg) => {
@@ -179,7 +202,7 @@ _context: vscode.WebviewViewResolveContext,
 
                     // Request experiments after Python client is set up
                     if (this._pythonClient) {
-                        this._pythonClient.sendMessage({ type: 'get_all_experiments' });
+                        this._pythonClient.httpGet('/ui/experiments').then(r => this._view?.webview.postMessage(r));
                     }
                     break;
                 case 'navigateToCode':
@@ -222,7 +245,7 @@ _context: vscode.WebviewViewResolveContext,
                 case 'requestExperimentRefresh':
                     // ExperimentsView has mounted and is ready to display data - request experiment list
                     if (this._pythonClient) {
-                        this._pythonClient.sendMessage({ type: 'get_all_experiments' });
+                        this._pythonClient.httpGet('/ui/experiments').then(r => this._view?.webview.postMessage(r));
                     }
                     break;
             }

@@ -6,6 +6,7 @@ interface GraphHeaderProps {
   isDarkTheme: boolean;
   sessionId?: string;
   lessons?: Lesson[];
+  lessonsAppliedCount?: number;
   onNavigateToLessons?: () => void;
   onNavigateToAppliedLessons?: () => void;
 }
@@ -15,6 +16,7 @@ export const GraphHeader: React.FC<GraphHeaderProps> = ({
   isDarkTheme,
   sessionId,
   lessons = [],
+  lessonsAppliedCount,
   onNavigateToLessons,
   onNavigateToAppliedLessons,
 }) => {
@@ -23,10 +25,10 @@ export const GraphHeader: React.FC<GraphHeaderProps> = ({
     ? lessons.filter((lesson) => lesson.extractedFrom?.sessionId === sessionId).length
     : 0;
 
-  // Count lessons applied to this graph
-  const lessonsAppliedTo = sessionId
+  // Count lessons applied to this graph (from server, or fallback to filtering lessons)
+  const lessonsAppliedTo = lessonsAppliedCount ?? (sessionId
     ? lessons.filter((lesson) => lesson.appliedTo?.some((app) => app.sessionId === sessionId)).length
-    : 0;
+    : 0);
 
   return (
     <div
