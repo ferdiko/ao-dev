@@ -276,8 +276,25 @@ function App() {
     },
   };
 
+  const fetchExperiments = useCallback(() => {
+    httpGet('/ui/experiments').then(msg => {
+      if (msg.experiments) {
+        setExperiments(msg.experiments as ProcessInfo[]);
+        setHasMoreFinished(!!msg.has_more);
+      }
+    });
+  }, []);
+
+  // Re-fetch experiments when tab becomes visible (handles backgrounded tabs)
   useEffect(() => {
-    // Permitir definir la URL del WebSocket por variable de entorno
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') fetchExperiments();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [fetchExperiments]);
+
+  useEffect(() => {
     const baseWsUrl = import.meta.env.VITE_APP_WS_URL || (() => {
       const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const wsHost = window.location.hostname === "localhost"
@@ -285,19 +302,13 @@ function App() {
         : window.location.host;
       return `${wsProtocol}//${wsHost}/ws`;
     })();
-    
+
     const socket = new WebSocket(baseWsUrl);
     wsRef.current = socket;
 
     socket.onopen = () => {
       console.log("Connected to backend");
-      // Fetch initial experiment list via HTTP
-      httpGet('/ui/experiments').then(msg => {
-        if (msg.experiments) {
-          setExperiments(msg.experiments as ProcessInfo[]);
-          setHasMoreFinished(!!msg.has_more);
-        }
-      });
+      fetchExperiments();
     };
 
     socket.onmessage = (event: MessageEvent) => {

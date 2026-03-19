@@ -73,6 +73,7 @@ async def runner_events(session_id: str, request: Request):
 async def ui_websocket(websocket: WebSocket):
     """Push-only WebSocket for server→UI broadcasts (graph updates, experiment list, etc.)."""
     state: ServerState = websocket.app.state.server_state
+    # Accept UIs request to start a WebSocket connection
     await websocket.accept()
     state.ui_websockets.add(websocket)
 
