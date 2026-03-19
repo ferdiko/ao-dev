@@ -23,6 +23,7 @@ from ao.common.constants import (
 )
 from ao.cli.ao_server import launch_daemon_server
 from ao.common.project import ensure_project_configured
+from ao.server.database_manager import DB
 from ao.runner.context_manager import set_parent_session_id
 from ao.common.utils import set_server_url, http_post
 from ao.runner.monkey_patching.apply_monkey_patches import apply_all_monkey_patches
@@ -366,6 +367,7 @@ class AgentRunner:
             if self.restart_event.is_set():
                 logger.info("[AgentRunner] Restart requested, rerunning script...")
                 self.restart_event.clear()
+                DB._occurrence_counters.clear()
 
         return exit_code
 

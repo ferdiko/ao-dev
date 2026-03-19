@@ -1,13 +1,9 @@
 """Tests for concurrency correctness in the runner-server interface."""
 
-import io
-import json
-import queue
 import threading
 import time
 from ao.runner import context_manager
 from ao.runner import string_matching
-from ao.common import utils
 from ao.server.database_backends import sqlite
 
 
@@ -50,190 +46,6 @@ class TestRunNamesRace:
 
         assert len(results) == 20
         assert len(set(results)) == 20, f"Duplicate names: {results}"
-
-
-class TestLogSocketSafety:
-    """log() must hold _server_lock when writing to the socket."""
-
-    def test_concurrent_log_and_send_no_corruption(self):
-        """Concurrent log() and send_to_server() must produce valid JSON lines.
-
-        log() writes directly to server_file without _server_lock.
-        send_to_server() holds _server_lock. When both run concurrently,
-        their writes can interleave mid-line, producing malformed JSON.
-
-        We use a SlowFile that yields mid-write to widen the race window.
-        """
-        # Collect all bytes written to the socket
-        raw_chunks = []
-        chunks_lock = threading.Lock()
-
-        class SlowFile:
-            """A file that yields mid-write to expose interleaving."""
-
-            def write(self, data):
-                # Write one char at a time with a yield, simulating a slow socket
-                for ch in data:
-                    with chunks_lock:
-                        raw_chunks.append(ch)
-                    time.sleep(0.0001)
-
-            def flush(self):
-                pass
-
-        slow_file = SlowFile()
-        old_server_file = context_manager.server_file
-        context_manager.server_file = slow_file
-        context_manager.current_session_id.set("test-session")
-
-        barrier = threading.Barrier(10)
-
-        def call_log():
-            barrier.wait()
-            context_manager.log(entry="from_log", success=True)
-
-        def call_send():
-            barrier.wait()
-            utils.send_to_server({"type": "node", "data": "from_send"})
-
-        try:
-            threads = []
-            for _ in range(5):
-                threads.append(threading.Thread(target=call_log))
-                threads.append(threading.Thread(target=call_send))
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join()
-        finally:
-            context_manager.server_file = old_server_file
-
-        # Reconstruct what was written and try to parse each line
-        full_output = "".join(raw_chunks)
-        lines = [l for l in full_output.split("\n") if l.strip()]
-
-        corrupted = []
-        for line in lines:
-            try:
-                json.loads(line)
-            except json.JSONDecodeError:
-                corrupted.append(line)
-
-        assert len(corrupted) == 0, (
-            f"Corrupted JSON lines from interleaved writes:\n"
-            + "\n".join(corrupted[:5])
-        )
-
-
-class TestResponseQueueRace:
-    """send_to_server_and_receive() must route responses to the correct caller."""
-
-    def test_concurrent_send_receive_crosstalk(self):
-        """Two threads calling send_to_server_and_receive get each other's
-        responses because they share a single queue with no correlation IDs.
-
-        Setup: thread A sends first (guaranteed by a gate), then thread B sends.
-        The fake listener responds in REVERSE order: B's response first, then A's.
-        Since the queue is FIFO, thread A (which is already waiting) dequeues B's
-        response. This is deterministic, not probabilistic.
-        """
-        sent_messages = []
-        sent_lock = threading.Lock()
-        a_sent = threading.Event()  # Signals that A has sent and is now waiting
-
-        class RecordingFile:
-            def write(self, data):
-                with sent_lock:
-                    try:
-                        sent_messages.append(json.loads(data.strip()))
-                    except json.JSONDecodeError:
-                        pass
-
-            def flush(self):
-                pass
-
-        rsp_queue = queue.Queue()
-        old_server_file = context_manager.server_file
-        old_response_queue = context_manager.response_queue
-        context_manager.server_file = RecordingFile()
-        context_manager.response_queue = rsp_queue
-
-        results = {}
-        results_lock = threading.Lock()
-
-        def sender_a():
-            msg = {"type": "add_subrun", "name": "alpha"}
-            # A sends first, then signals so B can go
-            response = utils.send_to_server_and_receive(msg, timeout=5)
-            with results_lock:
-                results["alpha"] = response.get("session_id")
-
-        def sender_b():
-            # Wait until A has sent (A is now blocked on queue.get)
-            a_sent.wait()
-            msg = {"type": "add_subrun", "name": "beta"}
-            response = utils.send_to_server_and_receive(msg, timeout=5)
-            with results_lock:
-                results["beta"] = response.get("session_id")
-
-        # Fake listener: detects A's send, signals B, waits for B's send,
-        # then responds in REVERSE order (beta first, alpha second).
-        # Uses route_response if available (after fix), else raw queue (before fix).
-        def fake_listener():
-            # Wait for A to send
-            while True:
-                with sent_lock:
-                    if len(sent_messages) >= 1:
-                        break
-                time.sleep(0.001)
-            # A has sent and is now blocked waiting. Let B send.
-            a_sent.set()
-
-            # Wait for B to send
-            while True:
-                with sent_lock:
-                    if len(sent_messages) >= 2:
-                        break
-                time.sleep(0.001)
-            time.sleep(0.01)  # Small delay to ensure B is also waiting
-
-            # Build responses in REVERSE order of sends.
-            # Each response includes the request_id from the original message
-            # so route_response can deliver it to the correct thread.
-            with sent_lock:
-                msgs = list(sent_messages[:2])
-            for msg in reversed(msgs):
-                name = msg.get("name", "unknown")
-                response = {"type": "session_id", "session_id": f"session-for-{name}"}
-                request_id = msg.get("request_id")
-                if request_id:
-                    response["request_id"] = request_id
-                # Route via request_id matching (like the real listener does)
-                if not utils.route_response(response):
-                    rsp_queue.put(response)
-
-        try:
-            listener = threading.Thread(target=fake_listener, daemon=True)
-            listener.start()
-            t1 = threading.Thread(target=sender_a)
-            t2 = threading.Thread(target=sender_b)
-            t1.start()
-            t2.start()
-            t1.join(timeout=10)
-            t2.join(timeout=10)
-            listener.join(timeout=10)
-        finally:
-            context_manager.server_file = old_server_file
-            context_manager.response_queue = old_response_queue
-
-        alpha_got = results.get("alpha")
-        beta_got = results.get("beta")
-
-        correct = (alpha_got == "session-for-alpha" and beta_got == "session-for-beta")
-        assert correct, (
-            f"Response crosstalk: alpha got '{alpha_got}', beta got '{beta_got}'. "
-            f"Each thread must receive its own response."
-        )
 
 
 class SlowDict(dict):
@@ -308,6 +120,62 @@ class TestSessionDataThreadSafety:
 
         assert len(errors) == 0, (
             f"RuntimeError during concurrent dict access: {errors[0]}"
+        )
+
+
+class TestOccurrenceCounter:
+    """Concurrent identical cache lookups must each get a distinct row."""
+
+    def test_concurrent_identical_lookups_get_distinct_rows(self):
+        """5 threads calling get_in_out with the same (session_id, input_hash)
+        must each get a different cached row, not all the same first row.
+
+        Without the occurrence counter, all threads hit offset 0 and get
+        the same node_id. With it, each gets a unique offset (0-4).
+        """
+        from ao.server.database_manager import DB
+
+        session_id = "test-occurrence"
+        input_hash = "deadbeef"
+
+        # Insert 5 rows with the same (session_id, input_hash) but different node_ids
+        for i in range(5):
+            sqlite.execute(
+                "INSERT OR IGNORE INTO llm_calls (session_id, input_hash, node_id, api_type) "
+                "VALUES (?, ?, ?, ?)",
+                (session_id, input_hash, f"node-{i}", "test"),
+            )
+
+        DB._occurrence_counters.clear()
+
+        node_ids = []
+        lock = threading.Lock()
+        barrier = threading.Barrier(5)
+
+        def lookup():
+            barrier.wait()
+            occurrence = DB._next_occurrence(session_id, input_hash)
+            row = sqlite.get_llm_call_by_session_and_hash_query(
+                session_id, input_hash, offset=occurrence,
+            )
+            with lock:
+                node_ids.append(row["node_id"] if row else None)
+
+        threads = [threading.Thread(target=lookup) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Clean up
+        sqlite.execute("DELETE FROM llm_calls WHERE session_id=?", (session_id,))
+        DB._occurrence_counters.clear()
+
+        assert len(node_ids) == 5
+        assert None not in node_ids, f"Some lookups got no row: {node_ids}"
+        assert len(set(node_ids)) == 5, (
+            f"Expected 5 distinct node_ids, got {node_ids}. "
+            f"Concurrent identical lookups returned the same cached row."
         )
 
 

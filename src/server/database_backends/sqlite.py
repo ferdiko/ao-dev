@@ -409,11 +409,11 @@ def get_parent_session_id_query(session_id):
 
 
 # LLM calls queries
-def get_llm_call_by_session_and_hash_query(session_id, input_hash):
-    """Get LLM call by session_id and input_hash."""
+def get_llm_call_by_session_and_hash_query(session_id, input_hash, offset=0):
+    """Get LLM call by session_id and input_hash. offset selects the Nth match."""
     return query_one(
-        "SELECT node_id, input_overwrite, output FROM llm_calls WHERE session_id=? AND input_hash=?",
-        (session_id, input_hash),
+        "SELECT node_id, input_overwrite, output FROM llm_calls WHERE session_id=? AND input_hash=? ORDER BY rowid LIMIT 1 OFFSET ?",
+        (session_id, input_hash, offset),
     )
 
 
