@@ -680,16 +680,17 @@ def get_llm_call_full_query(session_id, node_id):
 # ============================================================
 
 
-def get_all_lessons_applied_query():
-    """Get all lesson application records with run names for merging with ao-playbook data."""
+def get_lessons_applied_for_session_query(session_id):
+    """Get lesson application records for a specific session."""
     return query_all(
         """
         SELECT la.lesson_id, la.session_id, la.node_id, e.name as run_name
         FROM lessons_applied la
         LEFT JOIN experiments e ON la.session_id = e.session_id
+        WHERE la.session_id = ?
         ORDER BY la.applied_at DESC
         """,
-        (),
+        (session_id,),
     )
 
 

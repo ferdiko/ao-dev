@@ -133,7 +133,18 @@ async def _handle_ws_message(ws: WebSocket, state: ServerState, msg: dict) -> No
             await ws.send_text(json.dumps(result))
 
     elif msg_type == "get_lessons_applied":
-        result = ui_routes.get_lessons_applied(state)
+        if not session_id:
+            logger.error("get_lessons_applied requires session_id")
+            return
+        result = ui_routes.get_lessons_applied(session_id, state)
+        await ws.send_text(json.dumps(result))
+
+    elif msg_type == "get_sessions_for_lesson":
+        lesson_id = msg.get("lesson_id")
+        if not lesson_id:
+            logger.error("get_sessions_for_lesson requires lesson_id")
+            return
+        result = ui_routes.get_sessions_for_lesson(lesson_id, state)
         await ws.send_text(json.dumps(result))
 
     # Mutations: call REST endpoint (broadcasting handled internally via schedule_*)

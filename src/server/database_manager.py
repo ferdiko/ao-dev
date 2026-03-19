@@ -501,9 +501,9 @@ class DatabaseManager:
     # Lessons Applied operations (tracks which ao-playbook lessons were applied)
     # ============================================================
 
-    def get_all_lessons_applied(self):
-        """Get all lesson application records for merging with ao-playbook lesson data."""
-        rows = self.backend.get_all_lessons_applied_query()
+    def get_lessons_applied_for_session(self, session_id):
+        """Get lesson application records for a specific session."""
+        rows = self.backend.get_lessons_applied_for_session_query(session_id)
         return [
             {
                 "lesson_id": row["lesson_id"],
@@ -514,7 +514,7 @@ class DatabaseManager:
             for row in rows
         ]
 
-    def get_lessons_applied_for_lesson(self, lesson_id):
+    def get_sessions_for_lesson(self, lesson_id):
         rows = self.backend.get_lessons_applied_query(lesson_id)
         return [
             {

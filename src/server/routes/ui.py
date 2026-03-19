@@ -123,10 +123,16 @@ def get_experiment_detail(session_id: str, state: ServerState = Depends(get_stat
     return {"type": "experiment_detail", "session_id": session_id, "notes": notes, "log": log}
 
 
-@router.get("/lessons-applied")
-def get_lessons_applied(state: ServerState = Depends(get_state)):
-    records = DB.get_all_lessons_applied()
-    return {"type": "lessons_applied", "records": records}
+@router.get("/lessons-applied/{session_id}")
+def get_lessons_applied(session_id: str, state: ServerState = Depends(get_state)):
+    records = DB.get_lessons_applied_for_session(session_id)
+    return {"type": "lessons_applied", "session_id": session_id, "records": records}
+
+
+@router.get("/sessions-for-lesson/{lesson_id}")
+def get_sessions_for_lesson(lesson_id: str, state: ServerState = Depends(get_state)):
+    records = DB.get_sessions_for_lesson(lesson_id)
+    return {"type": "sessions_for_lesson", "lesson_id": lesson_id, "records": records}
 
 
 @router.post("/edit-input")
