@@ -135,7 +135,8 @@ export class PythonServerClient {
     }
 
     private getPythonPath(): string {
-        const configPath = require('path').join(require('os').homedir(), '.ao', 'config.yaml');
+        const aoHome = process.env.AO_HOME || require('path').join(require('os').homedir(), '.ao');
+        const configPath = process.env.AO_CONFIG || require('path').join(aoHome, 'config.yaml');
         try {
             const fs = require('fs');
             if (fs.existsSync(configPath)) {
