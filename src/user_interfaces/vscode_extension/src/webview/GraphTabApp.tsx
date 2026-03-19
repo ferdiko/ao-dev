@@ -25,6 +25,7 @@ const GraphTabAppInner: React.FC = () => {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [appliedLessonIds, setAppliedLessonIds] = useState<Set<string>>(new Set());
   const [showAppliedLessons, setShowAppliedLessons] = useState(false);
   const [lessonContentUpdate, setLessonContentUpdate] = useState<{ id: string; content: string } | null>(null);
   const isDarkTheme = useIsVsCodeDarkTheme();
@@ -117,6 +118,13 @@ const GraphTabAppInner: React.FC = () => {
           // Update lessons for header stats
           setLessons(message.lessons || []);
           break;
+        case 'lessons_applied':
+          // Track lesson IDs applied to this session
+          if (message.session_id === sessionId) {
+            const ids = new Set<string>((message.records || []).map((r: any) => r.lesson_id));
+            setAppliedLessonIds(ids);
+          }
+          break;
         case 'lesson_content':
           // Update lesson content for applied lessons view
           if (message.lesson) {
@@ -195,9 +203,7 @@ const GraphTabAppInner: React.FC = () => {
     }
   };
 
-  const appliedLessons = sessionId
-    ? lessons.filter((l) => l.appliedTo?.some((a) => a.sessionId === sessionId))
-    : [];
+  const appliedLessons = lessons.filter((l) => appliedLessonIds.has(l.id));
 
   return (
     <div
@@ -234,6 +240,7 @@ const GraphTabAppInner: React.FC = () => {
                 isDarkTheme={isDarkTheme}
                 sessionId={sessionId || undefined}
                 lessons={lessons}
+                lessonsAppliedCount={appliedLessonIds.size}
                 onNavigateToLessons={handleNavigateToLessons}
                 onNavigateToAppliedLessons={() => setShowAppliedLessons(true)}
               />

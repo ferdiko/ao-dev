@@ -15,7 +15,7 @@ from ao.common.constants import (
     COMPILED_MODEL_NAME_PATTERNS,
     INVALID_LABEL_CHARS,
 )
-from ao.common.utils import send_to_server
+from ao.common.utils import http_post
 from ao.common.logger import logger
 
 
@@ -364,6 +364,6 @@ def send_graph_node_and_edges(
     }
 
     try:
-        send_to_server(node_msg)
+        http_post("/runner/add-node", node_msg)
     except Exception as e:
         logger.error(f"Failed to send add_node: {e}")

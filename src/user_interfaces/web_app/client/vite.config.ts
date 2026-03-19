@@ -21,6 +21,11 @@ export default defineConfig({
     fs: {
       // Allow serving files from the shared_components directory
       allow: ['..']
+    },
+    proxy: {
+      '/ui': 'http://127.0.0.1:4000',
+      '/health': 'http://127.0.0.1:4000',
+      '/ws': { target: 'ws://127.0.0.1:4000', ws: true },
     }
   }
 })

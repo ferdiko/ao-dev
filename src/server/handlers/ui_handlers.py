@@ -1,80 +1,44 @@
-"""Handlers for messages received from the UI (VS Code extension webview)."""
+"""Handlers for messages received from the UI.
 
-import json
-import socket
+These operate on ServerState and have no socket dependencies.
+Broadcasting is handled by the route/events layer after calling these handlers.
+"""
 
 from ao.server.database_manager import DB
-from ao.server.handlers.handler_utils import send_json, logger
+from ao.server.handlers.handler_utils import logger
 
 
-def handle_restart_message(server, msg: dict) -> None:
-    """Handle restart request from UI."""
-    session_id = msg.get("session_id")
-    parent_session_id = DB.get_parent_session_id(session_id)
-    if not parent_session_id:
-        logger.error("Restart message missing session_id. Ignoring.")
-        return
-
-    # Clear UI state (updates both memory and database atomically)
-    server._clear_session_ui(session_id)
-
-    session = server.sessions.get(parent_session_id)
-
-    if session and session.status == "running":
-        # Send graceful restart signal to existing session if still connected
-        if session.shim_conn:
-            restart_msg = {"type": "restart", "session_id": parent_session_id}
-            logger.debug(f"Session running...Sending restart for session_id: {parent_session_id}")
-            try:
-                send_json(session.shim_conn, restart_msg)
-            except Exception as e:
-                logger.error(f"Error sending restart: {e}")
-            return
-        else:
-            logger.warning(f"No shim_conn for session_id: {parent_session_id}")
-    elif session and session.status == "finished":
-        # Rerun for finished session: spawn new process with same session_id
-        server._spawn_session_process(parent_session_id, session_id)
-
-
-def handle_edit_input(server, msg: dict) -> None:
+def handle_edit_input(state, msg: dict) -> None:
     """Handle input edit from UI."""
     session_id = msg["session_id"]
     node_id = msg["node_id"]
     new_input = msg["value"]
 
-    logger.info(f"[EditIO] edit input msg keys {[*msg.keys()]}")
-    logger.info(f"[EditIO] edit input msg: {msg}")
-
     DB.set_input_overwrite(session_id, node_id, new_input)
-    if session_id in server.session_graphs:
-        for node in server.session_graphs[session_id]["nodes"]:
+    if session_id in state.session_graphs:
+        for node in state.session_graphs[session_id]["nodes"]:
             if node["id"] == node_id:
                 node["input"] = new_input
                 break
-        DB.update_graph_topology(session_id, server.session_graphs[session_id])
-        server.broadcast_graph_update(session_id)
+        DB.update_graph_topology(session_id, state.session_graphs[session_id])
 
 
-def handle_edit_output(server, msg: dict) -> None:
+def handle_edit_output(state, msg: dict) -> None:
     """Handle output edit from UI."""
     session_id = msg["session_id"]
     node_id = msg["node_id"]
     new_output = msg["value"]
 
-    logger.info(f"[EditIO] edit output msg: {msg}")
-
     DB.set_output_overwrite(session_id, node_id, new_output)
-    if session_id in server.session_graphs:
-        for node in server.session_graphs[session_id]["nodes"]:
+    if session_id in state.session_graphs:
+        for node in state.session_graphs[session_id]["nodes"]:
             if node["id"] == node_id:
                 node["output"] = new_output
                 break
-        DB.update_graph_topology(session_id, server.session_graphs[session_id])
-        server.broadcast_graph_update(session_id)
+        DB.update_graph_topology(session_id, state.session_graphs[session_id])
 
 
-def handle_update_node(server, msg: dict) -> None:
+def handle_update_node(state, msg: dict) -> None:
     """Handle updateNode message for updating node properties like label."""
     session_id = msg.get("session_id")
     node_id = msg.get("node_id")
@@ -85,126 +49,44 @@ def handle_update_node(server, msg: dict) -> None:
         logger.error(f"Missing required fields in updateNode message: {msg}")
         return
 
-    if session_id in server.session_graphs:
-        for node in server.session_graphs[session_id]["nodes"]:
+    if session_id in state.session_graphs:
+        for node in state.session_graphs[session_id]["nodes"]:
             if node["id"] == node_id:
                 node[field] = value
                 break
-
-        DB.update_graph_topology(session_id, server.session_graphs[session_id])
-        server.broadcast_graph_update(session_id)
+        DB.update_graph_topology(session_id, state.session_graphs[session_id])
     else:
         logger.warning(f"Session {session_id} not found in session_graphs")
 
 
-def handle_update_run_name(server, msg: dict) -> None:
+def handle_update_run_name(state, msg: dict) -> None:
     """Handle experiment name update from UI."""
     session_id = msg.get("session_id")
     run_name = msg.get("run_name")
     if session_id and run_name is not None:
         DB.update_run_name(session_id, run_name)
-        server.notify_experiment_list_changed()
-    else:
-        logger.error(
-            f"handle_update_run_name: Missing required fields: session_id={session_id}, run_name={run_name}"
-        )
+        state.notify_experiment_list_changed()
 
 
-def handle_update_result(server, msg: dict) -> None:
+def handle_update_result(state, msg: dict) -> None:
     """Handle experiment result update from UI."""
     session_id = msg.get("session_id")
     result = msg.get("result")
     if session_id and result is not None:
         DB.update_result(session_id, result)
-        server.notify_experiment_list_changed()
-    else:
-        logger.error(
-            f"handle_update_result: Missing required fields: session_id={session_id}, result={result}"
-        )
+        state.notify_experiment_list_changed()
 
 
-def handle_update_notes(server, msg: dict) -> None:
+def handle_update_notes(state, msg: dict) -> None:
     """Handle experiment notes update from UI."""
     session_id = msg.get("session_id")
     notes = msg.get("notes")
     if session_id and notes is not None:
         DB.update_notes(session_id, notes)
-        # No broadcast needed — notes are not in the experiment list,
-        # and the editing UI already has the updated value locally.
-    else:
-        logger.error(
-            f"handle_update_notes: Missing required fields: session_id={session_id}, notes={notes}"
-        )
 
 
-def _handle_graph_request(server, conn: socket.socket, session_id: str) -> None:
-    """Send graph data for a session to the requesting connection."""
-    # Check if we have in-memory graph first (most up-to-date)
-    if session_id in server.session_graphs:
-        graph = server.session_graphs[session_id]
-        send_json(conn, {"type": "graph_update", "session_id": session_id, "payload": graph})
-        return
-
-    # Fall back to database if no in-memory graph
-    row = DB.get_graph(session_id)
-    if row and row["graph_topology"]:
-        graph = json.loads(row["graph_topology"])
-        server.session_graphs[session_id] = graph
-        send_json(conn, {"type": "graph_update", "session_id": session_id, "payload": graph})
-
-
-def handle_get_graph(server, msg: dict, conn: socket.socket) -> None:
-    """Handle graph request from UI."""
-    session_id = msg["session_id"]
-    _handle_graph_request(server, conn, session_id)
-
-
-def handle_erase(server, msg: dict) -> None:
-    """Handle erase request from UI."""
+def handle_erase(state, msg: dict) -> None:
+    """Handle erase request from UI (clears LLM calls, not the experiment)."""
     session_id = msg.get("session_id")
-
     DB.erase(session_id)
     DB.update_color_preview(session_id, [])
-
-    server.broadcast_to_all_uis(
-        {"type": "color_preview_update", "session_id": session_id, "color_preview": []}
-    )
-
-    handle_restart_message(server, {"session_id": session_id})
-
-
-def handle_get_all_experiments(server, conn: socket.socket) -> None:
-    """Handle request to refresh the experiment list (e.g., when VS Code window regains focus)."""
-    server.broadcast_experiment_list_to_uis(conn)
-
-
-def handle_get_more_experiments(server, msg: dict, conn: socket.socket) -> None:
-    """Handle paginated request for more (finished) experiments."""
-    offset = msg.get("offset", 0)
-    limit = server.EXPERIMENT_PAGE_SIZE
-    running_ids = {sid for sid, s in server.sessions.items() if s.status == "running"}
-    db_rows = DB.get_experiments_excluding_ids(running_ids, limit=limit, offset=offset)
-    finished_count = DB.get_experiment_count_excluding_ids(running_ids)
-    has_more = (offset + limit) < finished_count
-    session_map = {s.session_id: s for s in server.sessions.values()}
-
-    experiments = [server._format_experiment_row(row, session_map) for row in db_rows]
-    send_json(conn, {"type": "more_experiments", "experiments": experiments, "has_more": has_more})
-
-
-def handle_get_experiment_detail(server, msg: dict, conn: socket.socket) -> None:
-    """Handle request for experiment notes and log."""
-    session_id = msg.get("session_id")
-    if not session_id:
-        logger.error("get_experiment_detail missing session_id")
-        return
-    row = DB.get_experiment_detail(session_id)
-    notes = row["notes"] if row else ""
-    log = row["log"] if row else ""
-    send_json(conn, {"type": "experiment_detail", "session_id": session_id, "notes": notes, "log": log})
-
-
-def handle_get_lessons_applied(server, conn: socket.socket) -> None:
-    """Return all lessons_applied records (which runs used which lessons)."""
-    records = DB.get_all_lessons_applied()
-    send_json(conn, {"type": "lessons_applied", "records": records})

@@ -8,6 +8,8 @@ import time
 import uuid
 import json
 import random
+import threading
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Optional, Any
 
@@ -57,6 +59,19 @@ class DatabaseManager:
 
         self.cache_attachments = True
         self.attachment_cache_dir = ATTACHMENT_CACHE
+        # Tracks per-(session_id, input_hash) lookup count so concurrent
+        # identical calls (e.g. ensemble candidates) each get a distinct
+        # cached row instead of all hitting the same first row.
+        self._occurrence_counters: dict[tuple[str, str], int] = defaultdict(int)
+        self._occurrence_lock = threading.Lock()
+
+    def _next_occurrence(self, session_id: str, input_hash: str) -> int:
+        """Return and increment the lookup count for (session_id, input_hash)."""
+        with self._occurrence_lock:
+            key = (session_id, input_hash)
+            occurrence = self._occurrence_counters[key]
+            self._occurrence_counters[key] += 1
+            return occurrence
 
     @property
     def backend(self):
@@ -289,7 +304,8 @@ class DatabaseManager:
 
         session_id = get_session_id()
 
-        row = self.backend.get_llm_call_by_session_and_hash_query(session_id, input_hash)
+        occurrence = self._next_occurrence(session_id, input_hash)
+        row = self.backend.get_llm_call_by_session_and_hash_query(session_id, input_hash, offset=occurrence)
 
         if row is None:
             logger.debug(
@@ -485,9 +501,9 @@ class DatabaseManager:
     # Lessons Applied operations (tracks which ao-playbook lessons were applied)
     # ============================================================
 
-    def get_all_lessons_applied(self):
-        """Get all lesson application records for merging with ao-playbook lesson data."""
-        rows = self.backend.get_all_lessons_applied_query()
+    def get_lessons_applied_for_session(self, session_id):
+        """Get lesson application records for a specific session."""
+        rows = self.backend.get_lessons_applied_for_session_query(session_id)
         return [
             {
                 "lesson_id": row["lesson_id"],
@@ -498,7 +514,7 @@ class DatabaseManager:
             for row in rows
         ]
 
-    def get_lessons_applied_for_lesson(self, lesson_id):
+    def get_sessions_for_lesson(self, lesson_id):
         rows = self.backend.get_lessons_applied_query(lesson_id)
         return [
             {

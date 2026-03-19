@@ -9,7 +9,6 @@ current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-import socket
 import time
 import subprocess
 from argparse import ArgumentParser
@@ -20,24 +19,37 @@ from ao.common.constants import (
     MAIN_SERVER_LOG,
     HOST,
     PORT,
-    SOCKET_TIMEOUT,
     SHUTDOWN_WAIT,
 )
-
-from ao.server.main_server import MainServer, send_json
 
 # Create file logger for server startup timing (only used in _serve command)
 _server_logger = create_file_logger(MAIN_SERVER_LOG)
 
 
+def _server_http_request(method: str, path: str, timeout: float = 2.0) -> bool:
+    """Make an HTTP request to the server. Returns True if successful."""
+    import httpx
+    try:
+        url = f"http://{HOST}:{PORT}{path}"
+        with httpx.Client(timeout=timeout) as client:
+            if method == "GET":
+                resp = client.get(url)
+            else:
+                resp = client.post(url)
+            return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def _is_server_running() -> bool:
+    """Check if the server is running via health endpoint."""
+    return _server_http_request("GET", "/health")
+
+
 def launch_daemon_server() -> None:
-    """
-    Launch the main server as a detached daemon process with proper stdio handling.
-    """
-    # Ensure log directory exists
+    """Launch the main server as a detached daemon process."""
     os.makedirs(os.path.dirname(MAIN_SERVER_LOG), exist_ok=True)
 
-    # Open log file for the daemon (all logs go to main_server.log)
     with open(MAIN_SERVER_LOG, "a+") as log_f:
         subprocess.Popen(
             [sys.executable, "-m", "ao.cli.ao_server", "_serve"],
@@ -45,7 +57,7 @@ def launch_daemon_server() -> None:
             start_new_session=True,
             stdin=subprocess.DEVNULL,
             stdout=log_f,
-            stderr=subprocess.STDOUT,  # Combine stderr with stdout
+            stderr=subprocess.STDOUT,
         )
 
 
@@ -74,71 +86,37 @@ def server_command_parser():
 
 def execute_server_command(args):
     if args.command == "start":
-        # If server is already running, do not start another
-        try:
-            socket.create_connection((HOST, PORT), timeout=SOCKET_TIMEOUT).close()
+        if _is_server_running():
             logger.info("Main server is already running.")
             return
-        except Exception:
-            pass
-        # Launch the server as a detached background process (POSIX)
         launch_daemon_server()
         logger.info("Main server started.")
 
     elif args.command == "stop":
-        # Connect to the server and send a shutdown command
-        try:
-            sock = socket.create_connection((HOST, PORT), timeout=SOCKET_TIMEOUT)
-            handshake = {"type": "hello", "role": "admin", "script": "stopper"}
-            send_json(sock, handshake)
-            send_json(sock, {"type": "shutdown"})
-            sock.close()
-            logger.info("Main server stop signal sent.")
-        except Exception:
+        if not _server_http_request("POST", "/ui/shutdown"):
             logger.warning("No running server found.")
             sys.exit(1)
+        logger.info("Main server stop signal sent.")
 
     elif args.command == "restart":
-        # Stop the server if running
-        try:
-            sock = socket.create_connection((HOST, PORT), timeout=SOCKET_TIMEOUT)
-            handshake = {"type": "hello", "role": "admin", "script": "restarter"}
-            send_json(sock, handshake)
-            send_json(sock, {"type": "shutdown"})
-            sock.close()
-            logger.info("Main server stop signal sent (for restart). Waiting for shutdown...")
-            time.sleep(SHUTDOWN_WAIT)
-        except Exception:
-            logger.info("No running server found. Proceeding to start.")
+        _server_http_request("POST", "/ui/shutdown")
+        time.sleep(SHUTDOWN_WAIT)
         # Clear log file before starting fresh
         try:
             with open(MAIN_SERVER_LOG, "w"):
                 pass
         except Exception:
             pass
-        # Start the server
         launch_daemon_server()
         logger.info("Main server restarted.")
 
     elif args.command == "clear":
-        confirm = input("This will delete all experiments and LLM call data. Continue? [y/N] ")
-        if confirm.strip().lower() != "y":
-            print("Aborted.")
-            return
-        try:
-            sock = socket.create_connection((HOST, PORT), timeout=SOCKET_TIMEOUT)
-            handshake = {"type": "hello", "role": "admin", "script": "clearer"}
-            send_json(sock, handshake)
-            send_json(sock, {"type": "clear"})
-            sock.close()
-            logger.info("All data cleared.")
-        except Exception:
+        if not _server_http_request("POST", "/ui/clear"):
             logger.warning("No running server found.")
             sys.exit(1)
-        return
+        logger.info("Main server clear signal sent.")
 
     elif args.command == "logs":
-        # Print the contents of the develop server log file
         try:
             with open(MAIN_SERVER_LOG, "r") as log_file:
                 print(log_file.read(), end="")
@@ -149,7 +127,6 @@ def execute_server_command(args):
         return
 
     elif args.command == "clear-logs":
-        # Clear server log file
         try:
             os.makedirs(os.path.dirname(MAIN_SERVER_LOG), exist_ok=True)
             with open(MAIN_SERVER_LOG, "w"):
@@ -160,7 +137,6 @@ def execute_server_command(args):
         return
 
     elif args.command == "_serve":
-        # Internal: run the server loop (not meant to be called by users directly)
         _server_logger.info(f"Imports completed in {_time.time() - _import_start:.2f}s")
 
         # Save Python executable path to config for VS Code extension to use
@@ -176,10 +152,21 @@ def execute_server_command(args):
         except Exception as e:
             _server_logger.warning(f"Could not save python_executable: {e}")
 
+        import uvicorn
+        from ao.server.app import create_app
+
         _start = _time.time()
-        server = MainServer()
-        _server_logger.info(f"MainServer created in {_time.time() - _start:.2f}s")
-        server.run_server()
+        app = create_app()
+        _server_logger.info(f"FastAPI app created in {_time.time() - _start:.2f}s")
+
+        # Use Config+Server instead of uvicorn.run() so we can set
+        # server.should_exit = True for clean programmatic shutdown.
+        uv_config = uvicorn.Config(app, host=HOST, port=PORT, log_level="warning")
+        uv_server = uvicorn.Server(uv_config)
+
+        # Store reference on app so lifespan can wire it into ServerState.
+        app.state.uvicorn_server = uv_server
+        uv_server.run()
 
 
 def main():

@@ -409,11 +409,11 @@ def get_parent_session_id_query(session_id):
 
 
 # LLM calls queries
-def get_llm_call_by_session_and_hash_query(session_id, input_hash):
-    """Get LLM call by session_id and input_hash."""
+def get_llm_call_by_session_and_hash_query(session_id, input_hash, offset=0):
+    """Get LLM call by session_id and input_hash. offset selects the Nth match."""
     return query_one(
-        "SELECT node_id, input_overwrite, output FROM llm_calls WHERE session_id=? AND input_hash=?",
-        (session_id, input_hash),
+        "SELECT node_id, input_overwrite, output FROM llm_calls WHERE session_id=? AND input_hash=? ORDER BY rowid LIMIT 1 OFFSET ?",
+        (session_id, input_hash, offset),
     )
 
 
@@ -680,16 +680,17 @@ def get_llm_call_full_query(session_id, node_id):
 # ============================================================
 
 
-def get_all_lessons_applied_query():
-    """Get all lesson application records with run names for merging with ao-playbook data."""
+def get_lessons_applied_for_session_query(session_id):
+    """Get lesson application records for a specific session."""
     return query_all(
         """
         SELECT la.lesson_id, la.session_id, la.node_id, e.name as run_name
         FROM lessons_applied la
         LEFT JOIN experiments e ON la.session_id = e.session_id
+        WHERE la.session_id = ?
         ORDER BY la.applied_at DESC
         """,
-        (),
+        (session_id,),
     )
 
 
