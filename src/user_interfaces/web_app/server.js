@@ -1,9 +1,6 @@
 const express = require("express");
-const { WebSocketServer } = require("ws");
-const net = require("net");
+const { WebSocketServer, WebSocket } = require("ws");
 const cors = require("cors");
-const path = require("path");
-
 
 const HOST = process.env.PYTHON_HOST || "127.0.0.1";
 const PORT = process.env.PYTHON_PORT ? parseInt(process.env.PYTHON_PORT) : 5959;
@@ -21,44 +18,39 @@ const wss = new WebSocketServer({ server, path: "/ws" });
 wss.on("connection", (ws) => {
   console.log("Frontend connected via WebSocket");
 
-  // connect to Python socket server
-  const client = net.createConnection({ host: HOST, port: PORT }, () => {
+  // Connect to Python backend via WebSocket
+  const backend = new WebSocket(`ws://${HOST}:${PORT}/ws`);
+
+  backend.on("open", () => {
     console.log(`Connected to Python backend at ${HOST}:${PORT}`);
-    const handshake = { role: "ui" };
-    client.write(JSON.stringify(handshake) + "\n"); // handshake
   });
 
-  client.on("error", (err) => {
-    console.error("Error connecting to Python backend:", err);
+  backend.on("error", (err) => {
+    console.error("Error connecting to Python backend:", err.message);
     ws.close();
   });
 
-  client.on("error", (err) => {
-    console.error("Error connecting to Python backend:", err);
-    ws.close();
+  // Forward Python server → browser
+  backend.on("message", (data) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(data.toString());
+    }
   });
 
-  // forward Python server → browser
-  client.on("data", (data) => {
-    data
-      .toString()
-      .split("\n")
-      .filter(Boolean)
-      .forEach((msg) => ws.send(msg));
-  });
-
-  // forward browser → Python server
+  // Forward browser → Python server
   ws.on("message", (msg) => {
-    client.write(msg.toString() + "\n");
+    if (backend.readyState === WebSocket.OPEN) {
+      backend.send(msg.toString());
+    }
   });
 
   ws.on("close", () => {
     console.log("Frontend WebSocket closed");
-    client.end();
+    backend.close();
   });
 
   ws.on("error", (err) => {
-    console.error("WebSocket error:", err);
-    client.end();
+    console.error("WebSocket error:", err.message);
+    backend.close();
   });
 });

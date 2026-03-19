@@ -76,7 +76,8 @@ dev = [
     "together",
     "langchain",
     "langchain-anthropic",
-    "langchain-openai"
+    "langchain-openai",
+    "websocket-client"
 ]
 
 examples = [

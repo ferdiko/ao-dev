@@ -7,11 +7,11 @@ Verifies that editing a cached input causes a cache miss by measuring runtime.
 import copy
 import json
 import os
-import select
-import socket
 import subprocess
 import threading
 import time
+
+import websocket
 
 from ao.common.constants import HOST, PORT
 
@@ -28,40 +28,32 @@ class NodeTimingListener:
         self.session_id = None  # Track session for editing
         self._lock = threading.Lock()
         self._stop = False
-        self._conn = None
+        self._ws = None
         self._thread = None
 
     def start(self):
-        """Connect to server and start listening in background thread."""
-        self._conn = socket.create_connection((HOST, PORT), timeout=60)
-        # Send UI hello
-        hello = json.dumps({"type": "hello", "role": "ui"}) + "\n"
-        self._conn.sendall(hello.encode("utf-8"))
-        # Read hello response
-        self._conn.makefile("r").readline()
+        """Connect to server via WebSocket and start listening in background thread."""
+        self._ws = websocket.WebSocket()
+        self._ws.connect(f"ws://{HOST}:{PORT}/ws")
+        # Read initial config message from server
+        self._ws.recv()
 
         self._thread = threading.Thread(target=self._listen, daemon=True)
         self._thread.start()
 
     def _listen(self):
         """Background thread: listen for graph_update messages."""
-        buffer = ""
-        self._conn.setblocking(False)
+        self._ws.settimeout(0.1)
         while not self._stop:
-            ready, _, _ = select.select([self._conn], [], [], 0.1)
-            if ready:
-                try:
-                    data = self._conn.recv(4096).decode("utf-8")
-                    if not data:
-                        break
-                    buffer += data
-                    while "\n" in buffer:
-                        line, buffer = buffer.split("\n", 1)
-                        msg = json.loads(line)
-                        if msg.get("type") == "graph_update":
-                            self._on_graph_update(msg)
-                except Exception:
-                    break
+            try:
+                data = self._ws.recv()
+                msg = json.loads(data)
+                if msg.get("type") == "graph_update":
+                    self._on_graph_update(msg)
+            except websocket.WebSocketTimeoutException:
+                continue
+            except Exception:
+                break
 
     def _on_graph_update(self, msg):
         """Record timing and last node when nodes arrive."""
@@ -128,13 +120,11 @@ class NodeTimingListener:
 
             edit_msg = {
                 "type": "edit_input",
-                "role": "ui",
                 "session_id": self.session_id,
                 "node_id": self.last_node_id,
-                "attachments": [],
                 "value": json.dumps(input_dict),
             }
-        self._conn.sendall((json.dumps(edit_msg) + "\n").encode("utf-8"))
+        self._ws.send(json.dumps(edit_msg))
         time.sleep(0.5)  # Give server time to process
 
     def stop(self):
@@ -142,8 +132,8 @@ class NodeTimingListener:
         self._stop = True
         if self._thread:
             self._thread.join(timeout=2)
-        if self._conn:
-            self._conn.close()
+        if self._ws:
+            self._ws.close()
 
     def reset(self):
         """Reset timing for next run (keep node info for editing)."""
