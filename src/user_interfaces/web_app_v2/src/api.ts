@@ -34,6 +34,7 @@ export interface Experiment {
   version_date: string | null;
   run_name: string;
   result: string;
+  project_id?: string | null;
 }
 
 // ============================================================
@@ -191,7 +192,6 @@ export interface ExperimentQueryParams {
 
 interface ProjectExperimentsResponse {
   type: string;
-  running: Experiment[];
   finished: Experiment[];
   finished_total: number;
   distinct_versions: string[];

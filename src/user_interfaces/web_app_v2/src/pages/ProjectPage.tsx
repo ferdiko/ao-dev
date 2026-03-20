@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronUp, Chev
 import { Breadcrumb } from "../components/Breadcrumb";
 import { fetchProject, fetchProjectExperiments } from "../api";
 import type { Experiment, ExperimentQueryParams } from "../api";
+import { subscribe } from "../serverEvents";
 
 const ROWS_PER_PAGE_OPTIONS = [10, 20, 50, 100];
 
@@ -41,6 +42,16 @@ function experimentToRun(exp: Experiment): Run {
     tags: [],
     comment: "—",
   };
+}
+
+function formatTimestamp(raw: string): string {
+  if (!raw) return "—";
+  const ms = parseUTCTimestamp(raw);
+  if (isNaN(ms)) return raw;
+  return new Date(ms).toLocaleString(undefined, {
+    month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
 }
 
 // ── Sorting ──────────────────────────────────────────────
@@ -124,15 +135,20 @@ function SortableHeader({
 
 // ── Subcomponents ────────────────────────────────────────
 
+function parseUTCTimestamp(raw: string): number {
+  const normalized = raw.replace(" ", "T");
+  return new Date(normalized.endsWith("Z") ? normalized : normalized + "Z").getTime();
+}
+
 function LiveTimer({ startTimestamp }: { startTimestamp: string }) {
   const [elapsed, setElapsed] = useState(() => {
-    const start = new Date(startTimestamp.replace(" ", "T")).getTime();
+    const start = parseUTCTimestamp(startTimestamp);
     return Math.max(0, Math.floor((Date.now() - start) / 1000));
   });
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const start = new Date(startTimestamp.replace(" ", "T")).getTime();
+      const start = parseUTCTimestamp(startTimestamp);
       setElapsed(Math.max(0, Math.floor((Date.now() - start) / 1000)));
     }, 1000);
     return () => clearInterval(interval);
@@ -272,62 +288,12 @@ function emptyFilters(bounds?: DataBounds): Filters {
   };
 }
 
-function textMatches(text: string, filter: TextFilter): boolean {
-  if (!filter.value) return true;
-  if (filter.isRegex) {
-    try {
-      return new RegExp(filter.value, "i").test(text);
-    } catch {
-      return false;
-    }
-  }
-  return text.toLowerCase().includes(filter.value.toLowerCase());
-}
-
 function rangeActive(range: RangeFilter, bounds: { min: number; max: number }): boolean {
   return range.min > bounds.min || range.max < bounds.max;
 }
 
 function dateRangeActive(dr: DateRangeFilter): boolean {
   return dr.from !== "" || dr.to !== "";
-}
-
-function applyFilters(runs: Run[], filters: Filters, bounds: DataBounds): Run[] {
-  const latActive = rangeActive(filters.latency, bounds.latency);
-  const confActive = rangeActive(filters.confidence, bounds.confidence);
-  const costActive = rangeActive(filters.cost, bounds.cost);
-  const dateActive = dateRangeActive(filters.startTime);
-  return runs.filter((run) => {
-    if (!textMatches(run.name, filters.name)) return false;
-    if (filters.sessionId && !run.sessionId.toLowerCase().includes(filters.sessionId.toLowerCase())) return false;
-    if (!textMatches(run.input, filters.input)) return false;
-    if (!textMatches(run.output || "", filters.output)) return false;
-    if (!textMatches(run.comment, filters.comment)) return false;
-    if (filters.version.size > 0 && !filters.version.has(run.codeVersion)) return false;
-    if (filters.success.size > 0) {
-      const val = run.success === null ? "pending" : run.success ? "pass" : "fail";
-      if (!filters.success.has(val)) return false;
-    }
-    if (latActive) {
-      const lat = parseLatencyValue(run.latency);
-      if (lat < filters.latency.min || lat > filters.latency.max) return false;
-    }
-    if (confActive) {
-      if (run.confidence === null) return false;
-      if (run.confidence < filters.confidence.min || run.confidence > filters.confidence.max) return false;
-    }
-    if (costActive) {
-      const c = parseCostValue(run.cost);
-      if (c < filters.cost.min || c > filters.cost.max) return false;
-    }
-    if (dateActive) {
-      // Compare as strings since timestamps are in YYYY-MM-DD HH:MM:SS format
-      const ts = run.timestamp;
-      if (filters.startTime.from && ts < filters.startTime.from) return false;
-      if (filters.startTime.to && ts > filters.startTime.to + " 23:59:59") return false;
-    }
-    return true;
-  });
 }
 
 // ── Filter Components ────────────────────────────────────
@@ -854,10 +820,25 @@ export function ProjectPage() {
   const [distinctVersions, setDistinctVersions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Re-fetch trigger: incremented by WebSocket when experiment list changes
+  const [completedRefreshKey, setCompletedRefreshKey] = useState(0);
+
   // Fetch project name once
   useEffect(() => {
     if (!projectId) return;
     fetchProject(projectId).then((p) => setProjectName(p.name)).catch(console.error);
+  }, [projectId]);
+
+  // Running runs from WebSocket
+  useEffect(() => {
+    if (!projectId) return;
+    return subscribe("experiment_list", (msg) => {
+      const running = (msg.experiments as Experiment[])
+        .filter((e) => e.status === "running" && e.project_id === projectId)
+        .map(experimentToRun);
+      setRunningRuns(running);
+      setCompletedRefreshKey((k) => k + 1);
+    });
   }, [projectId]);
 
   // Filters
@@ -890,7 +871,7 @@ export function ProjectPage() {
   // Debounce text filter changes
   const prevTextRef = useRef({ name: "", sessionId: "" });
 
-  // Fetch experiments on any filter/sort/page change
+  // Fetch completed experiments on filter/sort/page change or WebSocket refresh signal
   useEffect(() => {
     if (!projectId) return;
     const prev = prevTextRef.current;
@@ -918,7 +899,6 @@ export function ProjectPage() {
     const timer = setTimeout(async () => {
       try {
         const resp = await fetchProjectExperiments(projectId, params, controller.signal);
-        setRunningRuns(resp.running.map(experimentToRun));
         setCompletedRuns(resp.finished.map(experimentToRun));
         setCompletedTotal(resp.finished_total);
         setDistinctVersions(resp.distinct_versions);
@@ -931,7 +911,7 @@ export function ProjectPage() {
     }, delay);
 
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [projectId, completedPage, completedRowsPerPage, completedSort, filters]);
+  }, [projectId, completedPage, completedRowsPerPage, completedSort, filters, completedRefreshKey]);
 
   const handleSetFilters = useCallback((newFilters: Filters) => {
     setFilters(newFilters);
@@ -953,8 +933,8 @@ export function ProjectPage() {
     setCompletedPage(1);
   }, []);
 
-  // Running: client-side filter/sort/paginate
-  const allRunning = useMemo(() => applyFilters(runningRuns, filters, bounds), [runningRuns, filters, bounds]);
+  // Running: client-side sort/paginate (no filters applied)
+  const allRunning = runningRuns;
   const sortedRunning = useMemo(() => sortRuns(allRunning, runningSort), [allRunning, runningSort]);
   const runningTotalPages = Math.max(1, Math.ceil(sortedRunning.length / runningRowsPerPage));
   const safeRunningPage = Math.min(runningPage, runningTotalPages);
@@ -1015,8 +995,7 @@ export function ProjectPage() {
       </div>
 
       <div className="project-runs-layout">
-        <div className="project-runs-container">
-        {/* Running runs section */}
+        {/* Running runs section — spans full grid width */}
         <div className="runs-section running-runs-section">
           <div className="landing-section-title">
             <span className="loading-dot" />
@@ -1037,7 +1016,7 @@ export function ProjectPage() {
               <tbody>
                 {running.map((run) => (
                   <tr key={run.id}>
-                    <td className="cell-timestamp">{run.timestamp}</td>
+                    <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>
                     <td><span className="cell-id-link" onClick={(e) => { e.stopPropagation(); navigate(`/project/${projectId}/run/${run.sessionId}`); }}>{run.sessionId}</span></td>
                     <td>{run.name}</td>
                     <td className="cell-content">{run.input}</td>
@@ -1123,7 +1102,7 @@ export function ProjectPage() {
                         onChange={() => toggleCompletedSelect(run.id)}
                       />
                     </td>
-                    <td className="cell-timestamp">{run.timestamp}</td>
+                    <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>
                     <td><span className="cell-id-link" onClick={(e) => { e.stopPropagation(); navigate(`/project/${projectId}/run/${run.sessionId}`); }}>{run.sessionId}</span></td>
                     <td>{run.name}</td>
                     <td className="cell-content">{run.input}</td>
@@ -1157,7 +1136,6 @@ export function ProjectPage() {
           />
 
         </div>
-      </div>
         <FilterPanel filters={filters} setFilters={handleSetFilters} distinctVersions={distinctVersions} bounds={bounds} />
       </div>
     </div>

@@ -371,14 +371,8 @@ def get_project_experiments(
     time_to: str = "",
     state: ServerState = Depends(get_state),
 ):
-    """Get experiments for a specific project (running + paginated filtered finished)."""
-    state._sweep_dead_sessions()
-    session_map = {s.session_id: s for s in state.sessions.values()}
+    """Get paginated filtered finished experiments for a project (running comes via WebSocket)."""
     running_ids = {sid for sid, s in state.sessions.items() if s.status == "running"}
-
-    # Running experiments (unfiltered, small set)
-    running_rows = DB.get_experiments_by_ids(running_ids, project_id=project_id)
-    running = [state._format_experiment_row(row, session_map) for row in running_rows]
 
     # Map frontend keys to DB columns
     sort_col = {"timestamp": "timestamp", "sessionId": "session_id", "name": "name",
@@ -403,13 +397,13 @@ def get_project_experiments(
         project_id=project_id, exclude_ids=running_ids, filters=filters,
         sort_col=sort_col, sort_dir=dir, limit=limit, offset=offset,
     )
+    session_map = {s.session_id: s for s in state.sessions.values()}
     finished = [state._format_experiment_row(row, session_map) for row in finished_rows]
 
     distinct_versions = DB.get_distinct_versions(project_id)
 
     return {
         "type": "experiment_list",
-        "running": running,
         "finished": finished,
         "finished_total": finished_total,
         "distinct_versions": distinct_versions,

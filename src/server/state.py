@@ -187,6 +187,7 @@ class ServerState:
             "version_date": row["version_date"],
             "run_name": row["name"],
             "result": row["success"],
+            "project_id": session.project_id if session else None,
         }
 
     # ============================================================
@@ -305,7 +306,7 @@ class ServerState:
                 except subprocess.SubprocessError:
                     return None
 
-            now = datetime.now()
+            now = datetime.utcnow()
             self._run_git(project_id, project_root, "commit", "-m", now.isoformat(timespec="seconds"))
             return f"Version {now.strftime('%b')} {now.day}, {now.hour}:{now.strftime('%M')}"
         except (subprocess.SubprocessError, subprocess.TimeoutExpired) as e:
@@ -346,7 +347,7 @@ class ServerState:
             session = self.sessions.get(child_session_id)
             if session:
                 session.status = "running"
-                DB.update_timestamp(child_session_id, datetime.now())
+                DB.update_timestamp(child_session_id, datetime.utcnow())
                 self.notify_experiment_list_changed()
 
         except Exception as e:

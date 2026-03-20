@@ -92,7 +92,7 @@ def register(req: RegisterRequest, state: ServerState = Depends(get_state)):
         session_id = req.prev_session_id
     else:
         session_id = str(uuid.uuid4())
-        timestamp = datetime.now()
+        timestamp = datetime.utcnow()
         name = req.name
         if not name:
             run_index = DB.get_next_run_index(project_id=req.project_id)
@@ -153,7 +153,7 @@ def subrun(req: SubrunRequest, state: ServerState = Depends(get_state)):
         session_id = req.prev_session_id
     else:
         session_id = str(uuid.uuid4())
-        timestamp = datetime.now()
+        timestamp = datetime.utcnow()
         name = req.name
         if not name:
             run_index = DB.get_next_run_index(project_id=project_id)
