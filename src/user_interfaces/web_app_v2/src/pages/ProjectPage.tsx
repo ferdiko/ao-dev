@@ -1015,9 +1015,9 @@ export function ProjectPage() {
               </thead>
               <tbody>
                 {running.map((run) => (
-                  <tr key={run.id}>
+                  <tr key={run.id} className="clickable-row" onClick={() => navigate(`/project/${projectId}/run/${run.sessionId}`)}>
                     <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>
-                    <td><span className="cell-id-link" onClick={(e) => { e.stopPropagation(); navigate(`/project/${projectId}/run/${run.sessionId}`); }}>{run.sessionId}</span></td>
+                    <td><span className="cell-id-link">{run.sessionId}</span></td>
                     <td>{run.name}</td>
                     <td className="cell-content">{run.input}</td>
                     <td><span className="cell-id-link">{run.codeVersion}</span></td>
@@ -1094,8 +1094,8 @@ export function ProjectPage() {
               </thead>
               <tbody>
                 {completed.map((run) => (
-                  <tr key={run.id}>
-                    <td className="cell-checkbox">
+                  <tr key={run.id} className="clickable-row" onClick={() => navigate(`/project/${projectId}/run/${run.sessionId}`)}>
+                    <td className="cell-checkbox" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={selectedCompleted.has(run.id)}
@@ -1103,7 +1103,7 @@ export function ProjectPage() {
                       />
                     </td>
                     <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>
-                    <td><span className="cell-id-link" onClick={(e) => { e.stopPropagation(); navigate(`/project/${projectId}/run/${run.sessionId}`); }}>{run.sessionId}</span></td>
+                    <td><span className="cell-id-link">{run.sessionId}</span></td>
                     <td>{run.name}</td>
                     <td className="cell-content">{run.input}</td>
                     <td className="cell-content">{run.output || "—"}</td>

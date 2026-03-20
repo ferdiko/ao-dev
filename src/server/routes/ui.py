@@ -457,9 +457,19 @@ def get_more_experiments(offset: int = 0, state: ServerState = Depends(get_state
 @router.get("/experiment/{session_id}")
 def get_experiment_detail(session_id: str, state: ServerState = Depends(get_state)):
     row = DB.get_experiment_detail(session_id)
-    notes = row["notes"] if row else ""
-    log = row["log"] if row else ""
-    return {"type": "experiment_detail", "session_id": session_id, "notes": notes, "log": log}
+    if not row:
+        return {"type": "experiment_detail", "session_id": session_id,
+                "run_name": "", "timestamp": "", "result": "", "notes": "", "log": "", "version_date": None}
+    return {
+        "type": "experiment_detail",
+        "session_id": session_id,
+        "run_name": row["name"] or "",
+        "timestamp": row["timestamp"] or "",
+        "result": row["success"] or "",
+        "notes": row["notes"] or "",
+        "log": row["log"] or "",
+        "version_date": row["version_date"],
+    }
 
 
 @router.get("/lessons-applied/{session_id}")

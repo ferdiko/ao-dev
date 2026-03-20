@@ -616,9 +616,9 @@ def get_distinct_versions_query(project_id=None, user_id=None):
 
 
 def get_experiment_detail_query(session_id):
-    """Get notes and log for a single experiment."""
+    """Get detail fields for a single experiment."""
     return query_one(
-        "SELECT notes, log FROM experiments WHERE session_id=?",
+        "SELECT name, timestamp, success, notes, log, version_date FROM experiments WHERE session_id=?",
         (session_id,),
     )
 

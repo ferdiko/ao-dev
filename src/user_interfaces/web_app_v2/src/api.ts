@@ -223,11 +223,79 @@ export async function fetchProjectExperiments(
 }
 
 // ============================================================
+// Experiment detail endpoints
+// ============================================================
+
+export interface ExperimentDetail {
+  session_id: string;
+  run_name: string;
+  timestamp: string;
+  result: string;
+  notes: string;
+  log: string;
+  version_date: string | null;
+}
+
+export async function fetchExperimentDetail(sessionId: string): Promise<ExperimentDetail> {
+  return get(`/ui/experiment/${sessionId}`);
+}
+
+// ============================================================
 // Graph endpoints
 // ============================================================
 
+export interface BackendGraphNode {
+  id: string;
+  input: string;
+  output: string;
+  label: string;
+  border_color?: string;
+  stack_trace?: string;
+  model?: string;
+  attachments?: unknown[];
+}
+
+export interface BackendGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+}
+
+export interface GraphPayload {
+  nodes: BackendGraphNode[];
+  edges: BackendGraphEdge[];
+}
+
 export async function fetchGraph(sessionId: string) {
-  return get<{ type: string; session_id: string; payload: { nodes: unknown[]; edges: unknown[] } }>(
+  return get<{ type: string; session_id: string; payload: GraphPayload }>(
     `/ui/graph/${sessionId}`
   );
+}
+
+// ============================================================
+// Run action endpoints
+// ============================================================
+
+export async function editInput(sessionId: string, nodeId: string, value: string): Promise<void> {
+  await post("/ui/edit-input", { session_id: sessionId, node_id: nodeId, value });
+}
+
+export async function editOutput(sessionId: string, nodeId: string, value: string): Promise<void> {
+  await post("/ui/edit-output", { session_id: sessionId, node_id: nodeId, value });
+}
+
+export async function restartRun(sessionId: string): Promise<void> {
+  await post("/ui/restart", { session_id: sessionId });
+}
+
+export async function eraseRun(sessionId: string): Promise<void> {
+  await post("/ui/erase", { session_id: sessionId });
+}
+
+export async function updateResult(sessionId: string, result: string): Promise<void> {
+  await post("/ui/update-result", { session_id: sessionId, result });
+}
+
+export async function updateRunName(sessionId: string, runName: string): Promise<void> {
+  await post("/ui/update-run-name", { session_id: sessionId, run_name: runName });
 }

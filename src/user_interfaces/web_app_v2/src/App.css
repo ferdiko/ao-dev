@@ -2250,10 +2250,10 @@
 /* ── Graph panel (left, 20%) ───────────── */
 
 .run-graph-panel {
-  flex: 1.5;
+  flex: 2;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  min-width: 270px;
   min-height: 0;
   overflow: hidden;
 }
@@ -2390,32 +2390,20 @@
 /* Focus bracket — static viewfinder marks fixed at vertical center, both sides.
    Nodes are 170px wide, centered by setCenter → span 50%±85px.
    Brackets sit 15px outside node edges: 50%±100px. */
-.graph-focus-bracket {
+/* Arrowhead indicator pointing inward from the right edge */
+.graph-focus-arrow {
   position: absolute;
-  width: 10px;
-  height: 6px;
-  opacity: 0.4;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-right: 8px solid var(--color-primary);
+  opacity: 0.6;
   z-index: 4;
   pointer-events: none;
-}
-.graph-focus-bracket.bracket-left {
-  left: calc(50% - 100px);
-  border-left: 2px solid var(--color-primary);
-  transform-origin: right;
-}
-.graph-focus-bracket.bracket-right {
-  right: calc(50% - 100px);
-  border-right: 2px solid var(--color-primary);
-  transform-origin: left;
-}
-.graph-focus-bracket.bracket-top {
-  top: calc(50% - 29px);
-  border-top: 2px solid var(--color-primary);
-}
-.graph-focus-bracket.bracket-bottom {
-  top: calc(50% + 29px);
-  border-bottom: 2px solid var(--color-primary);
-  transform: translateY(-100%);
 }
 
 /* Focused trace card in detail panel */
@@ -2488,7 +2476,7 @@
 }
 
 .graph-llm-node.focused {
-  border-color: var(--color-primary);
+  border-color: #43884e;
 }
 
 .graph-span-node.focused {
