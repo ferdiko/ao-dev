@@ -466,6 +466,9 @@ class DatabaseManager:
     def get_all_projects(self):
         return self.backend.get_all_projects_query()
 
+    def get_project_user_count(self, project_id):
+        return self.backend.get_project_user_count_query(project_id)
+
     # User-project location operations
     def upsert_project_location(self, user_id, project_id, project_location):
         self.backend.upsert_project_location_query(user_id, project_id, project_location)
@@ -483,6 +486,12 @@ class DatabaseManager:
 
     def get_project_locations(self, user_id, project_id):
         return self.backend.get_project_locations_query(user_id, project_id)
+
+    def get_all_project_locations(self, project_id):
+        return self.backend.get_all_project_locations_query(project_id)
+
+    def delete_project_location(self, user_id, project_id, project_location):
+        self.backend.delete_project_location_query(user_id, project_id, project_location)
 
     # Probe-related methods for ao-tool
     def get_experiment_metadata(self, session_id):

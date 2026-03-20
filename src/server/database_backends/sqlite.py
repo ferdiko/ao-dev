@@ -590,16 +590,18 @@ def _delete_sessions_data(session_ids):
 
 
 def delete_project_query(project_id):
-    """Delete a project and all associated experiments, llm_calls, and lessons_applied."""
+    """Delete a project and all associated experiments, llm_calls, lessons_applied, and locations."""
     sessions = query_all("SELECT session_id FROM experiments WHERE project_id=?", (project_id,))
     _delete_sessions_data([s["session_id"] for s in sessions])
+    execute("DELETE FROM user_project_locations WHERE project_id=?", (project_id,))
     execute("DELETE FROM projects WHERE project_id=?", (project_id,))
 
 
 def delete_user_query(user_id):
-    """Delete a user and all associated experiments, llm_calls, and lessons_applied."""
+    """Delete a user and all associated experiments, llm_calls, lessons_applied, and locations."""
     sessions = query_all("SELECT session_id FROM experiments WHERE user_id=?", (user_id,))
     _delete_sessions_data([s["session_id"] for s in sessions])
+    execute("DELETE FROM user_project_locations WHERE user_id=?", (user_id,))
     execute("DELETE FROM users WHERE user_id=?", (user_id,))
 
 
@@ -779,6 +781,15 @@ def get_all_projects_query():
     )
 
 
+def get_project_user_count_query(project_id):
+    """Count distinct users who have this project registered."""
+    row = query_one(
+        "SELECT COUNT(DISTINCT user_id) as count FROM user_project_locations WHERE project_id=?",
+        (project_id,),
+    )
+    return row["count"] if row else 0
+
+
 # User-project location queries
 
 def upsert_project_location_query(user_id, project_id, project_location):
@@ -806,4 +817,20 @@ def get_project_locations_query(user_id, project_id):
     return query_all(
         "SELECT project_location FROM user_project_locations WHERE user_id=? AND project_id=?",
         (user_id, project_id),
+    )
+
+
+def get_all_project_locations_query(project_id):
+    """Get all known locations for a project across all users."""
+    return query_all(
+        "SELECT project_location FROM user_project_locations WHERE project_id=?",
+        (project_id,),
+    )
+
+
+def delete_project_location_query(user_id, project_id, project_location):
+    """Delete a single project location row."""
+    execute(
+        "DELETE FROM user_project_locations WHERE user_id=? AND project_id=? AND project_location=?",
+        (user_id, project_id, project_location),
     )
