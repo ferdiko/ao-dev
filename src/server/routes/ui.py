@@ -3,7 +3,7 @@
 import json
 import os
 import uuid
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -343,36 +343,77 @@ def get_projects(state: ServerState = Depends(get_state)):
     return {"projects": result}
 
 
+@router.get("/projects/{project_id}")
+def get_project(project_id: str):
+    """Get a single project by ID."""
+    project = DB.get_project(project_id)
+    if not project:
+        return JSONResponse(status_code=404, content={"error": "Project not found."})
+    return {
+        "project_id": project["project_id"],
+        "name": project["name"],
+        "description": project["description"] or "",
+    }
+
+
 @router.get("/projects/{project_id}/experiments")
-def get_project_experiments(project_id: str, state: ServerState = Depends(get_state)):
-    """Get experiments for a specific project (running + paginated finished)."""
+def get_project_experiments(
+    project_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    sort: str = "timestamp",
+    dir: str = "desc",
+    name: str = "",
+    session_id: str = "",
+    success: list[str] = Query(default=[]),
+    version: list[str] = Query(default=[]),
+    time_from: str = "",
+    time_to: str = "",
+    state: ServerState = Depends(get_state),
+):
+    """Get experiments for a specific project (running + paginated filtered finished)."""
     state._sweep_dead_sessions()
     session_map = {s.session_id: s for s in state.sessions.values()}
     running_ids = {sid for sid, s in state.sessions.items() if s.status == "running"}
 
+    # Running experiments (unfiltered, small set)
     running_rows = DB.get_experiments_by_ids(running_ids, project_id=project_id)
-    finished_rows = DB.get_experiments_excluding_ids(
-        running_ids, limit=state.EXPERIMENT_PAGE_SIZE, project_id=project_id,
+    running = [state._format_experiment_row(row, session_map) for row in running_rows]
+
+    # Map frontend keys to DB columns
+    sort_col = {"timestamp": "timestamp", "sessionId": "session_id", "name": "name",
+                "codeVersion": "version_date", "success": "success"}.get(sort, "timestamp")
+    success_map = {"pass": "Satisfactory", "fail": "Failed", "pending": ""}
+
+    filters = {}
+    if name:
+        filters["name"] = name
+    if session_id:
+        filters["session_id"] = session_id
+    if success:
+        filters["success"] = [success_map.get(v, v) for v in success]
+    if version:
+        filters["version_date"] = version
+    if time_from:
+        filters["timestamp_from"] = time_from
+    if time_to:
+        filters["timestamp_to"] = time_to
+
+    finished_rows, finished_total = DB.get_experiments_filtered(
+        project_id=project_id, exclude_ids=running_ids, filters=filters,
+        sort_col=sort_col, sort_dir=dir, limit=limit, offset=offset,
     )
-    finished_count = DB.get_experiment_count_excluding_ids(running_ids, project_id=project_id)
-    has_more = finished_count > state.EXPERIMENT_PAGE_SIZE
+    finished = [state._format_experiment_row(row, session_map) for row in finished_rows]
 
-    experiments = [state._format_experiment_row(row, session_map) for row in running_rows + finished_rows]
-    return {"type": "experiment_list", "experiments": experiments, "has_more": has_more}
+    distinct_versions = DB.get_distinct_versions(project_id)
 
-
-@router.get("/projects/{project_id}/experiments/more")
-def get_more_project_experiments(project_id: str, offset: int = 0, state: ServerState = Depends(get_state)):
-    """Get next page of finished experiments for a project."""
-    running_ids = {sid for sid, s in state.sessions.items() if s.status == "running"}
-    db_rows = DB.get_experiments_excluding_ids(
-        running_ids, limit=state.EXPERIMENT_PAGE_SIZE, offset=offset, project_id=project_id,
-    )
-    finished_count = DB.get_experiment_count_excluding_ids(running_ids, project_id=project_id)
-    has_more = (offset + state.EXPERIMENT_PAGE_SIZE) < finished_count
-    session_map = {s.session_id: s for s in state.sessions.values()}
-    experiments = [state._format_experiment_row(row, session_map) for row in db_rows]
-    return {"type": "more_experiments", "experiments": experiments, "has_more": has_more}
+    return {
+        "type": "experiment_list",
+        "running": running,
+        "finished": finished,
+        "finished_total": finished_total,
+        "distinct_versions": distinct_versions,
+    }
 
 
 @router.get("/graph/{session_id}")

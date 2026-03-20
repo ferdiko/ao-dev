@@ -166,31 +166,60 @@ export async function fetchProjects(): Promise<Project[]> {
   return data.projects;
 }
 
+export async function fetchProject(
+  projectId: string
+): Promise<{ project_id: string; name: string; description: string }> {
+  return get(`/ui/projects/${projectId}`);
+}
+
 // ============================================================
 // Experiment endpoints (project-scoped)
 // ============================================================
 
-interface ExperimentListResponse {
+export interface ExperimentQueryParams {
+  limit?: number;
+  offset?: number;
+  sort?: string;
+  dir?: string;
+  name?: string;
+  session_id?: string;
+  success?: string[];
+  version?: string[];
+  time_from?: string;
+  time_to?: string;
+}
+
+interface ProjectExperimentsResponse {
   type: string;
-  experiments: Experiment[];
-  has_more: boolean;
+  running: Experiment[];
+  finished: Experiment[];
+  finished_total: number;
+  distinct_versions: string[];
 }
 
 export async function fetchProjectExperiments(
-  projectId: string
-): Promise<ExperimentListResponse> {
-  return get<ExperimentListResponse>(
-    `/ui/projects/${projectId}/experiments`
-  );
-}
-
-export async function fetchMoreProjectExperiments(
   projectId: string,
-  offset: number
-): Promise<ExperimentListResponse> {
-  return get<ExperimentListResponse>(
-    `/ui/projects/${projectId}/experiments/more?offset=${offset}`
-  );
+  params?: ExperimentQueryParams,
+  signal?: AbortSignal,
+): Promise<ProjectExperimentsResponse> {
+  const qs = new URLSearchParams();
+  if (params) {
+    if (params.limit !== undefined) qs.set("limit", String(params.limit));
+    if (params.offset !== undefined) qs.set("offset", String(params.offset));
+    if (params.sort) qs.set("sort", params.sort);
+    if (params.dir) qs.set("dir", params.dir);
+    if (params.name) qs.set("name", params.name);
+    if (params.session_id) qs.set("session_id", params.session_id);
+    if (params.time_from) qs.set("time_from", params.time_from);
+    if (params.time_to) qs.set("time_to", params.time_to);
+    if (params.success) for (const v of params.success) qs.append("success", v);
+    if (params.version) for (const v of params.version) qs.append("version", v);
+  }
+  const query = qs.toString();
+  const url = `/ui/projects/${projectId}/experiments${query ? `?${query}` : ""}`;
+  const resp = await fetch(url, { signal });
+  if (!resp.ok) throw new Error(`GET ${url} failed: ${resp.status}`);
+  return resp.json();
 }
 
 // ============================================================

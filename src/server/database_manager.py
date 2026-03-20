@@ -59,11 +59,19 @@ class DatabaseManager:
 
         self.cache_attachments = True
         self.attachment_cache_dir = ATTACHMENT_CACHE
+        self._user_id = None
         # Tracks per-(session_id, input_hash) lookup count so concurrent
         # identical calls (e.g. ensemble candidates) each get a distinct
         # cached row instead of all hitting the same first row.
         self._occurrence_counters: dict[tuple[str, str], int] = defaultdict(int)
         self._occurrence_lock = threading.Lock()
+
+    @property
+    def user_id(self):
+        if self._user_id is None:
+            from ao.common.user import read_user_id
+            self._user_id = read_user_id()
+        return self._user_id
 
     def _next_occurrence(self, session_id: str, input_hash: str) -> int:
         """Return and increment the lookup count for (session_id, input_hash)."""
@@ -380,22 +388,29 @@ class DatabaseManager:
         set_seed(node_id)
 
     def get_finished_runs(self, project_id=None):
-        return self.backend.get_finished_runs_query(project_id=project_id)
+        return self.backend.get_finished_runs_query(project_id=project_id, user_id=self.user_id)
 
     def get_all_experiments_sorted(self, limit=None, offset=0, project_id=None):
-        return self.backend.get_all_experiments_sorted_query(limit=limit, offset=offset, project_id=project_id)
+        return self.backend.get_all_experiments_sorted_query(limit=limit, offset=offset, project_id=project_id, user_id=self.user_id)
 
     def get_experiments_by_ids(self, session_ids, project_id=None):
-        return self.backend.get_experiments_by_ids_query(session_ids, project_id=project_id)
+        return self.backend.get_experiments_by_ids_query(session_ids, project_id=project_id, user_id=self.user_id)
 
     def get_experiments_excluding_ids(self, session_ids, limit=None, offset=0, project_id=None):
-        return self.backend.get_experiments_excluding_ids_query(session_ids, limit=limit, offset=offset, project_id=project_id)
+        return self.backend.get_experiments_excluding_ids_query(session_ids, limit=limit, offset=offset, project_id=project_id, user_id=self.user_id)
 
     def get_experiment_count(self, project_id=None):
-        return self.backend.get_experiment_count_query(project_id=project_id)
+        return self.backend.get_experiment_count_query(project_id=project_id, user_id=self.user_id)
 
     def get_experiment_count_excluding_ids(self, session_ids, project_id=None):
-        return self.backend.get_experiment_count_excluding_ids_query(session_ids, project_id=project_id)
+        return self.backend.get_experiment_count_excluding_ids_query(session_ids, project_id=project_id, user_id=self.user_id)
+
+    def get_experiments_filtered(self, project_id, exclude_ids, filters, sort_col, sort_dir, limit, offset):
+        return self.backend.query_experiments_filtered(project_id, exclude_ids, filters, sort_col, sort_dir, limit, offset, user_id=self.user_id)
+
+    def get_distinct_versions(self, project_id=None):
+        rows = self.backend.get_distinct_versions_query(project_id, user_id=self.user_id)
+        return [row["version_date"] for row in rows]
 
     def get_experiment_detail(self, session_id):
         return self.backend.get_experiment_detail_query(session_id)
@@ -451,7 +466,7 @@ class DatabaseManager:
         return self.backend.get_llm_call_output_api_type_query(session_id, node_id)
 
     def get_next_run_index(self, project_id=None):
-        return self.backend.get_next_run_index_query(project_id=project_id)
+        return self.backend.get_next_run_index_query(project_id=project_id, user_id=self.user_id)
 
     # Project operations
     def get_project(self, project_id):
@@ -464,7 +479,7 @@ class DatabaseManager:
         self.backend.update_project_last_run_at_query(project_id)
 
     def get_all_projects(self):
-        return self.backend.get_all_projects_query()
+        return self.backend.get_all_projects_query(user_id=self.user_id)
 
     def get_project_user_count(self, project_id):
         return self.backend.get_project_user_count_query(project_id)

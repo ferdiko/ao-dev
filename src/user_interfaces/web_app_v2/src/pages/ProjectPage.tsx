@@ -2,11 +2,46 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronUp, ChevronDown, Search, X, ChevronDown as ChevronDownIcon, Sparkles, Trash2 } from "lucide-react";
 import { Breadcrumb } from "../components/Breadcrumb";
-import { mockProjects, mockRuns, resolveTagNames } from "../data/mock";
-import type { Run } from "../data/mock";
-import { TagBadge } from "../components/TagDropdown";
+import { fetchProject, fetchProjectExperiments } from "../api";
+import type { Experiment, ExperimentQueryParams } from "../api";
 
 const ROWS_PER_PAGE_OPTIONS = [10, 20, 50, 100];
+
+interface Run {
+  id: string;
+  sessionId: string;
+  name: string;
+  status: "running" | "finished";
+  timestamp: string;
+  input: string;
+  output: string;
+  latency: string;
+  cost: string;
+  codeVersion: string;
+  success: boolean | null;
+  confidence: number | null;
+  tags: string[];
+  comment: string;
+}
+
+function experimentToRun(exp: Experiment): Run {
+  return {
+    id: exp.session_id,
+    sessionId: exp.session_id,
+    name: exp.run_name,
+    status: exp.status === "running" ? "running" : "finished",
+    timestamp: exp.timestamp,
+    codeVersion: exp.version_date ?? "—",
+    success: exp.result === "Satisfactory" ? true : exp.result === "Failed" ? false : null,
+    input: "—",
+    output: "—",
+    latency: "—",
+    cost: "—",
+    confidence: null,
+    tags: [],
+    comment: "—",
+  };
+}
 
 // ── Sorting ──────────────────────────────────────────────
 
@@ -649,34 +684,17 @@ function RangeFilterSection({
 function FilterPanel({
   filters,
   setFilters,
-  allRuns,
+  distinctVersions,
   bounds,
 }: {
   filters: Filters;
   setFilters: (f: Filters) => void;
-  allRuns: Run[];
+  distinctVersions: string[];
   bounds: DataBounds;
 }) {
-  const versionOptions = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const r of allRuns) {
-      counts[r.codeVersion] = (counts[r.codeVersion] || 0) + 1;
-    }
-    return {
-      options: Object.keys(counts).sort().map((v) => ({ value: v, label: v })),
-      counts,
-    };
-  }, [allRuns]);
-
-  const successCounts = useMemo(() => {
-    const counts: Record<string, number> = { pass: 0, fail: 0, pending: 0 };
-    for (const r of allRuns) {
-      if (r.success === null) counts.pending++;
-      else if (r.success) counts.pass++;
-      else counts.fail++;
-    }
-    return counts;
-  }, [allRuns]);
+  const versionOptions = useMemo(() => ({
+    options: distinctVersions.map((v) => ({ value: v, label: v })),
+  }), [distinctVersions]);
 
   const activeCount = [
     filters.name.value,
@@ -766,7 +784,6 @@ function FilterPanel({
           options={versionOptions.options}
           selected={filters.version}
           onChange={(s) => setFilters({ ...filters, version: s })}
-          counts={versionOptions.counts}
           open={openSections.version}
           onToggle={() => toggle("version")}
         />
@@ -804,7 +821,6 @@ function FilterPanel({
             ]}
             selected={filters.success}
             onChange={(s) => setFilters({ ...filters, success: s })}
-            counts={successCounts}
             open={openSections.success}
             onToggle={() => toggle("success")}
           />
@@ -829,11 +845,24 @@ function FilterPanel({
 export function ProjectPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const project = mockProjects.find((p) => p.id === projectId);
+
+  // Data from API
+  const [projectName, setProjectName] = useState("");
+  const [runningRuns, setRunningRuns] = useState<Run[]>([]);
+  const [completedRuns, setCompletedRuns] = useState<Run[]>([]);
+  const [completedTotal, setCompletedTotal] = useState(0);
+  const [distinctVersions, setDistinctVersions] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch project name once
+  useEffect(() => {
+    if (!projectId) return;
+    fetchProject(projectId).then((p) => setProjectName(p.name)).catch(console.error);
+  }, [projectId]);
 
   // Filters
-  const bounds = useMemo(() => computeDataBounds(mockRuns), []);
-  const [filters, setFilters] = useState<Filters>(() => emptyFilters(bounds));
+  const bounds = useMemo(() => computeDataBounds([...runningRuns, ...completedRuns]), [runningRuns, completedRuns]);
+  const [filters, setFilters] = useState<Filters>(() => emptyFilters());
 
   // Selection (completed runs only)
   const [selectedCompleted, setSelectedCompleted] = useState<Set<string>>(new Set());
@@ -858,26 +887,83 @@ export function ProjectPage() {
   const [completedPage, setCompletedPage] = useState(1);
   const [completedSort, setCompletedSort] = useState<SortState>({ key: "timestamp", direction: "desc" });
 
-  const toggleSort = useCallback((setter: React.Dispatch<React.SetStateAction<SortState>>) => (key: string) => {
-    setter((prev: SortState) => {
-      if (prev?.key === key) {
-        return prev.direction === "asc" ? { key, direction: "desc" } : null;
+  // Debounce text filter changes
+  const prevTextRef = useRef({ name: "", sessionId: "" });
+
+  // Fetch experiments on any filter/sort/page change
+  useEffect(() => {
+    if (!projectId) return;
+    const prev = prevTextRef.current;
+    const textChanged = prev.name !== filters.name.value || prev.sessionId !== filters.sessionId;
+    prevTextRef.current = { name: filters.name.value, sessionId: filters.sessionId };
+
+    const controller = new AbortController();
+    const delay = textChanged ? 300 : 0;
+
+    const params: ExperimentQueryParams = {
+      limit: completedRowsPerPage,
+      offset: (completedPage - 1) * completedRowsPerPage,
+    };
+    if (completedSort) {
+      params.sort = completedSort.key;
+      params.dir = completedSort.direction;
+    }
+    if (filters.name.value) params.name = filters.name.value;
+    if (filters.sessionId) params.session_id = filters.sessionId;
+    if (filters.success.size > 0) params.success = Array.from(filters.success);
+    if (filters.version.size > 0) params.version = Array.from(filters.version);
+    if (filters.startTime.from) params.time_from = filters.startTime.from;
+    if (filters.startTime.to) params.time_to = filters.startTime.to;
+
+    const timer = setTimeout(async () => {
+      try {
+        const resp = await fetchProjectExperiments(projectId, params, controller.signal);
+        setRunningRuns(resp.running.map(experimentToRun));
+        setCompletedRuns(resp.finished.map(experimentToRun));
+        setCompletedTotal(resp.finished_total);
+        setDistinctVersions(resp.distinct_versions);
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.error("Failed to fetch experiments:", err);
+      } finally {
+        setLoading(false);
       }
+    }, delay);
+
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [projectId, completedPage, completedRowsPerPage, completedSort, filters]);
+
+  const handleSetFilters = useCallback((newFilters: Filters) => {
+    setFilters(newFilters);
+    setCompletedPage(1);
+  }, []);
+
+  const handleRunningSort = useCallback((key: string) => {
+    setRunningSort((prev: SortState) => {
+      if (prev?.key === key) return prev.direction === "asc" ? { key, direction: "desc" } : null;
       return { key, direction: "asc" };
     });
   }, []);
 
-  const allRunning = useMemo(() => applyFilters(mockRuns.filter((r) => r.status === "running"), filters, bounds), [filters, bounds]);
+  const handleCompletedSort = useCallback((key: string) => {
+    setCompletedSort((prev: SortState) => {
+      if (prev?.key === key) return prev.direction === "asc" ? { key, direction: "desc" } : null;
+      return { key, direction: "asc" };
+    });
+    setCompletedPage(1);
+  }, []);
+
+  // Running: client-side filter/sort/paginate
+  const allRunning = useMemo(() => applyFilters(runningRuns, filters, bounds), [runningRuns, filters, bounds]);
   const sortedRunning = useMemo(() => sortRuns(allRunning, runningSort), [allRunning, runningSort]);
   const runningTotalPages = Math.max(1, Math.ceil(sortedRunning.length / runningRowsPerPage));
   const safeRunningPage = Math.min(runningPage, runningTotalPages);
   const running = sortedRunning.slice((safeRunningPage - 1) * runningRowsPerPage, safeRunningPage * runningRowsPerPage);
 
-  const allCompleted = useMemo(() => applyFilters(mockRuns.filter((r) => r.status !== "running"), filters, bounds), [filters, bounds]);
-  const sortedCompleted = useMemo(() => sortRuns(allCompleted, completedSort), [allCompleted, completedSort]);
-  const completedTotalPages = Math.max(1, Math.ceil(sortedCompleted.length / completedRowsPerPage));
+  // Completed: server-side filter/sort/paginate
+  const completedTotalPages = Math.max(1, Math.ceil(completedTotal / completedRowsPerPage));
   const safeCompletedPage = Math.min(completedPage, completedTotalPages);
-  const completed = sortedCompleted.slice((safeCompletedPage - 1) * completedRowsPerPage, safeCompletedPage * completedRowsPerPage);
+  const completed = completedRuns;
 
   // Selection helpers (completed runs only)
   const toggleCompletedSelect = (id: string) => {
@@ -895,7 +981,17 @@ export function ProjectPage() {
     }
   };
 
-  if (!project) {
+  if (loading) {
+    return (
+      <div className="project-page">
+        <div className="empty-state">
+          <div className="empty-state-title">Loading...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!projectName) {
     return (
       <div className="project-page">
         <div className="empty-state">
@@ -910,12 +1006,12 @@ export function ProjectPage() {
       <Breadcrumb
         items={[
           { label: "Organization", to: "/" },
-          { label: project.name },
+          { label: projectName },
         ]}
       />
 
       <div className="project-page-header">
-        <div className="project-page-title">{project.name}</div>
+        <div className="project-page-title">{projectName}</div>
       </div>
 
       <div className="project-runs-layout">
@@ -930,12 +1026,12 @@ export function ProjectPage() {
             <table className="runs-table">
               <thead>
                 <tr>
-                  <SortableHeader label="Start Time" sortKey="timestamp" sort={runningSort} onSort={toggleSort(setRunningSort)} />
-                  <SortableHeader label="Session ID" sortKey="sessionId" sort={runningSort} onSort={toggleSort(setRunningSort)} />
-                  <SortableHeader label="Name" sortKey="name" sort={runningSort} onSort={toggleSort(setRunningSort)} />
-                  <SortableHeader label="Input" sortKey="input" sort={runningSort} onSort={toggleSort(setRunningSort)} />
-                  <SortableHeader label="Version" sortKey="codeVersion" sort={runningSort} onSort={toggleSort(setRunningSort)} />
-                  <SortableHeader label="Latency" sortKey="latency" sort={runningSort} onSort={toggleSort(setRunningSort)} />
+                  <SortableHeader label="Start Time" sortKey="timestamp" sort={runningSort} onSort={handleRunningSort} />
+                  <SortableHeader label="Session ID" sortKey="sessionId" sort={runningSort} onSort={handleRunningSort} />
+                  <SortableHeader label="Name" sortKey="name" sort={runningSort} onSort={handleRunningSort} />
+                  <SortableHeader label="Input" sortKey="input" sort={runningSort} onSort={handleRunningSort} />
+                  <SortableHeader label="Version" sortKey="codeVersion" sort={runningSort} onSort={handleRunningSort} />
+                  <SortableHeader label="Latency" sortKey="latency" sort={runningSort} onSort={handleRunningSort} />
                 </tr>
               </thead>
               <tbody>
@@ -964,7 +1060,7 @@ export function ProjectPage() {
         {/* Completed runs section */}
         <div className="runs-section completed-runs-section">
           <div className="landing-section-title">
-            <span>Completed Runs ({allCompleted.length})</span>
+            <span>Completed Runs ({completedTotal})</span>
             <div className="actions-dropdown-wrap" ref={actionsRef}>
               <button
                 className={`actions-dropdown-btn${selectedCompleted.size === 0 ? " actions-inactive" : ""}`}
@@ -1003,18 +1099,18 @@ export function ProjectPage() {
                       onChange={toggleCompletedSelectAll}
                     />
                   </th>
-                  <SortableHeader label="Start Time" sortKey="timestamp" sort={completedSort} onSort={toggleSort(setCompletedSort)} />
-                  <SortableHeader label="Session ID" sortKey="sessionId" sort={completedSort} onSort={toggleSort(setCompletedSort)} />
-                  <SortableHeader label="Name" sortKey="name" sort={completedSort} onSort={toggleSort(setCompletedSort)} />
-                  <SortableHeader label="Input" sortKey="input" sort={completedSort} onSort={toggleSort(setCompletedSort)} />
-                  <SortableHeader label="Output" sortKey="output" sort={completedSort} onSort={toggleSort(setCompletedSort)} />
-                  <SortableHeader label="Version" sortKey="codeVersion" sort={completedSort} onSort={toggleSort(setCompletedSort)} />
-                  <SortableHeader label="Tags" sortKey="tags" sort={completedSort} onSort={toggleSort(setCompletedSort)} />
-                  <SortableHeader label="Comment" sortKey="comment" sort={completedSort} onSort={toggleSort(setCompletedSort)} />
-                  <SortableHeader label="Latency" sortKey="latency" sort={completedSort} onSort={toggleSort(setCompletedSort)} />
-                  <SortableHeader label="Cost" sortKey="cost" sort={completedSort} onSort={toggleSort(setCompletedSort)} />
-                  <SortableHeader label="Success" sortKey="success" sort={completedSort} onSort={toggleSort(setCompletedSort)} />
-                  <SortableHeader label="Confidence" sortKey="confidence" sort={completedSort} onSort={toggleSort(setCompletedSort)} />
+                  <SortableHeader label="Start Time" sortKey="timestamp" sort={completedSort} onSort={handleCompletedSort} />
+                  <SortableHeader label="Session ID" sortKey="sessionId" sort={completedSort} onSort={handleCompletedSort} />
+                  <SortableHeader label="Name" sortKey="name" sort={completedSort} onSort={handleCompletedSort} />
+                  <SortableHeader label="Input" sortKey="input" sort={completedSort} onSort={handleCompletedSort} />
+                  <SortableHeader label="Output" sortKey="output" sort={completedSort} onSort={handleCompletedSort} />
+                  <SortableHeader label="Version" sortKey="codeVersion" sort={completedSort} onSort={handleCompletedSort} />
+                  <SortableHeader label="Tags" sortKey="tags" sort={completedSort} onSort={handleCompletedSort} />
+                  <SortableHeader label="Comment" sortKey="comment" sort={completedSort} onSort={handleCompletedSort} />
+                  <SortableHeader label="Latency" sortKey="latency" sort={completedSort} onSort={handleCompletedSort} />
+                  <SortableHeader label="Cost" sortKey="cost" sort={completedSort} onSort={handleCompletedSort} />
+                  <SortableHeader label="Success" sortKey="success" sort={completedSort} onSort={handleCompletedSort} />
+                  <SortableHeader label="Confidence" sortKey="confidence" sort={completedSort} onSort={handleCompletedSort} />
                 </tr>
               </thead>
               <tbody>
@@ -1033,11 +1129,7 @@ export function ProjectPage() {
                     <td className="cell-content">{run.input}</td>
                     <td className="cell-content">{run.output || "—"}</td>
                     <td><span className="cell-id-link">{run.codeVersion}</span></td>
-                    <td className="cell-tags">
-                      {run.tags.length > 0 ? resolveTagNames(run.tags).map((t) => (
-                        <TagBadge key={t.id} tag={t} size="small" />
-                      )) : "—"}
-                    </td>
+                    <td className="cell-tags">{"—"}</td>
                     <td className="cell-comment">{run.comment || "—"}</td>
                     <td className="cell-metric">{run.latency}</td>
                     <td className="cell-metric">{run.cost}</td>
@@ -1063,9 +1155,10 @@ export function ProjectPage() {
             setCurrentPage={setCompletedPage}
             totalPages={completedTotalPages}
           />
+
         </div>
       </div>
-        <FilterPanel filters={filters} setFilters={setFilters} allRuns={mockRuns} bounds={bounds} />
+        <FilterPanel filters={filters} setFilters={handleSetFilters} distinctVersions={distinctVersions} bounds={bounds} />
       </div>
     </div>
   );
