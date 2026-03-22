@@ -114,6 +114,10 @@ class ServerState:
                 "payload": graph,
             })
 
+    def notify_project_list_changed(self) -> None:
+        """Broadcast a signal so UIs refetch their project list."""
+        self.schedule_broadcast({"type": "project_list_changed"})
+
     def notify_experiment_list_changed(self) -> None:
         """Schedule a debounced broadcast of the experiment list."""
         with self._broadcast_lock:

@@ -10,6 +10,7 @@ import {
 } from "../api";
 import { Play, Users, Calendar, Clock, FolderOpen, AlertTriangle, X } from "lucide-react";
 import arrowLr from "../assets/arrow_lr.png";
+import { subscribe } from "../serverEvents";
 import { ProjectLocationsModal } from "../components/ProjectLocationsModal";
 
 function formatDate(iso: string | null): string {
@@ -164,6 +165,11 @@ export function OrgPage() {
   useEffect(() => {
     loadProjects();
   }, [loadProjects, user]);
+
+  // Refetch when server signals a project was created (e.g. from CLI)
+  useEffect(() => {
+    return subscribe("project_list_changed", loadProjects);
+  }, [loadProjects]);
 
   return (
     <div className="project-page">
