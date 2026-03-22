@@ -24,8 +24,7 @@ echo ""
 
 # 1. Python server
 echo "[ao-server]  Starting..."
-source ~/miniforge3/etc/profile.d/conda.sh && conda activate ao-dev
-ao-server start 2>&1 | sed 's/^/[ao-server]  /' &
+uv run ao-server start 2>&1 | sed 's/^/[ao-server]  /' &
 
 # 2. Web app server (Express + WebSocket proxy)
 echo "[web-server] Starting on :4000..."
