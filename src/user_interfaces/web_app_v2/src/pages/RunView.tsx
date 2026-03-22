@@ -48,24 +48,18 @@ interface GraphEdge {
   target: string;
 }
 
-/** Extract `to_show` from parsed I/O data (matching VSCode extension convention).
- *  Backend stores { raw: {...}, to_show: {...} } — UI displays `to_show`. */
-function extractToShow(data: Record<string, unknown>): Record<string, unknown> {
-  if (data.to_show && typeof data.to_show === "object") return data.to_show as Record<string, unknown>;
-  return data;
-}
-
-/** Parse backend graph payload into frontend types. */
+/** Parse backend graph payload into frontend types.
+ *  Graph nodes contain to_show data directly (display-ready). */
 function parseGraphPayload(payload: GraphPayload): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = payload.nodes.map((n: BackendGraphNode) => {
-    let inputFull: Record<string, unknown> = {};
-    let outputFull: Record<string, unknown> = {};
-    try { inputFull = typeof n.input === "string" ? JSON.parse(n.input) : (n.input as any) ?? {}; } catch { /* empty */ }
-    try { outputFull = typeof n.output === "string" ? JSON.parse(n.output) : (n.output as any) ?? {}; } catch { /* empty */ }
+    let input: Record<string, unknown> = {};
+    let output: Record<string, unknown> = {};
+    try { input = typeof n.input === "string" ? JSON.parse(n.input) : (n.input as any) ?? {}; } catch { /* empty */ }
+    try { output = typeof n.output === "string" ? JSON.parse(n.output) : (n.output as any) ?? {}; } catch { /* empty */ }
     return {
       id: n.id, label: n.label,
-      input: extractToShow(inputFull),
-      output: extractToShow(outputFull),
+      input,
+      output,
       border_color: n.border_color, stack_trace: n.stack_trace, model: n.model, attachments: n.attachments,
     };
   });
@@ -106,7 +100,7 @@ function LLMNode({ data, selected }: NodeProps) {
   return (
     <div
       className={`graph-llm-node${selected ? " selected" : ""}${d.focused ? " focused" : ""}`}
-      style={d.focused ? { borderColor: "#43884e" } : d.borderColor ? { borderColor: d.borderColor } : undefined}
+      style={d.focused ? { borderColor: "#43884e" } : undefined}
     >
       <Handle type="target" position={Position.Top} id="top" className="graph-handle" />
       <Handle type="target" position={Position.Left} id="left" className="graph-handle graph-handle-side" />
@@ -122,8 +116,11 @@ function LLMNode({ data, selected }: NodeProps) {
 
 /** Custom edge that renders a polyline path from layout engine waypoints. */
 function RoutedEdgeComponent({ id, data }: EdgeProps) {
-  const points = (data as Record<string, unknown>)?.points as Point[] | undefined;
-  const color = ((data as Record<string, unknown>)?.color as string) || "var(--color-text-muted)";
+  const d_ = data as Record<string, unknown>;
+  const points = d_?.points as Point[] | undefined;
+  const highlighted = d_?.highlighted as boolean;
+  const color = highlighted ? "#43884e" : "var(--color-text-muted)";
+  const strokeWidth = highlighted ? 2.5 : 1.5;
   if (!points || points.length < 2) return null;
   const d = points.reduce((acc, p, i) =>
     i === 0 ? `M ${p.x},${p.y}` : `${acc} L ${p.x},${p.y}`, "");
@@ -131,13 +128,13 @@ function RoutedEdgeComponent({ id, data }: EdgeProps) {
   return (
     <>
       <defs>
-        <marker id={markerId} markerWidth="8" markerHeight="8" refX="8" refY="4"
+        <marker id={markerId} markerWidth="8" markerHeight="8" refX="6" refY="4"
           orient="auto" markerUnits="userSpaceOnUse">
           <polygon points="0,0 8,4 0,8" fill={color} />
         </marker>
       </defs>
       <path d={d} markerEnd={`url(#${markerId})`}
-        style={{ stroke: color, strokeWidth: 1.5, fill: "none" }} />
+        style={{ stroke: color, strokeWidth, fill: "none" }} />
     </>
   );
 }
@@ -725,9 +722,13 @@ export function RunView() {
   );
   const sortedNodeIds = graphLayout.sortedIds;
 
-  // Always center on the last topological node whenever the graph changes.
+  // Center on the last topological node when nodes are added/removed (not on content-only edits).
+  const prevNodeCountRef = useRef(0);
   useEffect(() => {
     if (!sortedNodeIds.length) return;
+    if (sortedNodeIds.length === prevNodeCountRef.current) return;
+    prevNodeCountRef.current = sortedNodeIds.length;
+
     const lastId = sortedNodeIds[sortedNodeIds.length - 1];
     const pos = graphLayout.positions.get(lastId);
     if (!pos) return;
@@ -853,9 +854,9 @@ export function RunView() {
       type: "routed",
       sourceHandle: e.sourceHandle,
       targetHandle: e.targetHandle,
-      data: { points: e.points, color: e.color },
+      data: { points: e.points, highlighted: e.target === focusedNodeId },
     }));
-  }, [graphLayout]);
+  }, [graphLayout, focusedNodeId]);
 
   const scrollToNode = useCallback((nodeId: string, behavior: ScrollBehavior = "smooth") => {
     const el = nodeRefs.current.get(nodeId);
@@ -878,7 +879,7 @@ export function RunView() {
     api.setCenter(pos.x + NODE_W / 2, pos.y + NODE_H / 2, { zoom: 1, duration: 300 });
     setSelectedNodeId(nodeId);
     setFocusedNodeId(nodeId);
-    scrollToNode(nodeId);
+    scrollToNode(nodeId, "smooth");
   }, [sortedNodeIds, graphLayout, scrollToNode]);
 
   /** Center on a node by id. */
@@ -887,24 +888,46 @@ export function RunView() {
     if (idx >= 0) focusNodeByIndex(idx);
   }, [sortedNodeIds, focusNodeByIndex]);
 
-  // Scroll-wheel navigates between nodes (discrete, not continuous pan)
   const focusedRef = useRef(focusedNodeId);
   focusedRef.current = focusedNodeId;
+
+  // Scroll-wheel navigates between nodes (throttled: fires immediately, then cooldown)
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
-    let cooldown = false;
+    let cooldownUntil = 0;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      if (cooldown || !sortedNodeIds.length) return;
-      cooldown = true;
-      setTimeout(() => { cooldown = false; }, 300);
+      const now = performance.now();
+      if (now < cooldownUntil) return;
+      if (Math.abs(e.deltaY) < 4) return; // ignore tiny trackpad noise
       const dir = e.deltaY > 0 ? 1 : -1;
       const curIdx = sortedNodeIds.indexOf(focusedRef.current ?? "");
       focusNodeByIndex(curIdx + dir);
+      cooldownUntil = now + 1000;
     };
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
+    return () => { el.removeEventListener("wheel", onWheel); };
+  }, [sortedNodeIds, focusNodeByIndex]);
+
+  // Arrow-key navigation between nodes (same cooldown as scroll)
+  useEffect(() => {
+    let cooldownUntil = 0;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      // Don't capture when user is typing in an input/textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      e.preventDefault();
+      const now = performance.now();
+      if (now < cooldownUntil) return;
+      const dir = e.key === "ArrowDown" ? 1 : -1;
+      const curIdx = sortedNodeIds.indexOf(focusedRef.current ?? "");
+      focusNodeByIndex(curIdx + dir);
+      cooldownUntil = now + 300;
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => { window.removeEventListener("keydown", onKeyDown); };
   }, [sortedNodeIds, focusNodeByIndex]);
 
   // Re-center on focused node when container resizes
@@ -1027,6 +1050,8 @@ export function RunView() {
                   nodesDraggable={false}
                   panOnDrag={false}
                   zoomOnScroll={false}
+                  zoomOnPinch={false}
+                  zoomOnDoubleClick={false}
                   preventScrolling
                 >
                   <GraphApi apiRef={graphApi} />

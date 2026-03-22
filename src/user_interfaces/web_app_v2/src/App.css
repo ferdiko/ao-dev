@@ -2459,12 +2459,14 @@
 .graph-llm-node {
   position: relative;
   width: 170px;
+  height: 46px;
   padding: 6px 10px;
   background: var(--color-surface-warm);
   border: 1.5px solid var(--color-border);
   border-radius: 8px;
   cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s;
+  overflow: hidden;
 }
 
 .graph-llm-node:hover {

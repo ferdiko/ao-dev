@@ -21,16 +21,6 @@ declare global {
 }
 
 /**
- * Shape of the stored node JSON value.
- * `raw` must be preserved exactly.
- * `to_show` is the editable/displayed portion.
- */
-interface NodeStoredValue {
-  raw: string;
-  to_show: unknown;
-}
-
-/**
  * lossless-json stringify can return undefined.
  * Normalize it to always return a string.
  */
@@ -42,17 +32,10 @@ const safeStringify = (
   return stringify(value, replacer, space) ?? '';
 };
 
-/**
- * Extracts and parses the `to_show` field if present.
- * Falls back to parsing the raw string.
- */
+/** Parse a JSON string, returning null on failure. */
 const extractDisplayData = (jsonStr: string): unknown => {
   try {
-    const parsed = parse(jsonStr);
-    if (parsed && typeof parsed === 'object' && 'to_show' in parsed) {
-      return (parsed as NodeStoredValue).to_show;
-    }
-    return parsed;
+    return parse(jsonStr);
   } catch {
     return null;
   }
@@ -151,45 +134,25 @@ export const NodeEditorTabApp: React.FC = () => {
   const handleSave = useCallback(() => {
     if (!context || !window.vscode) return;
 
-    // Reconstruct the { raw, to_show } structure for both input and output
-    const reconstructValue = (originalStr: string, editedData: unknown): string => {
-      try {
-        const originalParsed = parse(originalStr) as NodeStoredValue;
-
-        if (originalParsed && typeof originalParsed === 'object' && 'to_show' in originalParsed) {
-          const reconstructed: NodeStoredValue = {
-            raw: originalParsed.raw,
-            to_show: editedData
-          };
-          return safeStringify(reconstructed);
-        }
-      } catch {
-        // fall through
-      }
-      return safeStringify(editedData);
-    };
-
     // Check if input changed
     const inputChanged = safeStringify(inputData) !== safeStringify(initialInputData);
     if (inputChanged) {
-      const inputValueToSave = reconstructValue(context.inputValue, inputData);
       window.vscode.postMessage({
         type: 'edit_input',
         session_id: context.sessionId,
         node_id: context.nodeId,
-        value: inputValueToSave
+        value: safeStringify(inputData),
       });
     }
 
     // Check if output changed
     const outputChanged = safeStringify(outputData) !== safeStringify(initialOutputData);
     if (outputChanged) {
-      const outputValueToSave = reconstructValue(context.outputValue, outputData);
       window.vscode.postMessage({
         type: 'edit_output',
         session_id: context.sessionId,
         node_id: context.nodeId,
-        value: outputValueToSave
+        value: safeStringify(outputData),
       });
     }
 

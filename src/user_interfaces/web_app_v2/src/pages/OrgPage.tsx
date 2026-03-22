@@ -163,7 +163,7 @@ export function OrgPage() {
 
   useEffect(() => {
     loadProjects();
-  }, [loadProjects]);
+  }, [loadProjects, user]);
 
   return (
     <div className="project-page">

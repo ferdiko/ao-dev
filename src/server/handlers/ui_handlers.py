@@ -14,11 +14,11 @@ def handle_edit_input(state, msg: dict) -> None:
     node_id = msg["node_id"]
     new_input = msg["value"]
 
-    DB.set_input_overwrite(session_id, node_id, new_input)
-    if session_id in state.session_graphs:
+    overwrite = DB.set_input_overwrite(session_id, node_id, new_input)
+    if overwrite and session_id in state.session_graphs:
         for node in state.session_graphs[session_id]["nodes"]:
             if node["id"] == node_id:
-                node["input"] = new_input
+                node["input"] = new_input  # graph stores to_show for display
                 break
         DB.update_graph_topology(session_id, state.session_graphs[session_id])
 
@@ -29,11 +29,11 @@ def handle_edit_output(state, msg: dict) -> None:
     node_id = msg["node_id"]
     new_output = msg["value"]
 
-    DB.set_output_overwrite(session_id, node_id, new_output)
-    if session_id in state.session_graphs:
+    overwrite = DB.set_output_overwrite(session_id, node_id, new_output)
+    if overwrite and session_id in state.session_graphs:
         for node in state.session_graphs[session_id]["nodes"]:
             if node["id"] == node_id:
-                node["output"] = new_output
+                node["output"] = new_output  # graph stores to_show for display
                 break
         DB.update_graph_topology(session_id, state.session_graphs[session_id])
 

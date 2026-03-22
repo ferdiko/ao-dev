@@ -32,7 +32,6 @@ export interface RoutedEdge {
   target: string;
   points: Point[];
   type: "direct" | "band";
-  color?: string;
   sourceHandle: string;
   targetHandle: string;
 }
@@ -56,10 +55,6 @@ const BAND_GAP = 15; // gap between node edge and first band
 const BAND_ENTRY_STAGGER_STEP = 4;
 const BAND_ENTRY_STAGGER_CLAMP = 8;
 
-const BAND_COLORS = [
-  "#1565C0", "#2E7D32", "#E65100", "#F9A825", "#0277BD",
-  "#558B2F", "#FF8F00", "#00838F", "#388E3C", "#EF6C00",
-];
 
 // ── Topological sort ─────────────────────────────────────
 
@@ -289,7 +284,6 @@ function routeEdges(nodes: LayoutNode[], bands: BandInfo[]): RoutedEdge[] {
         target: cand.target.id,
         type: "band",
         points,
-        color: BAND_COLORS[(cand.band.level - 1) % BAND_COLORS.length],
         sourceHandle: cand.band.side === "right" ? "right" : "left",
         targetHandle: isSingle
           ? (cand.band.side === "right" ? "left" : "right")

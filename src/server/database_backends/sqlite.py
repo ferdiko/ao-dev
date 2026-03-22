@@ -700,6 +700,24 @@ def delete_project_query(project_id):
 
 def delete_user_query(user_id):
     """Delete a user and all associated experiments, llm_calls, lessons_applied, and locations."""
+    # 1. Get projects associated to this user
+    project_ids = [
+        r["project_id"]
+        for r in query_all(
+            "SELECT DISTINCT project_id FROM user_project_locations WHERE user_id=?", (user_id,)
+        )
+    ]
+    # 2. For each project, get the set of all users belonging to it
+    project_users: dict[str, set[str]] = {}
+    for pid in project_ids:
+        rows = query_all(
+            "SELECT DISTINCT user_id FROM user_project_locations WHERE project_id=?", (pid,)
+        )
+        project_users[pid] = {r["user_id"] for r in rows}
+    # Delete projects where this user is the sole member
+    for pid, users in project_users.items():
+        if users == {user_id}:
+            delete_project_query(pid)
     sessions = query_all("SELECT session_id FROM experiments WHERE user_id=?", (user_id,))
     _delete_sessions_data([s["session_id"] for s in sessions])
     execute("DELETE FROM user_project_locations WHERE user_id=?", (user_id,))

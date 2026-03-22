@@ -19,35 +19,19 @@ export const NodeEditModal: React.FC<NodeEditModalProps> = ({
   onClose,
   onSave
 }) => {
-  // Parse the initial value to extract to_show field
-  const getDisplayValue = (jsonStr: string): string => {
-    try {
-      const parsed = JSON.parse(jsonStr);
-      if (parsed && typeof parsed === 'object' && 'to_show' in parsed) {
-        return JSON.stringify(parsed.to_show, null, 2);
-      }
-    } catch (e) {
-      // If parsing fails, return original string
-    }
-    return jsonStr;
-  };
-
-  const [currentValue, setCurrentValue] = useState(getDisplayValue(initialValue));
-  const [savedValue, setSavedValue] = useState(getDisplayValue(initialValue));
+  const [currentValue, setCurrentValue] = useState(initialValue);
+  const [savedValue, setSavedValue] = useState(initialValue);
   const [hasChanges, setHasChanges] = useState(false);
   const isDarkTheme = useIsVsCodeDarkTheme();
   const [parsedData, setParsedData] = useState<any>(null);
 
   useEffect(() => {
-    const displayValue = getDisplayValue(initialValue);
-    setCurrentValue(displayValue);
-    setSavedValue(displayValue);
+    setCurrentValue(initialValue);
+    setSavedValue(initialValue);
     setHasChanges(false);
 
-    // Try to parse the data for the JSON viewer
     try {
-      const parsed = JSON.parse(displayValue);
-      setParsedData(parsed);
+      setParsedData(JSON.parse(initialValue));
     } catch (e) {
       setParsedData(null);
     }
@@ -89,27 +73,7 @@ export const NodeEditModal: React.FC<NodeEditModalProps> = ({
   }, [hasChanges, currentValue]);
 
   const handleSave = () => {
-    // Reconstruct the full JSON structure with both raw and to_show fields
-    let valueToSave = currentValue;
-    try {
-      const originalParsed = JSON.parse(initialValue);
-      if (originalParsed && typeof originalParsed === 'object' && 'to_show' in originalParsed) {
-        // Parse the edited to_show value
-        const editedToShow = JSON.parse(currentValue);
-        // Reconstruct with updated to_show
-        const reconstructed = {
-          raw: editedToShow,  // Update raw to match to_show
-          to_show: editedToShow
-        };
-        valueToSave = JSON.stringify(reconstructed);
-      }
-    } catch (e) {
-      // If parsing fails, save as-is
-      valueToSave = currentValue;
-    }
-
-    onSave(nodeId, field, valueToSave);
-    // Update savedValue to match currentValue so hasChanges becomes false
+    onSave(nodeId, field, currentValue);
     setSavedValue(currentValue);
   };
 

@@ -21,6 +21,7 @@ from ao.runner.monkey_patching.api_parser import (
     api_obj_to_json_str,
     json_str_to_original_inp_dict,
     api_obj_to_response_ok,
+    merge_filtered_into_raw,
 )
 
 
@@ -59,7 +60,6 @@ class DatabaseManager:
 
         self.cache_attachments = True
         self.attachment_cache_dir = ATTACHMENT_CACHE
-        self._user_id = None
         # Tracks per-(session_id, input_hash) lookup count so concurrent
         # identical calls (e.g. ensemble candidates) each get a distinct
         # cached row instead of all hitting the same first row.
@@ -68,10 +68,8 @@ class DatabaseManager:
 
     @property
     def user_id(self):
-        if self._user_id is None:
-            from ao.common.user import read_user_id
-            self._user_id = read_user_id()
-        return self._user_id
+        from ao.common.user import read_user_id
+        return read_user_id()
 
     def _next_occurrence(self, session_id: str, input_hash: str) -> int:
         """Return and increment the lookup count for (session_id, input_hash)."""
@@ -101,29 +99,44 @@ class DatabaseManager:
         return self.backend.execute(query, params or ())
 
     def set_input_overwrite(self, session_id, node_id, new_input):
-        # Normalize JSON representation
-        new_input = json.dumps(json.loads(new_input), sort_keys=True)
+        """UI sends to_show data; merge into original raw to build full format for the runner.
+        Returns the full-format overwrite string, or None if unchanged."""
+        new_to_show = json.loads(new_input)
         row = self.backend.get_llm_call_input_api_type_query(session_id, node_id)
-        original_input = json.dumps(json.loads(row["input"]), sort_keys=True)
-        # Only clear output if input actually changed
-        if original_input != new_input:
-            self.backend.set_input_overwrite_query(new_input, session_id, node_id)
+        original = json.loads(row["input"])
+
+        if json.dumps(new_to_show, sort_keys=True) == json.dumps(original["to_show"], sort_keys=True):
+            return None
+
+        merged_raw = merge_filtered_into_raw(original["raw"], new_to_show)
+        overwrite = json.dumps({"raw": merged_raw, "to_show": new_to_show}, sort_keys=True)
+        self.backend.set_input_overwrite_query(overwrite, session_id, node_id)
+        return overwrite
 
     def set_output_overwrite(self, session_id, node_id, new_output: str):
+        """UI sends to_show data; merge into original raw to build full format for the runner.
+        Returns the full-format overwrite string, or None if unchanged or error."""
         row = self.backend.get_llm_call_output_api_type_query(session_id, node_id)
 
         if not row:
             logger.error(
                 f"No llm_calls record found for session_id={session_id}, node_id={node_id}"
             )
-            return
+            return None
 
         try:
-            json_str_to_api_obj(new_output, row["api_type"])
-            new_output = json.dumps(json.loads(new_output), sort_keys=True)
-            self.backend.set_output_overwrite_query(new_output, session_id, node_id)
+            new_to_show = json.loads(new_output)
+            original = json.loads(row["output"])
+
+            merged_raw = merge_filtered_into_raw(original["raw"], new_to_show)
+            overwrite = json.dumps({"raw": merged_raw, "to_show": new_to_show}, sort_keys=True)
+
+            json_str_to_api_obj(overwrite, row["api_type"])
+            self.backend.set_output_overwrite_query(overwrite, session_id, node_id)
+            return overwrite
         except Exception as e:
             logger.error(f"Failed to parse output edit into API object: {e}")
+            return None
 
     def erase(self, session_id):
         """Erase experiment data."""
@@ -498,6 +511,13 @@ class DatabaseManager:
             if path.startswith(loc):
                 return row["project_id"], row["project_location"]
         return None
+
+    def get_user_project_locations(self, user_id):
+        """Get all project locations for a user across all projects."""
+        rows = self.backend.query_all(
+            "SELECT project_location FROM user_project_locations WHERE user_id=?", (user_id,)
+        )
+        return [row["project_location"] for row in rows]
 
     def get_project_locations(self, user_id, project_id):
         return self.backend.get_project_locations_query(user_id, project_id)

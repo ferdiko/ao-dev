@@ -12,7 +12,7 @@ from ao.server.app import get_state
 from ao.server.state import ServerState, logger
 from ao.server.database_manager import DB
 from ao.common.user import read_user_id, write_user_id
-from ao.common.project import find_project_root, read_project_id, write_project_id
+from ao.common.project import find_project_root, read_project_id, write_project_id, delete_project_configs
 from ao.server.handlers.ui_handlers import (
     handle_edit_input,
     handle_edit_output,
@@ -166,6 +166,8 @@ def delete_user(req: DeleteUserRequest):
         return JSONResponse(status_code=404, content={"error": "User not found."})
     if req.confirmation_name != row["full_name"]:
         return JSONResponse(status_code=400, content={"error": "Name does not match."})
+    # Remove .ao/ folders at every project location before deleting DB records
+    delete_project_configs(DB.get_user_project_locations(user_id))
     DB.delete_user(user_id)
     # Remove the .user_id file
     from ao.common.constants import USER_ID_PATH
