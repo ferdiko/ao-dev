@@ -1,7 +1,5 @@
 import { ChevronUp, ChevronDown } from "lucide-react";
-
-type SortDirection = "asc" | "desc";
-type SortState = { key: string; direction: SortDirection } | null;
+import type { SortState } from "../hooks/useStoredSortState";
 
 export function SortableHeader({
   label,

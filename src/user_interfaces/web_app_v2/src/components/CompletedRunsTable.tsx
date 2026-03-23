@@ -1,24 +1,7 @@
 import type { KeyboardEvent } from "react";
 import { SortableHeader } from "./SortableHeader";
-
-type SortDirection = "asc" | "desc";
-type SortState = { key: string; direction: SortDirection } | null;
-
-interface CompletedRunRow {
-  id: string;
-  sessionId: string;
-  name: string;
-  timestamp: string;
-  input: string;
-  output: string;
-  latency: string;
-  cost: string;
-  codeVersion: string;
-  success: boolean | null;
-  confidence: number | null;
-  tags: string[];
-  comment: string;
-}
+import type { SortState } from "../hooks/useStoredSortState";
+import type { ProjectRun } from "../projectRuns";
 
 export function CompletedRunsTable({
   allVisibleSelected,
@@ -38,7 +21,7 @@ export function CompletedRunsTable({
   onSort: (key: string) => void;
   onToggleSelect: (id: string) => void;
   onToggleSelectAll: () => void;
-  runs: CompletedRunRow[];
+  runs: ProjectRun[];
   selectedIds: Set<string>;
   sort: SortState;
   formatTimestamp: (raw: string) => string;
