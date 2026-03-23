@@ -12,6 +12,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import { fetchProjects, fetchUser, type Project, type User } from "../api";
+import { subscribe } from "../serverEvents";
 import logoWithSymbol from "../assets/logo_with_symbol.png";
 
 interface NavItem {
@@ -47,13 +48,14 @@ const settingsItems: NavItem[] = [
   },
 ];
 
-export function Sidebar({ projectId, style, children, user, onSetupProfile, onUserSettings }: {
+export function Sidebar({ projectId, style, children, user, onSetupProfile, onUserSettings, onProjectSettings }: {
   projectId?: string;
   style?: React.CSSProperties;
   children?: React.ReactNode;
   user?: User | null;
   onSetupProfile?: () => void;
   onUserSettings?: () => void;
+  onProjectSettings?: () => void;
 }) {
   const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -67,6 +69,13 @@ export function Sidebar({ projectId, style, children, user, onSetupProfile, onUs
     fetchProjects()
       .then(setProjects)
       .catch((err) => console.error("Failed to fetch projects:", err));
+  }, []);
+
+  // Refetch when projects change (name update, deletion, new project from CLI)
+  useEffect(() => {
+    return subscribe("project_list_changed", () => {
+      fetchProjects().then(setProjects);
+    });
   }, []);
 
   // Close dropdown on outside click
@@ -87,13 +96,18 @@ export function Sidebar({ projectId, style, children, user, onSetupProfile, onUs
     "sovara": `/project/${projectId}/sovara`,
   };
 
+  const callbackItems: Record<string, (() => void) | undefined> = {
+    "project-settings": onProjectSettings,
+  };
+
   function renderNavItem(item: NavItem) {
+    const callback = callbackItems[item.id];
     const route = navRoutes[item.id];
     return (
       <button
         key={item.id}
         className="sidebar-item"
-        onClick={route ? () => navigate(route) : undefined}
+        onClick={callback ?? (route ? () => navigate(route) : undefined)}
       >
         <span className="sidebar-item-icon">{item.icon}</span>
         {item.label}

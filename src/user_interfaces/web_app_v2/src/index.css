@@ -10,7 +10,7 @@
   --sidebar-width: 400px;
 
   /* Layout: shared dimensions (sidebar & main content stay aligned) */
-  --header-row-1: 51px;   /* breadcrumb / logo row */
+  --header-row-1: 40px;   /* breadcrumb / logo row */
   --header-row-2: 36px;   /* toolbar / project-selector row */
   --footer-row: 49px;     /* sidebar profile / pagination row */
 

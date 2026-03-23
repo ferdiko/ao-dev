@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams, useNavigate, Link } from "react-router-dom";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -26,7 +26,8 @@ import {
 } from "../api";
 import { subscribe } from "../serverEvents";
 import { layoutGraph, NODE_W, NODE_H, type Point } from "../graphLayout";
-import { Sparkles, Pencil, RotateCcw, Loader2, Undo2, ThumbsUp, ThumbsDown, Copy } from "lucide-react";
+import { Sparkles, Pencil, RotateCcw, Loader2, Undo2, ThumbsUp, ThumbsDown, Copy, X, ChevronRight } from "lucide-react";
+import logoBlack from "../assets/logo_black.png";
 
 // ── Types ────────────────────────────────────────────────
 
@@ -653,33 +654,186 @@ function GraphApi({ apiRef }: { apiRef: React.MutableRefObject<GraphApiHandle | 
   return null;
 }
 
-// ── Main RunView ───────────────────────────────────────
+// ── Main RunView (tab shell) ──────────────────────────
 
 export function RunView() {
-  const { projectId, sessionId } = useParams();
+  const { projectId, sessionId: rawSessionIds } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
 
-  // Data state
+  const sessionIds = useMemo(() => rawSessionIds?.split(",").filter(Boolean) ?? [], [rawSessionIds]);
+  const activeSessionId = searchParams.get("active") ?? sessionIds[0];
+
+  // Fetch project name once for breadcrumb
   const [projectName, setProjectName] = useState("");
+  useEffect(() => {
+    if (!projectId) return;
+    fetchProject(projectId).then((p) => setProjectName(p.name)).catch(console.error);
+  }, [projectId]);
+
+  // Fetch run names for all open tabs
+  const [tabNames, setTabNames] = useState<Map<string, string>>(new Map());
+  const sessionIdsKey = sessionIds.join(",");
+  useEffect(() => {
+    if (!sessionIds.length) return;
+    let cancelled = false;
+    Promise.all(sessionIds.map((id) =>
+      fetchExperimentDetail(id).then((d) => [id, d.run_name] as const).catch(() => [id, ""] as const)
+    )).then((pairs) => {
+      if (!cancelled) setTabNames(new Map(pairs));
+    });
+    return () => { cancelled = true; };
+  }, [sessionIdsKey]);
+
+  const switchTab = useCallback((id: string) => {
+    setSearchParams({ active: id });
+  }, [setSearchParams]);
+
+  const closeTab = useCallback((id: string) => {
+    const remaining = sessionIds.filter((s) => s !== id);
+    if (remaining.length === 0) {
+      navigate(`/project/${projectId}`);
+      return;
+    }
+    const newActive = id === activeSessionId
+      ? remaining[Math.min(sessionIds.indexOf(id), remaining.length - 1)]
+      : activeSessionId;
+    navigate(`/project/${projectId}/run/${remaining.join(",")}?active=${newActive}`);
+  }, [sessionIds, activeSessionId, projectId, navigate]);
+
+  const isMultiTab = sessionIds.length > 1;
+
+  // Measure active tab position for shaped SVG divider
+  const headerRef = useRef<HTMLDivElement>(null);
+  const activeTabRef = useRef<HTMLDivElement>(null);
+  const [dividerPath, setDividerPath] = useState("");
+  const [tabFillPath, setTabFillPath] = useState("");
+
+  useEffect(() => {
+    const header = headerRef.current;
+    const tab = activeTabRef.current;
+    if (!header || !tab) { setDividerPath(""); setTabFillPath(""); return; }
+    const measure = () => {
+      const hRect = header.getBoundingClientRect();
+      const tRect = tab.getBoundingClientRect();
+      const w = hRect.width;
+      const h = hRect.height;
+      const tl = tRect.left - hRect.left;
+      const tr = tRect.right - hRect.left;
+      const tt = tRect.top - hRect.top;
+      const r = 8;
+      setDividerPath(
+        `M 0,${h} L ${tl - r},${h}` +
+        ` A ${r} ${r} 0 0 0 ${tl},${h - r}` +
+        ` L ${tl},${tt + r}` +
+        ` A ${r} ${r} 0 0 1 ${tl + r},${tt}` +
+        ` L ${tr - r},${tt}` +
+        ` A ${r} ${r} 0 0 1 ${tr},${tt + r}` +
+        ` L ${tr},${h - r}` +
+        ` A ${r} ${r} 0 0 0 ${tr + r},${h}` +
+        ` L ${w},${h}`
+      );
+      setTabFillPath(
+        `M ${tl - r},${h}` +
+        ` A ${r} ${r} 0 0 0 ${tl},${h - r}` +
+        ` L ${tl},${tt + r}` +
+        ` A ${r} ${r} 0 0 1 ${tl + r},${tt}` +
+        ` L ${tr - r},${tt}` +
+        ` A ${r} ${r} 0 0 1 ${tr},${tt + r}` +
+        ` L ${tr},${h - r}` +
+        ` A ${r} ${r} 0 0 0 ${tr + r},${h}` +
+        ` Z`
+      );
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(header);
+    if (tab) ro.observe(tab);
+    return () => ro.disconnect();
+  }, [activeSessionId, sessionIdsKey, tabNames]);
+
+  if (!activeSessionId) {
+    return (
+      <div className="run-view">
+        <div className="empty-state">
+          <div className="empty-state-title">No run selected</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isMultiTab) {
+    return (
+      <div className="run-view">
+        <Breadcrumb items={[
+          { label: "Projects", to: "/" },
+          { label: projectName || "Project", to: `/project/${projectId}` },
+          { label: tabNames.get(sessionIds[0]) || sessionIds[0] || "Run" },
+        ]} />
+        <RunViewContent key={activeSessionId} sessionId={activeSessionId} projectId={projectId!} projectName={projectName} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="run-view">
+      <div className="run-view-panel">
+        <div className="run-view-panel-header" ref={headerRef}>
+          <Link to="/" className="breadcrumb-link">Projects</Link>
+          <ChevronRight size={14} className="breadcrumb-separator" />
+          <Link to={`/project/${projectId}`} className="breadcrumb-link">{projectName || "Project"}</Link>
+          <ChevronRight size={14} className="breadcrumb-separator" />
+          {dividerPath && (
+            <svg className="run-tab-divider-svg" preserveAspectRatio="none">
+              <path d={tabFillPath} fill="var(--color-surface)" stroke="none" />
+              <path d={dividerPath} fill="none" stroke="var(--color-border)" strokeWidth="1" />
+            </svg>
+          )}
+          <div className="run-tabs">
+            {sessionIds.map((id) => (
+              <div
+                key={id}
+                ref={id === activeSessionId ? activeTabRef : undefined}
+                className={`run-tab${id === activeSessionId ? " active" : ""}`}
+                onClick={() => switchTab(id)}
+              >
+                <img src={logoBlack} alt="" className="run-tab-icon" />
+                <span className="run-tab-label">{tabNames.get(id) || id.slice(0, 8)}</span>
+                <span className="run-tab-close" onClick={(e) => { e.stopPropagation(); closeTab(id); }}>
+                  <X size={10} />
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <RunViewContent key={activeSessionId} sessionId={activeSessionId} projectId={projectId!} projectName={projectName} />
+      </div>
+    </div>
+  );
+}
+
+// ── RunViewContent (single-run body) ──────────────────
+
+function RunViewContent({ sessionId, projectId, projectName }: { sessionId: string; projectId: string; projectName: string }) {
+  // Data state
   const [runName, setRunName] = useState("");
   const [runResult, setRunResult] = useState<string>("");
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Fetch project, experiment detail, and graph on mount
+  // Fetch experiment detail and graph on mount
   useEffect(() => {
-    if (!projectId || !sessionId) return;
+    if (!sessionId) return;
     let cancelled = false;
 
     async function load() {
       try {
-        const [proj, detail, graphResp] = await Promise.all([
-          fetchProject(projectId!),
-          fetchExperimentDetail(sessionId!),
-          fetchGraph(sessionId!),
+        const [detail, graphResp] = await Promise.all([
+          fetchExperimentDetail(sessionId),
+          fetchGraph(sessionId),
         ]);
         if (cancelled) return;
-        setProjectName(proj.name);
         setRunName(detail.run_name);
         setRunResult(detail.result);
         const parsed = parseGraphPayload(graphResp.payload);
@@ -693,7 +847,7 @@ export function RunView() {
     }
     load();
     return () => { cancelled = true; };
-  }, [projectId, sessionId]);
+  }, [sessionId]);
 
   // Subscribe to WebSocket for live graph updates
   useEffect(() => {
@@ -971,24 +1125,14 @@ export function RunView() {
 
   if (loading) {
     return (
-      <div className="run-view">
-        <div className="empty-state">
-          <Loader2 size={24} className="fa-spinner" />
-          <div className="empty-state-title" style={{ marginTop: 12 }}>Loading run…</div>
-        </div>
+      <div className="empty-state">
+        <Loader2 size={24} className="fa-spinner" />
+        <div className="empty-state-title" style={{ marginTop: 12 }}>Loading run…</div>
       </div>
     );
   }
 
   return (
-    <div className="run-view">
-      <Breadcrumb
-        items={[
-          { label: "Organization", to: "/" },
-          { label: projectName || "Project", to: `/project/${projectId}` },
-          { label: runName || sessionId || "Run" },
-        ]}
-      />
       <div className="run-view-columns">
       <div className="run-view-left">
 
@@ -1115,7 +1259,6 @@ export function RunView() {
 
       </div>
       </div>{/* end run-view-left */}
-      </div>{/* end run-view-columns */}
-    </div>
+      </div>
   );
 }

@@ -137,7 +137,7 @@ export function SovaraPage() {
     <div className="page-wrapper">
       <Breadcrumb
         items={[
-          { label: "Organization", to: "/" },
+          { label: "Projects", to: "/" },
           { label: "Sovara" },
         ]}
       />

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, createContext, useContext } from "react";
-import { BrowserRouter, Routes, Route, useParams } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useParams, useNavigate } from "react-router-dom";
 import { Sidebar } from "./components/Sidebar";
 import { OrgPage } from "./pages/OrgPage";
 import { ProjectPage } from "./pages/ProjectPage";
@@ -8,8 +8,9 @@ import { PriorsPage } from "./pages/PriorsPage";
 import { SovaraPage } from "./pages/SovaraPage";
 import { SetupProfileModal } from "./components/SetupProfileModal";
 import { UserSettingsModal } from "./components/UserSettingsModal";
+import { ProjectSettingsModal } from "./components/ProjectSettingsModal";
 import { useResize } from "./hooks/useResize";
-import { fetchUser, type User } from "./api";
+import { fetchUser, fetchProject, type User } from "./api";
 import arrowImg from "./assets/arrow_spiral_tr_bl.png";
 import "./App.css";
 
@@ -38,10 +39,18 @@ const SIDEBAR_DEFAULT = 240;
 
 function AppLayout({ projectId, children }: { projectId?: string; children: React.ReactNode }) {
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
-  const { user } = useUser();
+  const { user, refreshUser } = useUser();
+  const navigate = useNavigate();
   const [showSetupProfile, setShowSetupProfile] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
-  const { refreshUser } = useUser();
+  const [showProjectSettings, setShowProjectSettings] = useState(false);
+  const [project, setProject] = useState<{ project_id: string; name: string; description: string } | null>(null);
+
+  useEffect(() => {
+    if (projectId) {
+      fetchProject(projectId).then(setProject);
+    }
+  }, [projectId]);
 
   const onSidebarResize = useCallback((delta: number) => {
     setSidebarWidth((w) => Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, w + delta)));
@@ -57,6 +66,7 @@ function AppLayout({ projectId, children }: { projectId?: string; children: Reac
         user={user}
         onSetupProfile={() => setShowSetupProfile(true)}
         onUserSettings={() => setShowUserSettings(true)}
+        onProjectSettings={() => setShowProjectSettings(true)}
       >
         <div className="sidebar-resize-handle" onMouseDown={onSidebarHandleDown} />
       </Sidebar>
@@ -96,6 +106,21 @@ function AppLayout({ projectId, children }: { projectId?: string; children: Reac
           onDeleted={() => {
             setShowUserSettings(false);
             refreshUser();
+          }}
+        />
+      )}
+      {showProjectSettings && project && projectId && (
+        <ProjectSettingsModal
+          projectId={projectId}
+          projectName={project.name}
+          projectDescription={project.description}
+          onClose={() => {
+            setShowProjectSettings(false);
+            fetchProject(projectId).then(setProject);
+          }}
+          onDeleted={() => {
+            setShowProjectSettings(false);
+            navigate("/");
           }}
         />
       )}

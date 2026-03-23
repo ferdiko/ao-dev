@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronUp, ChevronDown, Search, X, ChevronDown as ChevronDownIcon, Sparkles, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronUp, ChevronDown, Search, X, ChevronDown as ChevronDownIcon, Sparkles, Trash2, ExternalLink as ExternalLinkIcon } from "lucide-react";
 import { Breadcrumb } from "../components/Breadcrumb";
 import { fetchProject, fetchProjectExperiments } from "../api";
 import type { Experiment, ExperimentQueryParams } from "../api";
@@ -823,11 +823,18 @@ export function ProjectPage() {
   // Re-fetch trigger: incremented by WebSocket when experiment list changes
   const [completedRefreshKey, setCompletedRefreshKey] = useState(0);
 
-  // Fetch project name once
-  useEffect(() => {
+  // Fetch project name
+  const loadProjectName = useCallback(() => {
     if (!projectId) return;
     fetchProject(projectId).then((p) => setProjectName(p.name)).catch(console.error);
   }, [projectId]);
+
+  useEffect(loadProjectName, [loadProjectName]);
+
+  // Refetch when project metadata changes (e.g. name edited in settings modal)
+  useEffect(() => {
+    return subscribe("project_list_changed", loadProjectName);
+  }, [loadProjectName]);
 
   // Running runs from WebSocket
   useEffect(() => {
@@ -985,7 +992,7 @@ export function ProjectPage() {
     <div className="project-page">
       <Breadcrumb
         items={[
-          { label: "Organization", to: "/" },
+          { label: "Projects", to: "/" },
           { label: projectName },
         ]}
       />
@@ -1050,6 +1057,14 @@ export function ProjectPage() {
               </button>
               {actionsOpen && selectedCompleted.size > 0 && (
                 <div className="actions-dropdown-menu">
+                  <button className="actions-dropdown-item" onClick={() => {
+                    const ids = Array.from(selectedCompleted).join(",");
+                    setActionsOpen(false);
+                    navigate(`/project/${projectId}/run/${ids}`);
+                  }}>
+                    <ExternalLinkIcon size={13} />
+                    Open runs
+                  </button>
                   <button className="actions-dropdown-item" onClick={() => { setActionsOpen(false); navigate(`/project/${projectId}/sovara`); }}>
                     <Sparkles size={13} />
                     Ask Sovara

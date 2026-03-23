@@ -148,6 +148,18 @@ export async function deleteProjectLocation(
   });
 }
 
+export async function updateProject(
+  projectId: string,
+  name: string,
+  description: string,
+): Promise<{ project_id: string; name: string; description: string }> {
+  return post("/ui/update-project", {
+    project_id: projectId,
+    name,
+    description,
+  });
+}
+
 export async function deleteProject(
   projectId: string,
   confirmationName: string

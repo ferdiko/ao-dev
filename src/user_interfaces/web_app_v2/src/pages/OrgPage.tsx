@@ -8,10 +8,11 @@ import {
   createProject,
   type Project,
 } from "../api";
-import { Play, Users, Calendar, Clock, FolderOpen, AlertTriangle, X } from "lucide-react";
+import { Play, Users, Calendar, Clock, FolderOpen, AlertTriangle, X, Settings } from "lucide-react";
 import arrowLr from "../assets/arrow_lr.png";
 import { subscribe } from "../serverEvents";
 import { ProjectLocationsModal } from "../components/ProjectLocationsModal";
+import { ProjectSettingsModal } from "../components/ProjectSettingsModal";
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
@@ -154,6 +155,7 @@ export function OrgPage() {
   const [loading, setLoading] = useState(true);
   const [showNewProject, setShowNewProject] = useState(false);
   const [locationsProject, setLocationsProject] = useState<Project | null>(null);
+  const [settingsProject, setSettingsProject] = useState<Project | null>(null);
 
   const loadProjects = useCallback(() => {
     fetchProjects()
@@ -173,7 +175,7 @@ export function OrgPage() {
 
   return (
     <div className="project-page">
-      <Breadcrumb items={[{ label: "Organization" }]} />
+      <Breadcrumb items={[{ label: "Projects" }]} />
       <div className="org-page">
         <div className="org-header">
           <div>
@@ -225,6 +227,16 @@ export function OrgPage() {
                       <span>Project folder not found</span>
                     </button>
                   )}
+                  <button
+                    className="project-card-settings"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSettingsProject(project);
+                    }}
+                    title="Project settings"
+                  >
+                    <Settings size={16} />
+                  </button>
                 </div>
                 <div className="project-card-desc">{project.description}</div>
                 <div className="project-card-meta">
@@ -274,6 +286,16 @@ export function OrgPage() {
             setLocationsProject(null);
             loadProjects();
           }}
+        />
+      )}
+
+      {settingsProject && (
+        <ProjectSettingsModal
+          projectId={settingsProject.project_id}
+          projectName={settingsProject.name}
+          projectDescription={settingsProject.description}
+          onClose={() => setSettingsProject(null)}
+          onDeleted={() => setSettingsProject(null)}
         />
       )}
     </div>

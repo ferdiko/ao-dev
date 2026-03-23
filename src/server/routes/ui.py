@@ -103,6 +103,12 @@ class DeleteProjectLocationRequest(BaseModel):
     location: str
 
 
+class UpdateProjectRequest(BaseModel):
+    project_id: str
+    name: str
+    description: str = ""
+
+
 class DeleteProjectRequest(BaseModel):
     project_id: str
     confirmation_name: str
@@ -278,6 +284,22 @@ def update_project_location(req: UpdateProjectLocationRequest):
     return {"ok": True}
 
 
+@router.post("/update-project")
+def update_project(req: UpdateProjectRequest, state: ServerState = Depends(get_state)):
+    """Update project name and description."""
+    project = DB.get_project(req.project_id)
+    if not project:
+        return JSONResponse(status_code=404, content={"error": "Project not found."})
+    if not req.name.strip():
+        return JSONResponse(status_code=400, content={"error": "Project name is required."})
+    for p in DB.get_all_projects():
+        if p["name"] == req.name.strip() and p["project_id"] != req.project_id:
+            return JSONResponse(status_code=409, content={"error": f"A project named '{req.name.strip()}' already exists."})
+    DB.upsert_project(req.project_id, req.name.strip(), req.description.strip())
+    state.notify_project_list_changed()
+    return {"project": {"project_id": req.project_id, "name": req.name.strip(), "description": req.description.strip()}}
+
+
 @router.post("/delete-project-location")
 def delete_project_location(req: DeleteProjectLocationRequest):
     """Remove a single project location."""
@@ -285,6 +307,7 @@ def delete_project_location(req: DeleteProjectLocationRequest):
     if not user_id:
         return JSONResponse(status_code=403, content={"error": "No user configured."})
     DB.delete_project_location(user_id, req.project_id, req.location)
+    delete_project_configs([req.location])
     return {"ok": True}
 
 
@@ -296,8 +319,12 @@ def delete_project(req: DeleteProjectRequest, state: ServerState = Depends(get_s
         return JSONResponse(status_code=404, content={"error": "Project not found."})
     if req.confirmation_name != project["name"]:
         return JSONResponse(status_code=400, content={"error": "Name does not match."})
+    # Remove .ao/ directories at all project locations before cascading DB delete
+    locations = DB.get_all_project_locations(req.project_id)
+    delete_project_configs([row["project_location"] for row in locations])
     DB.delete_project(req.project_id)
     state.notify_experiment_list_changed()
+    state.notify_project_list_changed()
     return {"ok": True}
 
 

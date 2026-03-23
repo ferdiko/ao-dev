@@ -4,6 +4,7 @@ import { ChevronRight } from "lucide-react";
 interface BreadcrumbItem {
   label: string;
   to?: string;
+  render?: () => React.ReactNode;
 }
 
 export function Breadcrumb({ items }: { items: BreadcrumbItem[] }) {
@@ -16,7 +17,7 @@ export function Breadcrumb({ items }: { items: BreadcrumbItem[] }) {
             {i > 0 && (
               <ChevronRight size={14} className="breadcrumb-separator" />
             )}
-            {isLast || !item.to ? (
+            {item.render ? item.render() : isLast || !item.to ? (
               <span className={isLast ? "breadcrumb-current" : ""}>
                 {item.label}
               </span>

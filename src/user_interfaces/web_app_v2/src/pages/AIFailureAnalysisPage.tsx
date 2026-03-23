@@ -493,7 +493,7 @@ export function AIFailureAnalysisPage() {
     <div className="page-wrapper">
       <Breadcrumb
         items={[
-          { label: "Organization", to: "/" },
+          { label: "Projects", to: "/" },
           { label: project.name, to: `/project/${projectId}` },
           { label: "AI Failure Analysis" },
         ]}
