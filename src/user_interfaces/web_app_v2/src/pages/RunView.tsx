@@ -52,6 +52,8 @@ interface GraphEdge {
   target: string;
 }
 
+type RerunState = "idle" | "starting" | "running";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -376,7 +378,6 @@ function IOPanel({
   onSaveEdit,
   onSaveAndRerun,
   onCancelEdit,
-  onRevert,
 }: {
   label: string;
   data: Record<string, unknown>;
@@ -389,7 +390,6 @@ function IOPanel({
   onSaveEdit: (nodeId: string, label: "Input" | "Output", newData: string) => void;
   onSaveAndRerun: (nodeId: string, label: "Input" | "Output", newData: string) => void;
   onCancelEdit: () => void;
-  onRevert: (nodeId: string, label: "Input" | "Output") => void;
 }) {
   const jsonStr = useMemo(() => JSON.stringify(data, null, 2), [data]);
   const attachments = useMemo(() => extractAttachments(data), [data]);
@@ -507,13 +507,8 @@ function IOPanel({
           )}
         </span>
         <div className="io-panel-actions">
-          {isEdited && !isActiveEdit && (
-            <button className="io-revert-btn" onClick={() => nodeId && onRevert(nodeId, label as "Input" | "Output")} title="Revert edit">
-              <Undo2 size={11} /> Revert
-            </button>
-          )}
           {!isActiveEdit && (
-            <div className={isLocked ? "io-edit-locked-wrapper" : ""} title={isLocked ? "Revert the current edit before editing another field" : `Edit ${label.toLowerCase()}`}>
+            <div className={isLocked ? "io-edit-locked-wrapper" : ""} title={isLocked ? "Finish the current edit before editing another field" : `Edit ${label.toLowerCase()}`}>
               <button className="io-edit-btn" onClick={startEdit} disabled={isLocked}>
                 <Pencil size={11} /> Edit
               </button>
@@ -615,7 +610,6 @@ function FullTraceFlow({
   onSaveEdit,
   onSaveAndRerun,
   onCancelEdit,
-  onRevert,
 }: {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -629,7 +623,6 @@ function FullTraceFlow({
   onSaveEdit: (nodeId: string, label: "Input" | "Output", newData: string) => void;
   onSaveAndRerun: (nodeId: string, label: "Input" | "Output", newData: string) => void;
   onCancelEdit: () => void;
-  onRevert: (nodeId: string, label: "Input" | "Output") => void;
 }) {
   const sorted = useMemo(() => topoSortNodes(nodes, edges), [nodes, edges]);
   const hasAnyEdit = editedFields.size > 0;
@@ -646,8 +639,8 @@ function FullTraceFlow({
             onClick={() => onCardClick(node.id)}
           >
             <NodeHeader node={node} />
-            <IOPanel label="Input" data={node.input} viewMode={viewMode} nodeId={node.id} editLock={editLock} isEdited={editedFields.has(`${node.id}:Input`)} hasAnyEdit={hasAnyEdit} onStartEdit={onStartEdit} onSaveEdit={onSaveEdit} onSaveAndRerun={onSaveAndRerun} onCancelEdit={onCancelEdit} onRevert={onRevert} />
-            <IOPanel label="Output" data={node.output} viewMode={viewMode} nodeId={node.id} editLock={editLock} isEdited={editedFields.has(`${node.id}:Output`)} hasAnyEdit={hasAnyEdit} onStartEdit={onStartEdit} onSaveEdit={onSaveEdit} onSaveAndRerun={onSaveAndRerun} onCancelEdit={onCancelEdit} onRevert={onRevert} />
+            <IOPanel label="Input" data={node.input} viewMode={viewMode} nodeId={node.id} editLock={editLock} isEdited={editedFields.has(`${node.id}:Input`)} hasAnyEdit={hasAnyEdit} onStartEdit={onStartEdit} onSaveEdit={onSaveEdit} onSaveAndRerun={onSaveAndRerun} onCancelEdit={onCancelEdit} />
+            <IOPanel label="Output" data={node.output} viewMode={viewMode} nodeId={node.id} editLock={editLock} isEdited={editedFields.has(`${node.id}:Output`)} hasAnyEdit={hasAnyEdit} onStartEdit={onStartEdit} onSaveEdit={onSaveEdit} onSaveAndRerun={onSaveAndRerun} onCancelEdit={onCancelEdit} />
           </div>
         );
       })}
@@ -843,19 +836,31 @@ export function RunView() {
               <path d={dividerPath} fill="none" stroke="var(--color-border)" strokeWidth="1" />
             </svg>
           )}
-          <div className="run-tabs">
+          <div className="run-tabs" role="tablist" aria-label="Open runs">
             {sessionIds.map((id) => (
               <div
                 key={id}
                 ref={id === activeSessionId ? activeTabRef : undefined}
                 className={`run-tab${id === activeSessionId ? " active" : ""}`}
-                onClick={() => switchTab(id)}
               >
-                <img src={logoBlack} alt="" className="run-tab-icon" />
-                <span className="run-tab-label">{tabNames.get(id) || id.slice(0, 8)}</span>
-                <span className="run-tab-close" onClick={(e) => { e.stopPropagation(); closeTab(id); }}>
-                  <X size={10} />
-                </span>
+                <button
+                  className="run-tab-button"
+                  onClick={() => switchTab(id)}
+                  type="button"
+                  role="tab"
+                  aria-selected={id === activeSessionId}
+                >
+                  <img src={logoBlack} alt="" className="run-tab-icon" />
+                  <span className="run-tab-label">{tabNames.get(id) || id.slice(0, 8)}</span>
+                </button>
+                <button
+                  className="run-tab-close"
+                  onClick={() => closeTab(id)}
+                  type="button"
+                  aria-label={`Close run ${tabNames.get(id) || id.slice(0, 8)}`}
+                >
+                  <X size={12} />
+                </button>
               </div>
             ))}
           </div>
@@ -928,7 +933,8 @@ function RunViewContent({
   // UI state
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("pretty");
-  const [rerunning, setRerunning] = useState(false);
+  const [rerunState, setRerunState] = useState<RerunState>("idle");
+  const rerunning = rerunState !== "idle";
 
   const GRAPH_MIN = 180; const GRAPH_MAX = 600;
   const CHAT_MIN = 200; const CHAT_MAX = 700;
@@ -1016,33 +1022,29 @@ function RunViewContent({
     setEditLock(null);
   }, []);
 
-  const handleRevert = useCallback((nodeId: string, label: "Input" | "Output") => {
-    const key: EditKey = `${nodeId}:${label}`;
-    setEditedFields((prev) => {
-      const next = new Set(prev);
-      next.delete(key);
-      return next;
-    });
-    // TODO: revert on backend (re-fetch graph node)
+  const trackRerun = useCallback((promise: Promise<void>) => {
+    setRerunState("starting");
+    promise
+      .then(() => setRerunState("running"))
+      .catch((err) => {
+        console.error(err);
+        setRerunState("idle");
+      });
   }, []);
 
   const handleSaveAndRerun = useCallback((nodeId: string, label: "Input" | "Output", newData: string) => {
     if (!sessionId) return;
     const key: EditKey = `${nodeId}:${label}`;
     const fn = label === "Input" ? editInput : editOutput;
-    fn(sessionId, nodeId, newData)
-      .then(() => restartRun(sessionId))
-      .catch(console.error);
+    trackRerun(fn(sessionId, nodeId, newData).then(() => restartRun(sessionId)));
     setEditedFields((prev) => new Set(prev).add(key));
     setEditLock(null);
-    setRerunning(true);
-  }, [sessionId]);
+  }, [sessionId, trackRerun]);
 
   const handleRerun = useCallback(() => {
     if (!sessionId) return;
-    setRerunning(true);
-    restartRun(sessionId).catch(console.error);
-  }, [sessionId]);
+    trackRerun(restartRun(sessionId));
+  }, [sessionId, trackRerun]);
 
   // Result state (pass/fail)
   const handleResultToggle = useCallback((result: "satisfactory" | "failed") => {
@@ -1056,16 +1058,36 @@ function RunViewContent({
     if (!sessionId) return;
     setEditedFields(new Set());
     setEditLock(null);
-    eraseRun(sessionId).catch(console.error);
-    setRerunning(true);
-  }, [sessionId]);
+    trackRerun(eraseRun(sessionId));
+  }, [sessionId, trackRerun]);
 
-  // Reset rerunning state when graph updates (rerun completed)
   useEffect(() => {
-    if (rerunning && graphNodes.length > 0) {
-      setRerunning(false);
+    if (!sessionId || rerunState === "idle") return;
+    let cancelled = false;
+
+    async function pollRunStatus() {
+      try {
+        const detail = await fetchExperimentDetail(sessionId);
+        if (cancelled) return;
+        setRunResult(detail.result);
+        if (rerunState === "running" && detail.status === "finished") {
+          setRerunState("idle");
+        }
+      } catch (err) {
+        if (!cancelled) console.error("Failed to refresh run status:", err);
+      }
     }
-  }, [graphNodes, rerunning]);
+
+    void pollRunStatus();
+    const timer = window.setInterval(() => {
+      void pollRunStatus();
+    }, 500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [sessionId, rerunState]);
 
   // ReactFlow data from layout engine
   const nodeById = useMemo(() => new Map(graphNodes.map((n) => [n.id, n])), [graphNodes]);
@@ -1325,7 +1347,6 @@ function RunViewContent({
                 onSaveEdit={handleSaveEdit}
                 onSaveAndRerun={handleSaveAndRerun}
                 onCancelEdit={handleCancelEdit}
-                onRevert={handleRevert}
               />
             ) : (
               <div className="empty-state" style={{ flex: 1 }}>

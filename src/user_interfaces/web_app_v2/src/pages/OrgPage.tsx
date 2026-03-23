@@ -212,6 +212,15 @@ export function OrgPage() {
                 key={project.project_id}
                 className="project-card"
                 onClick={() => navigate(`/project/${project.project_id}`)}
+                onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return;
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  navigate(`/project/${project.project_id}`);
+                }}
+                tabIndex={0}
+                role="link"
+                aria-label={`Open project ${project.name}`}
               >
                 <div className="project-card-name">
                   {project.name}

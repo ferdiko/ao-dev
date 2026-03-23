@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronUp, ChevronDown, Search, X, ChevronDown as ChevronDownIcon, Sparkles, Trash2, ExternalLink as ExternalLinkIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronUp, ChevronDown, Search, X, Check, ChevronDown as ChevronDownIcon, Sparkles, Trash2, ExternalLink as ExternalLinkIcon } from "lucide-react";
 import { Breadcrumb } from "../components/Breadcrumb";
 import { fetchProject, fetchProjectExperiments } from "../api";
 import type { Experiment, ExperimentQueryParams } from "../api";
@@ -244,6 +244,8 @@ interface DataBounds {
   cost: { min: number; max: number };
 }
 
+const COMPLETED_SELECTION_STORAGE_KEY_PREFIX = "web_app_v2:completed_selection";
+
 function parseLatencyValue(val: string): number {
   const n = parseFloat(val);
   return isNaN(n) ? 0 : n;
@@ -286,6 +288,45 @@ function emptyFilters(bounds?: DataBounds): Filters {
     cost: bounds ? { ...bounds.cost } : { min: 0, max: 1 },
     startTime: { from: "", to: "" },
   };
+}
+
+function serializeFilters(filters: Filters): string {
+  return JSON.stringify({
+    name: filters.name,
+    sessionId: filters.sessionId,
+    input: filters.input,
+    output: filters.output,
+    comment: filters.comment,
+    version: Array.from(filters.version).sort(),
+    success: Array.from(filters.success).sort(),
+    confidence: filters.confidence,
+    latency: filters.latency,
+    cost: filters.cost,
+    startTime: filters.startTime,
+  });
+}
+
+function getCompletedSelectionStorageKey(projectId: string): string {
+  return `${COMPLETED_SELECTION_STORAGE_KEY_PREFIX}:${projectId}`;
+}
+
+function loadCompletedSelection(projectId: string, filterKey: string): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(getCompletedSelectionStorageKey(projectId));
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as { filterKey?: string; ids?: unknown };
+    if (parsed.filterKey !== filterKey || !Array.isArray(parsed.ids)) return new Set();
+    return new Set(parsed.ids.filter((id): id is string => typeof id === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+function persistCompletedSelection(projectId: string, filterKey: string, selection: Set<string>): void {
+  sessionStorage.setItem(
+    getCompletedSelectionStorageKey(projectId),
+    JSON.stringify({ filterKey, ids: Array.from(selection) }),
+  );
 }
 
 function rangeActive(range: RangeFilter, bounds: { min: number; max: number }): boolean {
@@ -863,11 +904,13 @@ export function ProjectPage() {
   // Filters
   const bounds = useMemo(() => computeDataBounds([...runningRuns, ...completedRuns]), [runningRuns, completedRuns]);
   const [filters, setFilters] = useState<Filters>(() => emptyFilters());
+  const filterKey = useMemo(() => serializeFilters(filters), [filters]);
 
   // Selection (completed runs only)
   const [selectedCompleted, setSelectedCompleted] = useState<Set<string>>(new Set());
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
+  const skipCompletedSelectionPersistRef = useRef(true);
   useEffect(() => {
     if (!actionsOpen) return;
     const handleClick = (e: MouseEvent) => {
@@ -945,6 +988,13 @@ export function ProjectPage() {
     });
   }, []);
 
+  const handleRowKeyDown = useCallback((event: React.KeyboardEvent<HTMLTableRowElement>, sessionId: string) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    navigate(`/project/${projectId}/run/${sessionId}`);
+  }, [navigate, projectId]);
+
   const handleCompletedSort = useCallback((key: string) => {
     setCompletedSort((prev: SortState) => {
       if (prev?.key === key) return prev.direction === "asc" ? { key, direction: "desc" } : null;
@@ -964,6 +1014,35 @@ export function ProjectPage() {
   const completedTotalPages = Math.max(1, Math.ceil(completedTotal / completedRowsPerPage));
   const safeCompletedPage = Math.min(completedPage, completedTotalPages);
   const completed = completedRuns;
+  const visibleCompletedIds = useMemo(() => completed.map((run) => run.id), [completed]);
+  const selectedVisibleCount = useMemo(
+    () => visibleCompletedIds.reduce((count, id) => count + (selectedCompleted.has(id) ? 1 : 0), 0),
+    [visibleCompletedIds, selectedCompleted],
+  );
+  const allVisibleSelected = completed.length > 0 && selectedVisibleCount === completed.length;
+  const hiddenSelectedCount = Math.max(0, selectedCompleted.size - selectedVisibleCount);
+
+  useEffect(() => {
+    if (!projectId) return;
+    skipCompletedSelectionPersistRef.current = true;
+    setSelectedCompleted(loadCompletedSelection(projectId, filterKey));
+    setActionsOpen(false);
+  }, [projectId, filterKey]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    if (skipCompletedSelectionPersistRef.current) {
+      skipCompletedSelectionPersistRef.current = false;
+      return;
+    }
+    persistCompletedSelection(projectId, filterKey, selectedCompleted);
+  }, [projectId, filterKey, selectedCompleted]);
+
+  useEffect(() => {
+    if (selectedCompleted.size === 0) {
+      setActionsOpen(false);
+    }
+  }, [selectedCompleted]);
 
   // Selection helpers (completed runs only)
   const toggleCompletedSelect = (id: string) => {
@@ -974,11 +1053,15 @@ export function ProjectPage() {
     });
   };
   const toggleCompletedSelectAll = () => {
-    if (selectedCompleted.size === completed.length) {
-      setSelectedCompleted(new Set());
-    } else {
-      setSelectedCompleted(new Set(completed.map((r) => r.id)));
-    }
+    setSelectedCompleted((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        for (const id of visibleCompletedIds) next.delete(id);
+      } else {
+        for (const id of visibleCompletedIds) next.add(id);
+      }
+      return next;
+    });
   };
 
   if (loading) {
@@ -1035,7 +1118,15 @@ export function ProjectPage() {
               </thead>
               <tbody>
                 {running.map((run) => (
-                  <tr key={run.id} className="clickable-row" onClick={() => navigate(`/project/${projectId}/run/${run.sessionId}`)}>
+                  <tr
+                    key={run.id}
+                    className="clickable-row"
+                    onClick={() => navigate(`/project/${projectId}/run/${run.sessionId}`)}
+                    onKeyDown={(event) => handleRowKeyDown(event, run.sessionId)}
+                    tabIndex={0}
+                    role="link"
+                    aria-label={`Open run ${run.name}`}
+                  >
                     <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>
                     <td><span className="cell-id-link">{run.sessionId}</span></td>
                     <td>{run.name}</td>
@@ -1060,6 +1151,24 @@ export function ProjectPage() {
         <div className="runs-section completed-runs-section">
           <div className="landing-section-title">
             <span>Completed Runs ({completedTotal})</span>
+            {selectedCompleted.size > 0 && (
+              <div
+                className="runs-selection-pill"
+                title={hiddenSelectedCount > 0 ? `${selectedCompleted.size} selected across pages` : `${selectedCompleted.size} selected`}
+              >
+                <span className="runs-selection-pill-summary">
+                  <Check size={11} />
+                  <span>{selectedCompleted.size}</span>
+                </span>
+                <button
+                  className="runs-selection-pill-clear"
+                  onClick={() => setSelectedCompleted(new Set())}
+                  title="Clear selection"
+                >
+                  <X size={11} />
+                </button>
+              </div>
+            )}
             <div className="actions-dropdown-wrap" ref={actionsRef}>
               <button
                 className={`actions-dropdown-btn${selectedCompleted.size === 0 ? " actions-inactive" : ""}`}
@@ -1102,7 +1211,7 @@ export function ProjectPage() {
                   <th className="cell-checkbox">
                     <input
                       type="checkbox"
-                      checked={completed.length > 0 && selectedCompleted.size === completed.length}
+                      checked={allVisibleSelected}
                       onChange={toggleCompletedSelectAll}
                     />
                   </th>
@@ -1122,7 +1231,15 @@ export function ProjectPage() {
               </thead>
               <tbody>
                 {completed.map((run) => (
-                  <tr key={run.id} className="clickable-row" onClick={() => navigate(`/project/${projectId}/run/${run.sessionId}`)}>
+                  <tr
+                    key={run.id}
+                    className="clickable-row"
+                    onClick={() => navigate(`/project/${projectId}/run/${run.sessionId}`)}
+                    onKeyDown={(event) => handleRowKeyDown(event, run.sessionId)}
+                    tabIndex={0}
+                    role="link"
+                    aria-label={`Open run ${run.name}`}
+                  >
                     <td className="cell-checkbox" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"

@@ -490,9 +490,11 @@ def get_more_experiments(offset: int = 0, state: ServerState = Depends(get_state
 @router.get("/experiment/{session_id}")
 def get_experiment_detail(session_id: str, state: ServerState = Depends(get_state)):
     row = DB.get_experiment_detail(session_id)
+    session = state.sessions.get(session_id)
+    status = session.status if session else "finished"
     if not row:
         return {"type": "experiment_detail", "session_id": session_id,
-                "run_name": "", "timestamp": "", "result": "", "notes": "", "log": "", "version_date": None}
+                "run_name": "", "timestamp": "", "result": "", "notes": "", "log": "", "version_date": None, "status": status}
     return {
         "type": "experiment_detail",
         "session_id": session_id,
@@ -502,6 +504,7 @@ def get_experiment_detail(session_id: str, state: ServerState = Depends(get_stat
         "notes": row["notes"] or "",
         "log": row["log"] or "",
         "version_date": row["version_date"],
+        "status": status,
     }
 
 

@@ -129,9 +129,9 @@ export function Sidebar({ projectId, style, children, user, collapsed, onToggleC
           </button>
         ) : (
           <div className="sidebar-header-row">
-            <div className="sidebar-logo" onClick={() => navigate("/")}>
+            <button className="sidebar-logo" onClick={() => navigate("/")} type="button" aria-label="Go to projects">
               <img src={logoWithSymbol} alt="Sovara Labs" />
-            </div>
+            </button>
             <button className="sidebar-collapse-btn" onClick={onToggleCollapse} title="Collapse sidebar">
               <PanelLeft size={18} />
             </button>

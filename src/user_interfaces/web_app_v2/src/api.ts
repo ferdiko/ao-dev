@@ -247,6 +247,7 @@ export interface ExperimentDetail {
   notes: string;
   log: string;
   version_date: string | null;
+  status: "running" | "finished";
 }
 
 export async function fetchExperimentDetail(sessionId: string): Promise<ExperimentDetail> {
