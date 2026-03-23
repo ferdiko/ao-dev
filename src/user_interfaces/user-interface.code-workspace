@@ -11,10 +11,6 @@
     {
       "name": "🌐 Web App",
       "path": "web_app"
-    },
-    {
-      "name": "⚛️ Web App Client",
-      "path": "web_app/client"
     }
   ],
   "settings": {
@@ -49,17 +45,17 @@
         "problemMatcher": "$tsc"
       },
       {
-        "label": "Build Webapp Client",
+        "label": "Build Web App",
         "type": "npm",
         "script": "build",
-        "path": "web_app/client/",
+        "path": "web_app/",
         "group": "build"
       },
       {
-        "label": "Dev Webapp Client",
+        "label": "Dev Web App",
         "type": "npm",
         "script": "dev",
-        "path": "web_app/client/",
+        "path": "web_app/",
         "isBackground": true
       }
     ]

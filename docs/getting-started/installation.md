@@ -50,7 +50,7 @@ For non-developers, install the project and build the UI:
 
 ```bash
 pip install -e .
-cd src/user_interfaces && npm install && npm run build:extension
+cd src/user_interfaces && npm run install:all && npm run build:extension
 ```
 
 ### Running the Extension
@@ -78,7 +78,7 @@ If you are contributing to AO, install with development dependencies and set up 
 ```bash
 pip install -e ".[dev]"
 pre-commit install
-cd src/user_interfaces && npm install && npm run build:extension
+cd src/user_interfaces && npm run install:all && npm run build:extension
 ```
 
 ### IDE Linter Configuration

@@ -1,0 +1,71 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap');
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --sidebar-width: 400px;
+
+  /* Layout: shared dimensions (sidebar & main content stay aligned) */
+  --header-row-1: 40px;   /* breadcrumb / logo row */
+  --header-row-2: 36px;   /* toolbar / project-selector row */
+  --footer-row: 49px;     /* sidebar profile / pagination row */
+
+  /* Sovara Labs brand palette */
+  --color-bg: #f6f5e9;
+  --color-surface: #ffffff;
+  --color-surface-warm: #faf9f0;
+  --color-border: #e0dfd3;
+  --color-border-light: #eae9de;
+  --color-text: #2c2c2c;
+  --color-text-secondary: #5a5a52;
+  --color-text-muted: #8a8a7e;
+  --color-primary: #43884e;
+  --color-primary-hover: #3a7743;
+  --color-primary-light: #eef5ef;
+  --color-success: #43884e;
+  --color-error: #c4453a;
+  --color-warning: #c49a3a;
+  --color-running: #43884e;
+
+  /* Sidebar - light warm theme */
+  --color-sidebar-bg: #edecd8;
+  --color-sidebar-text: #5a5a52;
+  --color-sidebar-text-active: #2c2c2c;
+  --color-sidebar-hover: #e3e2ce;
+  --color-sidebar-section: #8a8a7e;
+
+  /* Typography */
+  font-family: "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Helvetica Neue", Arial, sans-serif;
+  font-weight: 400;
+  font-size: 14px;
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+h1, h2, h3, h4, h5, h6,
+.org-title,
+.project-page-title,
+.project-card-name,
+.stat-card-value {
+  font-weight: 700;
+}
+
+body {
+  background: var(--color-bg);
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}

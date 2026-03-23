@@ -10,7 +10,7 @@ The AO VS Code extension provides an interactive visual interface for exploring 
 2. Navigate to the user interfaces directory:
    ```bash
    cd src/user_interfaces/
-   npm install
+   npm run install:all
    ```
 3. Build the extension:
    ```bash
@@ -79,13 +79,7 @@ The extension maintains a history of runs, allowing you to:
 If you encounter issues:
 
 ```bash
-npm run clean && npm install
-```
-
-### Check Workspace Links
-
-```bash
-npm ls --workspaces
+npm run clean && npm run install:all
 ```
 
 ### Rebuild Extension
@@ -116,13 +110,12 @@ AO also supports a standalone web application:
 
 ### Running the Web App
 
-1. Start the server:
+1. Start or restart the backend:
    ```bash
-   cd src/user_interfaces/web_app/
-   node server.js
+   uv run ao-server restart
    ```
 
-2. In another terminal, start the dev server:
+2. In another terminal, start the frontend dev server:
    ```bash
    cd src/user_interfaces/
    npm run dev:webapp

@@ -315,9 +315,11 @@ def send_graph_node_and_edges(
     # Import here to avoid circular import
     from ao.runner.monkey_patching.api_parser import func_kwargs_to_json_str, api_obj_to_json_str
 
-    # Get strings to display in UI.
-    input_string, attachments = func_kwargs_to_json_str(input_dict, api_type)
-    output_string = api_obj_to_json_str(output_obj, api_type)
+    # Build display strings: only send to_show portion to the UI (not raw)
+    input_full_str, attachments = func_kwargs_to_json_str(input_dict, api_type)
+    output_full_str = api_obj_to_json_str(output_obj, api_type)
+    input_string = json.dumps(json.loads(input_full_str)["to_show"])
+    output_string = json.dumps(json.loads(output_full_str)["to_show"])
     model = get_raw_model_name(input_dict, api_type)
     label = get_node_label(input_dict, api_type)
     session_id = get_session_id()

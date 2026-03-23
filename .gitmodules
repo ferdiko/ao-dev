@@ -1,18 +1,18 @@
 [submodule "example_workflows/chess_text2sql/CHESS"]
 	path = example_workflows/chess_text2sql/CHESS
-	url = https://github.com/agops-project/ShayanTalaei-CHESS
+	url = git@github.com:agops-project/ShayanTalaei-CHESS.git
 [submodule "example_workflows/ours_human_eval/human-eval"]
 	path = example_workflows/ours_human_eval/human-eval
-	url = https://github.com/agops-project/openai-human-eval
+	url = git@github.com:agops-project/openai-human-eval.git
 [submodule "example_workflows/ours_doc_bench/doc_bench"]
 	path = example_workflows/ours_doc_bench/doc_bench
-	url = https://github.com/agops-project/Anni-Zou-DocBench
+	url = git@github.com:agops-project/Anni-Zou-DocBench.git
 [submodule "example_workflows/ours_swe_bench/SWE-bench"]
 	path = example_workflows/ours_swe_bench/SWE-bench
-	url = https://github.com/agops-project/SWE-bench-SWE-bench
+	url = git@github.com:agops-project/SWE-bench-SWE-bench.git
 [submodule "example_workflows/miroflow_deep_research/MiroFlow"]
 	path = example_workflows/miroflow_deep_research/MiroFlow
-	url = https://github.com/agops-project/MiroMindAI-MiroFlow
+	url = git@github.com:agops-project/MiroMindAI-MiroFlow.git
 [submodule "example_workflows/bird-bench"]
 	path = example_workflows/bird-bench
-	url = https://github.com/agops-project/bird-bench.git
+	url = git@github.com:agops-project/bird-bench.git

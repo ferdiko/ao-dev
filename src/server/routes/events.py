@@ -86,8 +86,9 @@ async def ui_websocket(websocket: WebSocket):
         "playbook_api_key": PLAYBOOK_API_KEY,
     }))
 
-    # Load finished runs to ensure experiment list is current
+    # Load finished runs and send initial experiment list
     state.load_finished_runs()
+    state.notify_experiment_list_changed()
 
     try:
         # Keep connection alive — just consume incoming messages (pings/keepalives)

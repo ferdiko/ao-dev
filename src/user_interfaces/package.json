@@ -3,18 +3,15 @@
   "version": "1.0.0",
   "private": true,
   "description": "Monorepo for VS Code extension and web app",
-  "workspaces": [
-    "vscode_extension",
-    "web_app",
-    "web_app/client"
-  ],
   "scripts": {
-    "install:all": "npm install",
-    "build:all": "npm run build --workspaces --if-present",
-    "build:extension": "npm run compile --workspace=vscode_extension",
-    "build:webapp": "npm run build --workspace=client",
-    "dev:webapp": "npm run dev --workspace=client",
-    "clean": "rm -rf node_modules vscode_extension/node_modules web_app/node_modules web_app/client/node_modules"
+    "install:all": "npm --prefix vscode_extension install && npm --prefix web_app install",
+    "build:all": "npm run build:extension && npm run build:webapp",
+    "build:extension": "npm --prefix vscode_extension run compile",
+    "build:webapp": "npm --prefix web_app run build",
+    "dev:webapp": "npm --prefix web_app run dev",
+    "lint:webapp": "npm --prefix web_app run lint",
+    "test:webapp": "npm --prefix web_app run test",
+    "clean": "rm -rf node_modules vscode_extension/node_modules web_app/node_modules"
   },
   "dependencies": {
   }

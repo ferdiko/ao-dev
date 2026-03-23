@@ -1,0 +1,464 @@
+import { useState, useCallback, useMemo, useEffect } from "react";
+import { useParams, useSearchParams, useNavigate } from "react-router-dom";
+import {
+  ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
+  type Node,
+  type Edge,
+  type NodeTypes,
+  type NodeProps,
+  type EdgeProps,
+  type EdgeTypes,
+  Handle,
+  Position,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import { Breadcrumb } from "../components/Breadcrumb";
+import { RunTraceFlow } from "../components/RunTraceFlow";
+import { RunTabsHeader } from "../components/RunTabsHeader";
+import {
+  fetchProject,
+  fetchExperimentDetail,
+} from "../api";
+import { layoutGraph, type Point } from "../graphLayout";
+import { Sparkles, RotateCcw, Loader2, Undo2, ThumbsUp, ThumbsDown, ChevronRight, PanelRight } from "lucide-react";
+import { TraceChat } from "../components/TraceChat";
+import { useRunGraphFocus, type GraphFocusApiHandle } from "../hooks/useRunGraphFocus";
+import { useResize } from "../hooks/useResize";
+import { useRunSessionState } from "../hooks/useRunSessionState";
+import { useRunViewLayout, type RunViewLayoutState } from "../hooks/useRunViewLayout";
+
+// ── Custom LLM Node ────────────────────────────────────
+
+function LLMNode({ data, selected }: NodeProps) {
+  const d = data as { label: string; model?: string; nodeId: string; focused?: boolean; borderColor?: string };
+  return (
+    <div
+      className={`graph-llm-node${selected ? " selected" : ""}${d.focused ? " focused" : ""}`}
+      style={d.focused ? { borderColor: "#43884e" } : undefined}
+    >
+      <Handle type="target" position={Position.Top} id="top" className="graph-handle" />
+      <Handle type="target" position={Position.Left} id="left" className="graph-handle graph-handle-side" />
+      <Handle type="target" position={Position.Right} id="right" className="graph-handle graph-handle-side" />
+      <div className="graph-node-label">{d.label}</div>
+      {d.model && <div className="graph-node-model">{d.model}</div>}
+      <Handle type="source" position={Position.Bottom} id="bottom" className="graph-handle" />
+      <Handle type="source" position={Position.Left} id="left" className="graph-handle graph-handle-side" />
+      <Handle type="source" position={Position.Right} id="right" className="graph-handle graph-handle-side" />
+    </div>
+  );
+}
+
+/** Custom edge that renders a polyline path from layout engine waypoints. */
+function RoutedEdgeComponent({ id, data }: EdgeProps) {
+  const d_ = data as Record<string, unknown>;
+  const points = d_?.points as Point[] | undefined;
+  const highlighted = d_?.highlighted as boolean;
+  const color = highlighted ? "#43884e" : "var(--color-text-muted)";
+  const strokeWidth = highlighted ? 2.5 : 1.5;
+  if (!points || points.length < 2) return null;
+  const d = points.reduce((acc, p, i) =>
+    i === 0 ? `M ${p.x},${p.y}` : `${acc} L ${p.x},${p.y}`, "");
+  const markerId = `arrow-${id}`;
+  return (
+    <>
+      <defs>
+        <marker id={markerId} markerWidth="8" markerHeight="8" refX="6" refY="4"
+          orient="auto" markerUnits="userSpaceOnUse">
+          <polygon points="0,0 8,4 0,8" fill={color} />
+        </marker>
+      </defs>
+      <path d={d} markerEnd={`url(#${markerId})`}
+        style={{ stroke: color, strokeWidth, fill: "none" }} />
+    </>
+  );
+}
+
+const nodeTypes: NodeTypes = { llmNode: LLMNode };
+const edgeTypes: EdgeTypes = { routed: RoutedEdgeComponent };
+
+type ViewMode = "pretty" | "json";
+
+/** Exposes useReactFlow() methods to the parent via ref. */
+function GraphApi({ apiRef }: { apiRef: React.MutableRefObject<GraphFocusApiHandle | null> }) {
+  const { setCenter } = useReactFlow();
+  useEffect(() => {
+    apiRef.current = { setCenter };
+    return () => { apiRef.current = null; };
+  }, [setCenter, apiRef]);
+  return null;
+}
+
+// ── Main RunView (tab shell) ──────────────────────────
+
+export function RunView() {
+  const { projectId, sessionId: rawSessionIds } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const [layoutState, setLayoutState] = useRunViewLayout();
+
+  const sessionIds = useMemo(() => rawSessionIds?.split(",").filter(Boolean) ?? [], [rawSessionIds]);
+  const activeSessionId = searchParams.get("active") ?? sessionIds[0];
+
+  // Fetch project name once for breadcrumb
+  const [projectName, setProjectName] = useState("");
+  useEffect(() => {
+    if (!projectId) return;
+    fetchProject(projectId).then((p) => setProjectName(p.name)).catch(console.error);
+  }, [projectId]);
+
+  // Fetch run names for all open tabs
+  const [tabNames, setTabNames] = useState<Map<string, string>>(new Map());
+  const sessionIdsKey = sessionIds.join(",");
+  useEffect(() => {
+    if (!sessionIds.length) return;
+    let cancelled = false;
+    Promise.all(sessionIds.map((id) =>
+      fetchExperimentDetail(id).then((d) => [id, d.run_name] as const).catch(() => [id, ""] as const)
+    )).then((pairs) => {
+      if (!cancelled) setTabNames(new Map(pairs));
+    });
+    return () => { cancelled = true; };
+  }, [sessionIds]);
+
+  const switchTab = useCallback((id: string) => {
+    setSearchParams({ active: id });
+  }, [setSearchParams]);
+
+  const closeTab = useCallback((id: string) => {
+    const remaining = sessionIds.filter((s) => s !== id);
+    if (remaining.length === 0) {
+      navigate(`/project/${projectId}`);
+      return;
+    }
+    const newActive = id === activeSessionId
+      ? remaining[Math.min(sessionIds.indexOf(id), remaining.length - 1)]
+      : activeSessionId;
+    navigate(`/project/${projectId}/run/${remaining.join(",")}?active=${newActive}`);
+  }, [sessionIds, activeSessionId, projectId, navigate]);
+
+  const isMultiTab = sessionIds.length > 1;
+
+  if (!activeSessionId) {
+    return (
+      <div className="run-view">
+        <div className="empty-state">
+          <div className="empty-state-title">No run selected</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isMultiTab) {
+    return (
+      <div className="run-view">
+        <Breadcrumb items={[
+          { label: "Projects", to: "/" },
+          { label: projectName || "Project", to: `/project/${projectId}` },
+          { label: tabNames.get(sessionIds[0]) || sessionIds[0] || "Run" },
+        ]} />
+        <RunViewContent
+          key={activeSessionId}
+          sessionId={activeSessionId}
+          layoutState={layoutState}
+          setLayoutState={setLayoutState}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="run-view">
+      <div className="run-view-panel">
+        <RunTabsHeader
+          activeSessionId={activeSessionId}
+          onCloseTab={closeTab}
+          onSwitchTab={switchTab}
+          projectId={projectId}
+          projectName={projectName}
+          sessionIds={sessionIds}
+          sessionIdsKey={sessionIdsKey}
+          tabNames={tabNames}
+        />
+        <RunViewContent
+          key={activeSessionId}
+          sessionId={activeSessionId}
+          layoutState={layoutState}
+          setLayoutState={setLayoutState}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── RunViewContent (single-run body) ──────────────────
+
+function RunViewContent({
+  sessionId,
+  layoutState,
+  setLayoutState,
+}: {
+  sessionId: string;
+  layoutState: RunViewLayoutState;
+  setLayoutState: React.Dispatch<React.SetStateAction<RunViewLayoutState>>;
+}) {
+  // UI state
+  const [viewMode, setViewMode] = useState<ViewMode>("pretty");
+  const {
+    editedFields,
+    editLock,
+    graphEdges,
+    graphNodes,
+    handleCancelEdit,
+    handleErase,
+    handleRerun,
+    handleResultToggle,
+    handleSaveAndRerun,
+    handleSaveEdit,
+    handleStartEdit,
+    loading,
+    rerunning,
+    runResult,
+  } = useRunSessionState(sessionId);
+
+  const GRAPH_MIN = 180; const GRAPH_MAX = 600;
+  const CHAT_MIN = 200; const CHAT_MAX = 700;
+  const { graphWidth, chatWidth, chatCollapsed } = layoutState;
+
+  const onGraphResize = useCallback((delta: number) => {
+    setLayoutState((prev) => ({
+      ...prev,
+      graphWidth: Math.min(GRAPH_MAX, Math.max(GRAPH_MIN, prev.graphWidth + delta)),
+    }));
+  }, [setLayoutState]);
+  const onChatResize = useCallback((delta: number) => {
+    setLayoutState((prev) => ({
+      ...prev,
+      chatWidth: Math.min(CHAT_MAX, Math.max(CHAT_MIN, prev.chatWidth - delta)),
+    }));
+  }, [setLayoutState]);
+  const graphHandleDown = useResize("horizontal", onGraphResize);
+  const chatHandleDown = useResize("horizontal", onChatResize);
+
+  // Compute full graph layout (positions + routed edges)
+  const graphLayout = useMemo(
+    () => layoutGraph(graphNodes, graphEdges),
+    [graphNodes, graphEdges],
+  );
+  const sortedNodeIds = graphLayout.sortedIds;
+  const {
+    canvasRef,
+    focusNodeById,
+    focusedNodeId,
+    graphApiRef: graphApi,
+    nodeRefs,
+  } = useRunGraphFocus({
+    graphLayout,
+    sortedNodeIds,
+  });
+
+  // ReactFlow data from layout engine
+  const nodeById = useMemo(() => new Map(graphNodes.map((n) => [n.id, n])), [graphNodes]);
+
+  const rfNodes: Node[] = useMemo(() => {
+    return sortedNodeIds.map((id) => {
+      const pos = graphLayout.positions.get(id);
+      const node = nodeById.get(id);
+      if (!pos || !node) return null;
+      return {
+        id,
+        type: "llmNode",
+        position: { x: pos.x, y: pos.y },
+        data: { label: node.label, model: node.model, nodeId: id, borderColor: node.border_color },
+      };
+    }).filter(Boolean) as Node[];
+  }, [sortedNodeIds, graphLayout, nodeById]);
+
+  const rfEdges: Edge[] = useMemo(() => {
+    return graphLayout.edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      type: "routed",
+      sourceHandle: e.sourceHandle,
+      targetHandle: e.targetHandle,
+      data: { points: e.points, highlighted: e.target === focusedNodeId },
+    }));
+  }, [graphLayout, focusedNodeId]);
+
+  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+    focusNodeById(node.id);
+  }, [focusNodeById]);
+
+  const onCardClick = useCallback((nodeId: string) => {
+    focusNodeById(nodeId);
+  }, [focusNodeById]);
+
+  const nodesWithSelection = useMemo(
+    () => rfNodes.map((n) => ({
+      ...n,
+      selected: n.id === focusedNodeId,
+      data: { ...n.data, focused: n.id === focusedNodeId },
+    })),
+    [rfNodes, focusedNodeId]
+  );
+
+  const hasGraph = graphNodes.length > 0;
+
+  if (loading) {
+    return (
+      <div className="empty-state">
+        <Loader2 size={24} className="fa-spinner" />
+        <div className="empty-state-title" style={{ marginTop: 12 }}>Loading run…</div>
+      </div>
+    );
+  }
+
+  return (
+      <div className="run-view-columns">
+      <div className="run-view-left">
+
+      {/* Top bar */}
+      <div className="run-top-bar">
+        <div className="run-detail-header-title">Full Trace</div>
+        <div className="run-detail-header-actions">
+          <div className="view-mode-toggle">
+            <button
+              className={`view-mode-btn${viewMode === "pretty" ? " active" : ""}`}
+              onClick={() => setViewMode("pretty")}
+            >
+              Pretty
+            </button>
+            <button
+              className={`view-mode-btn${viewMode === "json" ? " active" : ""}`}
+              onClick={() => setViewMode("json")}
+            >
+              JSON
+            </button>
+          </div>
+          <button
+            className="run-rerun-btn"
+            onClick={handleRerun}
+            disabled={rerunning}
+            title="Re-run with edits"
+          >
+            {rerunning ? (
+              <><Loader2 size={13} className="fa-spinner" /> Re-running…</>
+            ) : (
+              <><RotateCcw size={13} /> Re-run</>
+            )}
+          </button>
+          <button
+            className="run-rerun-btn run-reset-btn"
+            onClick={handleErase}
+            title="Reset run to original state"
+          >
+            <Undo2 size={13} /> Reset All Edits
+          </button>
+        </div>
+      </div>
+
+      <div className="run-view-body">
+        {/* Left: Graph */}
+        <div className="run-graph-panel" style={{ width: graphWidth, flex: "none" }}>
+          <div className="run-graph-canvas" ref={canvasRef}>
+            {hasGraph ? (
+              <ReactFlowProvider>
+                <ReactFlow
+                  nodes={nodesWithSelection}
+                  edges={rfEdges}
+                  nodeTypes={nodeTypes}
+                  edgeTypes={edgeTypes}
+                  onNodeClick={onNodeClick}
+                  proOptions={{ hideAttribution: true }}
+                  nodesDraggable={false}
+                  panOnDrag={false}
+                  zoomOnScroll={false}
+                  zoomOnPinch={false}
+                  zoomOnDoubleClick={false}
+                  preventScrolling
+                >
+                  <GraphApi apiRef={graphApi} />
+                </ReactFlow>
+              </ReactFlowProvider>
+            ) : (
+              <div className="empty-state">
+                <div className="empty-state-title">No graph data</div>
+              </div>
+            )}
+
+            {/* Focus indicator — arrowhead from right edge pointing inward */}
+            <div className="graph-focus-arrow" />
+
+            {/* Controls (bottom-right) */}
+            <div className="graph-controls-panel">
+              <button
+                className={`graph-controls-btn${runResult === "Satisfactory" ? " active-pass" : ""}`}
+                title={runResult === "Satisfactory" ? "Clear result" : "Mark as Satisfactory"}
+                onClick={() => handleResultToggle("satisfactory")}
+              >
+                <ThumbsUp size={12} color={runResult === "Satisfactory" ? "#fff" : "#4caf50"} />
+              </button>
+              <button
+                className={`graph-controls-btn${runResult === "Failed" ? " active-fail" : ""}`}
+                title={runResult === "Failed" ? "Clear result" : "Mark as Failed"}
+                onClick={() => handleResultToggle("failed")}
+              >
+                <ThumbsDown size={12} color={runResult === "Failed" ? "#fff" : "#e05252"} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="resize-handle resize-handle-h" onMouseDown={graphHandleDown} />
+        {/* Center: I/O Detail */}
+        <div className="run-detail-panel">
+          <div className="run-detail-body">
+            {hasGraph ? (
+              <RunTraceFlow
+                nodes={graphNodes}
+                edges={graphEdges}
+                viewMode={viewMode}
+                focusedNodeId={focusedNodeId}
+                nodeRefs={nodeRefs}
+                onCardClick={onCardClick}
+                editLock={editLock}
+                editedFields={editedFields}
+                onStartEdit={handleStartEdit}
+                onSaveEdit={handleSaveEdit}
+                onSaveAndRerun={handleSaveAndRerun}
+                onCancelEdit={handleCancelEdit}
+              />
+            ) : (
+              <div className="empty-state" style={{ flex: 1 }}>
+                <div className="empty-state-title">No graph data</div>
+              </div>
+            )}
+          </div>
+        </div>
+
+      </div>
+      </div>{/* end run-view-left */}
+
+      {!chatCollapsed && <div className="resize-handle resize-handle-h" onMouseDown={chatHandleDown} />}
+      <div className={`run-chat-panel${chatCollapsed ? " collapsed" : ""}`} style={chatCollapsed ? undefined : { width: chatWidth, flex: "none" }}>
+        {chatCollapsed ? (
+          <div
+            className="run-chat-collapsed"
+            onClick={() => setLayoutState((prev) => ({ ...prev, chatCollapsed: false }))}
+            title="Open chat"
+          >
+            <PanelRight size={14} className="run-chat-collapsed-toggle" />
+            <Sparkles size={13} className="run-chat-collapsed-icon" />
+            <div className="run-chat-collapsed-arrow">
+              <ChevronRight size={11} style={{ transform: "rotate(180deg)" }} />
+            </div>
+          </div>
+        ) : (
+          <TraceChat onCollapse={() => setLayoutState((prev) => ({ ...prev, chatCollapsed: true }))} />
+        )}
+      </div>
+      </div>
+  );
+}

@@ -86,6 +86,7 @@ requires-dist = [
     { name = "responses", marker = "extra == 'dev'" },
     { name = "together", marker = "extra == 'dev'" },
     { name = "uvicorn", extras = ["standard"] },
+    { name = "websocket-client", marker = "extra == 'dev'" },
 ]
 provides-extras = ["dev", "examples", "docs"]
 

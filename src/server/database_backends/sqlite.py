@@ -433,31 +433,37 @@ def insert_llm_call_with_output_query(
 
 
 # Experiment list and graph queries
-def get_finished_runs_query(project_id=None):
+def get_finished_runs_query(project_id=None, user_id=None):
     """Get all finished runs ordered by timestamp."""
+    conditions, params = [], []
     if project_id:
-        return query_all(
-            "SELECT session_id, timestamp FROM experiments WHERE project_id=? ORDER BY timestamp DESC",
-            (project_id,),
-        )
-    return query_all("SELECT session_id, timestamp FROM experiments ORDER BY timestamp DESC", ())
-
-
-def get_all_experiments_sorted_query(limit=None, offset=0, project_id=None):
-    """Get experiments sorted by timestamp desc, with optional pagination."""
-    base = "SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments"
-    params = []
-    if project_id:
-        base += " WHERE project_id=?"
+        conditions.append("project_id=?")
         params.append(project_id)
-    base += " ORDER BY timestamp DESC"
+    if user_id:
+        conditions.append("user_id=?")
+        params.append(user_id)
+    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+    return query_all(f"SELECT session_id, timestamp FROM experiments{where} ORDER BY timestamp DESC", tuple(params))
+
+
+def get_all_experiments_sorted_query(limit=None, offset=0, project_id=None, user_id=None):
+    """Get experiments sorted by timestamp desc, with optional pagination."""
+    conditions, params = [], []
+    if project_id:
+        conditions.append("project_id=?")
+        params.append(project_id)
+    if user_id:
+        conditions.append("user_id=?")
+        params.append(user_id)
+    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+    sql = f"SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments{where} ORDER BY timestamp DESC"
     if limit is not None:
-        base += " LIMIT ? OFFSET ?"
+        sql += " LIMIT ? OFFSET ?"
         params.extend([limit, offset])
-    return query_all(base, tuple(params))
+    return query_all(sql, tuple(params))
 
 
-def get_experiments_by_ids_query(session_ids, project_id=None):
+def get_experiments_by_ids_query(session_ids, project_id=None, user_id=None):
     """Get experiments for specific session IDs, sorted by timestamp desc."""
     if not session_ids:
         return []
@@ -467,20 +473,26 @@ def get_experiments_by_ids_query(session_ids, project_id=None):
     if project_id:
         sql += " AND project_id=?"
         params.append(project_id)
+    if user_id:
+        sql += " AND user_id=?"
+        params.append(user_id)
     sql += " ORDER BY timestamp DESC"
     return query_all(sql, tuple(params))
 
 
-def get_experiments_excluding_ids_query(session_ids, limit=None, offset=0, project_id=None):
+def get_experiments_excluding_ids_query(session_ids, limit=None, offset=0, project_id=None, user_id=None):
     """Get experiments excluding specific session IDs, sorted by timestamp desc."""
     if not session_ids:
-        return get_all_experiments_sorted_query(limit=limit, offset=offset, project_id=project_id)
+        return get_all_experiments_sorted_query(limit=limit, offset=offset, project_id=project_id, user_id=user_id)
     placeholders = ",".join("?" * len(session_ids))
     params = list(session_ids)
     conditions = [f"session_id NOT IN ({placeholders})"]
     if project_id:
         conditions.append("project_id=?")
         params.append(project_id)
+    if user_id:
+        conditions.append("user_id=?")
+        params.append(user_id)
     sql = f"SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments WHERE {' AND '.join(conditions)} ORDER BY timestamp DESC"
     if limit is not None:
         sql += " LIMIT ? OFFSET ?"
@@ -488,16 +500,19 @@ def get_experiments_excluding_ids_query(session_ids, limit=None, offset=0, proje
     return query_all(sql, tuple(params))
 
 
-def get_experiment_count_excluding_ids_query(session_ids, project_id=None):
+def get_experiment_count_excluding_ids_query(session_ids, project_id=None, user_id=None):
     """Get count of experiments excluding specific session IDs."""
     if not session_ids:
-        return get_experiment_count_query(project_id=project_id)
+        return get_experiment_count_query(project_id=project_id, user_id=user_id)
     placeholders = ",".join("?" * len(session_ids))
     params = list(session_ids)
     conditions = [f"session_id NOT IN ({placeholders})"]
     if project_id:
         conditions.append("project_id=?")
         params.append(project_id)
+    if user_id:
+        conditions.append("user_id=?")
+        params.append(user_id)
     row = query_one(
         f"SELECT COUNT(*) as count FROM experiments WHERE {' AND '.join(conditions)}",
         tuple(params),
@@ -505,19 +520,105 @@ def get_experiment_count_excluding_ids_query(session_ids, project_id=None):
     return row["count"] if row else 0
 
 
-def get_experiment_count_query(project_id=None):
+def get_experiment_count_query(project_id=None, user_id=None):
     """Get total number of experiments."""
+    conditions, params = [], []
     if project_id:
-        row = query_one("SELECT COUNT(*) as count FROM experiments WHERE project_id=?", (project_id,))
-    else:
-        row = query_one("SELECT COUNT(*) as count FROM experiments", ())
+        conditions.append("project_id=?")
+        params.append(project_id)
+    if user_id:
+        conditions.append("user_id=?")
+        params.append(user_id)
+    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+    row = query_one(f"SELECT COUNT(*) as count FROM experiments{where}", tuple(params))
     return row["count"] if row else 0
 
 
+# Filtered experiment queries for server-side pagination/sorting/filtering
+_EXPERIMENT_SORT_COLUMNS = {"timestamp", "session_id", "name", "version_date", "success"}
+
+
+def _build_experiment_filters(filters):
+    """Build WHERE conditions and params from a filter dict."""
+    conditions = []
+    params = []
+    if filters.get("name"):
+        conditions.append("LOWER(name) LIKE ?")
+        params.append(f"%{filters['name'].lower()}%")
+    if filters.get("session_id"):
+        conditions.append("LOWER(session_id) LIKE ?")
+        params.append(f"%{filters['session_id'].lower()}%")
+    if filters.get("success"):
+        values = filters["success"]
+        placeholders = ",".join("?" * len(values))
+        conditions.append(f"success IN ({placeholders})")
+        params.extend(values)
+    if filters.get("version_date"):
+        values = filters["version_date"]
+        placeholders = ",".join("?" * len(values))
+        conditions.append(f"version_date IN ({placeholders})")
+        params.extend(values)
+    if filters.get("timestamp_from"):
+        conditions.append("timestamp >= ?")
+        params.append(filters["timestamp_from"])
+    if filters.get("timestamp_to"):
+        conditions.append("timestamp <= ?")
+        params.append(filters["timestamp_to"] + " 23:59:59")
+    return conditions, params
+
+
+def query_experiments_filtered(project_id, exclude_ids, filters, sort_col, sort_dir, limit, offset, user_id=None):
+    """Query experiments with filtering, sorting, and pagination. Returns (rows, total_count)."""
+    conditions = []
+    params = []
+    if project_id:
+        conditions.append("project_id=?")
+        params.append(project_id)
+    if user_id:
+        conditions.append("user_id=?")
+        params.append(user_id)
+    if exclude_ids:
+        placeholders = ",".join("?" * len(exclude_ids))
+        conditions.append(f"session_id NOT IN ({placeholders})")
+        params.extend(exclude_ids)
+    filter_conditions, filter_params = _build_experiment_filters(filters)
+    conditions.extend(filter_conditions)
+    params.extend(filter_params)
+    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+    if sort_col not in _EXPERIMENT_SORT_COLUMNS:
+        sort_col = "timestamp"
+    sort_dir = "DESC" if sort_dir.upper() != "ASC" else "ASC"
+    count_row = query_one(f"SELECT COUNT(*) as count FROM experiments{where}", tuple(params))
+    total = count_row["count"] if count_row else 0
+    sql = f"SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments{where} ORDER BY {sort_col} {sort_dir}"
+    data_params = list(params)
+    if limit is not None:
+        sql += " LIMIT ? OFFSET ?"
+        data_params.extend([limit, offset])
+    rows = query_all(sql, tuple(data_params))
+    return rows, total
+
+
+def get_distinct_versions_query(project_id=None, user_id=None):
+    """Get distinct version_date values for a project."""
+    conditions = ["version_date IS NOT NULL"]
+    params = []
+    if project_id:
+        conditions.append("project_id=?")
+        params.append(project_id)
+    if user_id:
+        conditions.append("user_id=?")
+        params.append(user_id)
+    return query_all(
+        f"SELECT DISTINCT version_date FROM experiments WHERE {' AND '.join(conditions)} ORDER BY version_date DESC",
+        tuple(params),
+    )
+
+
 def get_experiment_detail_query(session_id):
-    """Get notes and log for a single experiment."""
+    """Get detail fields for a single experiment."""
     return query_one(
-        "SELECT notes, log FROM experiments WHERE session_id=?",
+        "SELECT name, timestamp, success, notes, log, version_date FROM experiments WHERE session_id=?",
         (session_id,),
     )
 
@@ -590,16 +691,36 @@ def _delete_sessions_data(session_ids):
 
 
 def delete_project_query(project_id):
-    """Delete a project and all associated experiments, llm_calls, and lessons_applied."""
+    """Delete a project and all associated experiments, llm_calls, lessons_applied, and locations."""
     sessions = query_all("SELECT session_id FROM experiments WHERE project_id=?", (project_id,))
     _delete_sessions_data([s["session_id"] for s in sessions])
+    execute("DELETE FROM user_project_locations WHERE project_id=?", (project_id,))
     execute("DELETE FROM projects WHERE project_id=?", (project_id,))
 
 
 def delete_user_query(user_id):
-    """Delete a user and all associated experiments, llm_calls, and lessons_applied."""
+    """Delete a user and all associated experiments, llm_calls, lessons_applied, and locations."""
+    # 1. Get projects associated to this user
+    project_ids = [
+        r["project_id"]
+        for r in query_all(
+            "SELECT DISTINCT project_id FROM user_project_locations WHERE user_id=?", (user_id,)
+        )
+    ]
+    # 2. For each project, get the set of all users belonging to it
+    project_users: dict[str, set[str]] = {}
+    for pid in project_ids:
+        rows = query_all(
+            "SELECT DISTINCT user_id FROM user_project_locations WHERE project_id=?", (pid,)
+        )
+        project_users[pid] = {r["user_id"] for r in rows}
+    # Delete projects where this user is the sole member
+    for pid, users in project_users.items():
+        if users == {user_id}:
+            delete_project_query(pid)
     sessions = query_all("SELECT session_id FROM experiments WHERE user_id=?", (user_id,))
     _delete_sessions_data([s["session_id"] for s in sessions])
+    execute("DELETE FROM user_project_locations WHERE user_id=?", (user_id,))
     execute("DELETE FROM users WHERE user_id=?", (user_id,))
 
 
@@ -632,12 +753,17 @@ def get_experiment_log_success_graph_query(session_id):
     )
 
 
-def get_next_run_index_query(project_id=None):
+def get_next_run_index_query(project_id=None, user_id=None):
     """Get the next run index based on how many runs already exist."""
+    conditions, params = [], []
     if project_id:
-        row = query_one("SELECT COUNT(*) as count FROM experiments WHERE project_id=?", (project_id,))
-    else:
-        row = query_one("SELECT COUNT(*) as count FROM experiments", ())
+        conditions.append("project_id=?")
+        params.append(project_id)
+    if user_id:
+        conditions.append("user_id=?")
+        params.append(user_id)
+    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+    row = query_one(f"SELECT COUNT(*) as count FROM experiments{where}", tuple(params))
     if row:
         return row["count"] + 1
     return 1
@@ -771,12 +897,30 @@ def get_project_query(project_id):
     )
 
 
-def get_all_projects_query():
+def get_all_projects_query(user_id=None):
     """Get all projects ordered by last_run_at desc."""
+    if user_id:
+        return query_all(
+            """SELECT DISTINCT p.project_id, p.name, p.description, p.created_at, p.last_run_at
+               FROM projects p
+               JOIN user_project_locations upl ON p.project_id = upl.project_id
+               WHERE upl.user_id = ?
+               ORDER BY p.last_run_at DESC""",
+            (user_id,),
+        )
     return query_all(
         "SELECT project_id, name, description, created_at, last_run_at FROM projects ORDER BY last_run_at DESC",
         (),
     )
+
+
+def get_project_user_count_query(project_id):
+    """Count distinct users who have this project registered."""
+    row = query_one(
+        "SELECT COUNT(DISTINCT user_id) as count FROM user_project_locations WHERE project_id=?",
+        (project_id,),
+    )
+    return row["count"] if row else 0
 
 
 # User-project location queries
@@ -806,4 +950,20 @@ def get_project_locations_query(user_id, project_id):
     return query_all(
         "SELECT project_location FROM user_project_locations WHERE user_id=? AND project_id=?",
         (user_id, project_id),
+    )
+
+
+def get_all_project_locations_query(project_id):
+    """Get all known locations for a project across all users."""
+    return query_all(
+        "SELECT project_location FROM user_project_locations WHERE project_id=?",
+        (project_id,),
+    )
+
+
+def delete_project_location_query(user_id, project_id, project_location):
+    """Delete a single project location row."""
+    execute(
+        "DELETE FROM user_project_locations WHERE user_id=? AND project_id=? AND project_location=?",
+        (user_id, project_id, project_location),
     )

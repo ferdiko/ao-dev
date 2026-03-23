@@ -7,6 +7,7 @@ in the database's projects table.
 """
 
 import os
+import shutil
 import uuid
 
 from ao.common.config import _ask_field, green
@@ -31,6 +32,14 @@ def read_project_id(project_root: str) -> str:
     id_path = os.path.join(project_root, PROJECT_CONFIG_DIR, PROJECT_ID_FILE)
     with open(id_path, encoding="utf-8") as f:
         return f.read().strip()
+
+
+def delete_project_configs(project_locations: list[str]) -> None:
+    """Delete .ao/ directories at the given project locations."""
+    for loc in project_locations:
+        ao_dir = os.path.join(loc, PROJECT_CONFIG_DIR)
+        if os.path.isdir(ao_dir):
+            shutil.rmtree(ao_dir)
 
 
 def write_project_id(project_root: str, project_id: str) -> None:
