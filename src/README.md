@@ -134,8 +134,6 @@ Our CI test suit comprises of ["non_billable"](/tests/non_billable) and ["billab
 > [!NOTE]  
 > We stopped hosting the web app.
 
-~~Just push to webapp-prod.~~
-
 ## Further resources
 
  - [Join our discord server](https://discord.gg/fjsNSa6TAh)
