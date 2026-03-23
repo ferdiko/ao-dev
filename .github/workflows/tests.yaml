@@ -2,6 +2,7 @@ name: Tests
 
 on:
   push:
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -41,3 +42,32 @@ jobs:
     - name: Clean up
       if: always()
       run: rm -rf ~/.cache/ao/tests/non-billable
+
+  web-app:
+    name: Web App
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/user_interfaces/web_app
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: src/user_interfaces/web_app/package-lock.json
+
+    - name: Install UI workspace dependencies
+      run: npm ci
+
+    - name: Run web app tests
+      run: npm run test
+
+    - name: Run web app lint
+      run: npm run lint
+
+    - name: Build web app
+      run: npm run build

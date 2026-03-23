@@ -32,7 +32,7 @@ conda create -n ao python=3.13 nodejs sqlite -y && conda activate ao
 For non-developers, install the project like so (install python deps and build UI):
 ```bash
 pip install -e .
-cd src/user_interfaces && npm install && npm run build:extension
+cd src/user_interfaces && npm run install:all && npm run build:extension
 ```
 
 ### Running the extension
@@ -57,7 +57,7 @@ Please install the project as follows (install python dev deps, pre-commit hook 
 ```bash
 pip install -e ".[dev]"
 pre-commit install
-cd src/user_interfaces && npm install && npm run build:extension
+cd src/user_interfaces && npm run install:all && npm run build:extension
 ```
 
 Some Python linters will (incorrectly) say that the modules inside our code base can't be found. Run the following in the project root to make these linters happy:

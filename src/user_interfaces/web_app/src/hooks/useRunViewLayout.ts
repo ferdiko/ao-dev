@@ -12,7 +12,7 @@ const DEFAULT_RUN_VIEW_LAYOUT: RunViewLayoutState = {
   chatCollapsed: false,
 };
 
-const RUN_VIEW_LAYOUT_STORAGE_KEY = "web_app_v2:run_view_layout";
+const RUN_VIEW_LAYOUT_STORAGE_KEY = "web_app:run_view_layout";
 
 function loadRunViewLayout(): RunViewLayoutState {
   try {

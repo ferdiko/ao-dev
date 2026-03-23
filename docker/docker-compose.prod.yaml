@@ -22,21 +22,6 @@ services:
     networks:
       - app-network
 
-  proxy:
-    image: ${ECR_REGISTRY}/workflow-extension-proxy:latest
-    container_name: workflow-proxy
-    ports:
-      - "4000:4000"
-    environment:
-      - WS_PORT=4000
-      - PYTHON_PORT=5959
-      - PYTHON_HOST=backend
-    depends_on:
-      - backend
-    restart: unless-stopped
-    networks:
-      - app-network
-
 networks:
   app-network:
     driver: bridge

@@ -38,7 +38,7 @@ export function ProjectPage() {
   const [runningPage, setRunningPage] = useState(1);
   const [runningSort, setRunningSort] = useStoredSortState({
     fallbackState: DEFAULT_SORT,
-    storageKey: `web_app_v2:project_sort:${projectId ?? "unknown"}:running`,
+    storageKey: `web_app:project_sort:${projectId ?? "unknown"}:running`,
   });
 
   // Completed: pagination + sort
@@ -46,7 +46,7 @@ export function ProjectPage() {
   const [completedPage, setCompletedPage] = useState(1);
   const [completedSort, setCompletedSort] = useStoredSortState({
     fallbackState: DEFAULT_SORT,
-    storageKey: `web_app_v2:project_sort:${projectId ?? "unknown"}:completed`,
+    storageKey: `web_app:project_sort:${projectId ?? "unknown"}:completed`,
   });
   const {
     completedExperiments,

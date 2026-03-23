@@ -26,15 +26,11 @@ echo ""
 echo "[ao-server]  Starting..."
 uv run ao-server start 2>&1 | sed 's/^/[ao-server]  /' &
 
-# 2. Web app server (Express + WebSocket proxy)
-echo "[web-server] Starting on :4000..."
-node "$WEB_APP/server.js" 2>&1 | sed 's/^/[web-server] /' &
-
-# 3. Web app client (Vite dev server)
+# 2. Web app client (Vite dev server)
 echo "[web-client] Starting on :5173..."
-cd "$WEB_APP/client" && npm run dev 2>&1 | sed 's/^/[web-client] /' &
+cd "$WEB_APP" && npm run dev 2>&1 | sed 's/^/[web-client] /' &
 
-# 4. VS Code extension (webpack watch)
+# 3. VS Code extension (webpack watch)
 echo "[vscode-ext] Starting watch..."
 cd "$VSCODE_EXT" && npm run watch 2>&1 | sed 's/^/[vscode-ext] /' &
 

@@ -4,21 +4,8 @@ services:
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile
-      args:
-        VITE_APP_WS_URL: ${VITE_APP_WS_URL}
-        VITE_API_BASE: ${VITE_API_BASE}
     ports:
       - "3000:80"
-  proxy:
-    build:
-      context: ..
-      dockerfile: docker/proxy.Dockerfile
-    ports:
-      - "4000:4000"
-    environment:
-      - WS_PORT=4000
-      - PYTHON_HOST=backend
-      - PYTHON_PORT=5959
     depends_on:
       - backend
   backend:
