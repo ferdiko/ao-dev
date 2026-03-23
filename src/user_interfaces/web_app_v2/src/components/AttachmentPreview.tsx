@@ -4,114 +4,19 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import Zoom from "react-medium-image-zoom";
 import "react-medium-image-zoom/dist/styles.css";
+import {
+  MIME_TO_EXT,
+  hasInBrowserPreview,
+  isImageMime,
+  isPdfMime,
+  type Attachment,
+} from "../attachmentUtils";
 
 // Configure PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
   import.meta.url,
 ).toString();
-
-// ── Attachment detection ─────────────────────────────────
-
-export interface Attachment {
-  id: string;
-  name: string;
-  mimeType: string;
-  /** Base64-encoded content (no data-URI prefix) */
-  data: string;
-}
-
-const MIME_TO_EXT: Record<string, string> = {
-  "application/pdf": "PDF",
-  "image/png": "PNG",
-  "image/jpeg": "JPEG",
-  "image/gif": "GIF",
-  "image/webp": "WebP",
-  "image/svg+xml": "SVG",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "DOCX",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "XLSX",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "PPTX",
-};
-
-/** Types we render in-browser (modal preview). Everything else triggers a download. */
-function hasInBrowserPreview(mime: string): boolean {
-  return mime.startsWith("image/") || mime === "application/pdf";
-}
-
-function isImageMime(mime: string): boolean {
-  return mime.startsWith("image/");
-}
-
-function isPdfMime(mime: string): boolean {
-  return mime === "application/pdf";
-}
-
-/**
- * Scan an I/O data object for base64 attachments.
- * Supports:
- * - OpenAI vision format: { type: "image_url", image_url: { url: "data:..." } }
- * - Generic file objects: { data: "...", mime_type: "..." }
- * - Any string value matching data:...;base64,...
- */
-export function extractAttachments(data: Record<string, unknown>): Attachment[] {
-  const attachments: Attachment[] = [];
-  let counter = 0;
-
-  function processDataUri(uri: string, name?: string) {
-    const match = uri.match(/^data:([^;]+);base64,(.+)$/s);
-    if (match) {
-      attachments.push({
-        id: `att-${counter++}`,
-        name: name ?? `attachment-${counter}`,
-        mimeType: match[1],
-        data: match[2],
-      });
-    }
-  }
-
-  function scan(obj: unknown, key?: string): void {
-    if (typeof obj === "string") {
-      if (obj.startsWith("data:") && obj.includes(";base64,")) {
-        processDataUri(obj, key);
-      }
-      return;
-    }
-    if (Array.isArray(obj)) {
-      obj.forEach((item, i) => scan(item, `${key ?? "item"}-${i}`));
-      return;
-    }
-    if (obj && typeof obj === "object") {
-      const o = obj as Record<string, unknown>;
-
-      // OpenAI vision format
-      if (o.type === "image_url" && o.image_url && typeof (o.image_url as Record<string, unknown>).url === "string") {
-        processDataUri((o.image_url as Record<string, unknown>).url as string, "image");
-        return;
-      }
-
-      // Generic file object
-      if (typeof o.data === "string" && typeof o.mime_type === "string") {
-        const mime = o.mime_type as string;
-        if (MIME_TO_EXT[mime]) {
-          attachments.push({
-            id: `att-${counter++}`,
-            name: (o.name as string) ?? `file-${counter}.${mime.split("/")[1]}`,
-            mimeType: mime,
-            data: o.data as string,
-          });
-          return;
-        }
-      }
-
-      for (const [k, v] of Object.entries(o)) {
-        scan(v, k);
-      }
-    }
-  }
-
-  scan(data);
-  return attachments;
-}
 
 // ── Download helper ─────────────────────────────────────
 

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, createContext, useContext } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { BrowserRouter, Routes, Route, useParams, useNavigate } from "react-router-dom";
 import { Sidebar } from "./components/Sidebar";
 import { OrgPage } from "./pages/OrgPage";
@@ -11,23 +11,9 @@ import { UserSettingsModal } from "./components/UserSettingsModal";
 import { ProjectSettingsModal } from "./components/ProjectSettingsModal";
 import { useResize } from "./hooks/useResize";
 import { fetchUser, fetchProject, type User } from "./api";
+import { UserContext, useUser } from "./userContext";
 import arrowImg from "./assets/arrow_spiral_tr_bl.png";
 import "./App.css";
-
-// ============================================================
-// User context — shared between Sidebar and pages
-// ============================================================
-
-interface UserContextValue {
-  user: User | null | undefined; // undefined = loading, null = not configured
-  refreshUser: () => void;
-}
-
-const UserContext = createContext<UserContextValue>({ user: undefined, refreshUser: () => {} });
-
-export function useUser() {
-  return useContext(UserContext);
-}
 
 // ============================================================
 // Layout

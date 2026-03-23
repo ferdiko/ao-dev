@@ -18,7 +18,8 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { Breadcrumb } from "../components/Breadcrumb";
-import { AttachmentStrip, extractAttachments } from "../components/AttachmentPreview";
+import { AttachmentStrip } from "../components/AttachmentPreview";
+import { extractAttachments } from "../attachmentUtils";
 import {
   fetchProject, fetchGraph, fetchExperimentDetail,
   editInput, editOutput, restartRun, eraseRun, updateResult,
@@ -51,18 +52,30 @@ interface GraphEdge {
   target: string;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseNodeData(raw: unknown): Record<string, unknown> {
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return isRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return isRecord(raw) ? raw : {};
+}
+
 /** Parse backend graph payload into frontend types.
  *  Graph nodes contain to_show data directly (display-ready). */
 function parseGraphPayload(payload: GraphPayload): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = payload.nodes.map((n: BackendGraphNode) => {
-    let input: Record<string, unknown> = {};
-    let output: Record<string, unknown> = {};
-    try { input = typeof n.input === "string" ? JSON.parse(n.input) : (n.input as any) ?? {}; } catch { /* empty */ }
-    try { output = typeof n.output === "string" ? JSON.parse(n.output) : (n.output as any) ?? {}; } catch { /* empty */ }
     return {
       id: n.id, label: n.label,
-      input,
-      output,
+      input: parseNodeData(n.input),
+      output: parseNodeData(n.output),
       border_color: n.border_color, stack_trace: n.stack_trace, model: n.model, attachments: n.attachments,
     };
   });
@@ -647,6 +660,35 @@ interface GraphApiHandle {
   setCenter: ReturnType<typeof useReactFlow>["setCenter"];
 }
 
+interface RunViewLayoutState {
+  graphWidth: number;
+  chatWidth: number;
+  chatCollapsed: boolean;
+}
+
+const DEFAULT_RUN_VIEW_LAYOUT: RunViewLayoutState = {
+  graphWidth: 340,
+  chatWidth: 340,
+  chatCollapsed: false,
+};
+
+const RUN_VIEW_LAYOUT_STORAGE_KEY = "web_app_v2:run_view_layout";
+
+function loadRunViewLayout(): RunViewLayoutState {
+  try {
+    const raw = localStorage.getItem(RUN_VIEW_LAYOUT_STORAGE_KEY);
+    if (!raw) return DEFAULT_RUN_VIEW_LAYOUT;
+    const parsed = JSON.parse(raw) as Partial<RunViewLayoutState>;
+    return {
+      graphWidth: typeof parsed.graphWidth === "number" ? parsed.graphWidth : DEFAULT_RUN_VIEW_LAYOUT.graphWidth,
+      chatWidth: typeof parsed.chatWidth === "number" ? parsed.chatWidth : DEFAULT_RUN_VIEW_LAYOUT.chatWidth,
+      chatCollapsed: typeof parsed.chatCollapsed === "boolean" ? parsed.chatCollapsed : DEFAULT_RUN_VIEW_LAYOUT.chatCollapsed,
+    };
+  } catch {
+    return DEFAULT_RUN_VIEW_LAYOUT;
+  }
+}
+
 function GraphApi({ apiRef }: { apiRef: React.MutableRefObject<GraphApiHandle | null> }) {
   const { setCenter } = useReactFlow();
   useEffect(() => {
@@ -662,6 +704,7 @@ export function RunView() {
   const { projectId, sessionId: rawSessionIds } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const [layoutState, setLayoutState] = useState<RunViewLayoutState>(loadRunViewLayout);
 
   const sessionIds = useMemo(() => rawSessionIds?.split(",").filter(Boolean) ?? [], [rawSessionIds]);
   const activeSessionId = searchParams.get("active") ?? sessionIds[0];
@@ -685,7 +728,7 @@ export function RunView() {
       if (!cancelled) setTabNames(new Map(pairs));
     });
     return () => { cancelled = true; };
-  }, [sessionIdsKey]);
+  }, [sessionIds]);
 
   const switchTab = useCallback((id: string) => {
     setSearchParams({ active: id });
@@ -705,6 +748,10 @@ export function RunView() {
 
   const isMultiTab = sessionIds.length > 1;
 
+  useEffect(() => {
+    localStorage.setItem(RUN_VIEW_LAYOUT_STORAGE_KEY, JSON.stringify(layoutState));
+  }, [layoutState]);
+
   // Measure active tab position for shaped SVG divider
   const headerRef = useRef<HTMLDivElement>(null);
   const activeTabRef = useRef<HTMLDivElement>(null);
@@ -714,7 +761,7 @@ export function RunView() {
   useEffect(() => {
     const header = headerRef.current;
     const tab = activeTabRef.current;
-    if (!header || !tab) { setDividerPath(""); setTabFillPath(""); return; }
+    if (!header || !tab) return;
     const measure = () => {
       const hRect = header.getBoundingClientRect();
       const tRect = tab.getBoundingClientRect();
@@ -772,7 +819,12 @@ export function RunView() {
           { label: projectName || "Project", to: `/project/${projectId}` },
           { label: tabNames.get(sessionIds[0]) || sessionIds[0] || "Run" },
         ]} />
-        <RunViewContent key={activeSessionId} sessionId={activeSessionId} projectId={projectId!} projectName={projectName} />
+        <RunViewContent
+          key={activeSessionId}
+          sessionId={activeSessionId}
+          layoutState={layoutState}
+          setLayoutState={setLayoutState}
+        />
       </div>
     );
   }
@@ -808,7 +860,12 @@ export function RunView() {
             ))}
           </div>
         </div>
-        <RunViewContent key={activeSessionId} sessionId={activeSessionId} projectId={projectId!} projectName={projectName} />
+        <RunViewContent
+          key={activeSessionId}
+          sessionId={activeSessionId}
+          layoutState={layoutState}
+          setLayoutState={setLayoutState}
+        />
       </div>
     </div>
   );
@@ -816,9 +873,16 @@ export function RunView() {
 
 // ── RunViewContent (single-run body) ──────────────────
 
-function RunViewContent({ sessionId, projectId, projectName }: { sessionId: string; projectId: string; projectName: string }) {
+function RunViewContent({
+  sessionId,
+  layoutState,
+  setLayoutState,
+}: {
+  sessionId: string;
+  layoutState: RunViewLayoutState;
+  setLayoutState: React.Dispatch<React.SetStateAction<RunViewLayoutState>>;
+}) {
   // Data state
-  const [runName, setRunName] = useState("");
   const [runResult, setRunResult] = useState<string>("");
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
@@ -836,7 +900,6 @@ function RunViewContent({ sessionId, projectId, projectName }: { sessionId: stri
           fetchGraph(sessionId),
         ]);
         if (cancelled) return;
-        setRunName(detail.run_name);
         setRunResult(detail.result);
         const parsed = parseGraphPayload(graphResp.payload);
         setGraphNodes(parsed.nodes);
@@ -856,32 +919,33 @@ function RunViewContent({ sessionId, projectId, projectName }: { sessionId: stri
     if (!sessionId) return;
     return subscribe("graph_update", (msg) => {
       if (msg.session_id !== sessionId) return;
-      const parsed = parseGraphPayload(msg.payload);
+      const parsed = parseGraphPayload(msg.payload as GraphPayload);
       setGraphNodes(parsed.nodes);
       setGraphEdges(parsed.edges);
     });
   }, [sessionId]);
 
   // UI state
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("pretty");
   const [rerunning, setRerunning] = useState(false);
-  const [chatCollapsed, setChatCollapsed] = useState(false);
 
-  // Panel widths (pixels). null = use flex default.
   const GRAPH_MIN = 180; const GRAPH_MAX = 600;
   const CHAT_MIN = 200; const CHAT_MAX = 700;
-  const [graphWidth, setGraphWidth] = useState(340);
-  const [chatWidth, setChatWidth] = useState(340);
-  const columnsRef = useRef<HTMLDivElement>(null);
+  const { graphWidth, chatWidth, chatCollapsed } = layoutState;
 
   const onGraphResize = useCallback((delta: number) => {
-    setGraphWidth((w) => Math.min(GRAPH_MAX, Math.max(GRAPH_MIN, w + delta)));
-  }, []);
+    setLayoutState((prev) => ({
+      ...prev,
+      graphWidth: Math.min(GRAPH_MAX, Math.max(GRAPH_MIN, prev.graphWidth + delta)),
+    }));
+  }, [setLayoutState]);
   const onChatResize = useCallback((delta: number) => {
-    setChatWidth((w) => Math.min(CHAT_MAX, Math.max(CHAT_MIN, w - delta)));
-  }, []);
+    setLayoutState((prev) => ({
+      ...prev,
+      chatWidth: Math.min(CHAT_MAX, Math.max(CHAT_MIN, prev.chatWidth - delta)),
+    }));
+  }, [setLayoutState]);
   const graphHandleDown = useResize("horizontal", onGraphResize);
   const chatHandleDown = useResize("horizontal", onChatResize);
 
@@ -920,7 +984,7 @@ function RunViewContent({ sessionId, projectId, projectName }: { sessionId: stri
       requestAnimationFrame(() => {
         const el = nodeRefs.current.get(lastId);
         if (el) {
-          const scrollParent = el.closest(".run-detail-io-scroll");
+          const scrollParent = el.closest(".run-detail-io-scroll") as HTMLElement | null;
           if (scrollParent) {
             const marginTop = parseInt(getComputedStyle(el).marginTop, 10) || 0;
             scrollParent.scrollTo({ top: el.offsetTop - scrollParent.offsetTop - marginTop, behavior: "instant" });
@@ -1035,7 +1099,7 @@ function RunViewContent({ sessionId, projectId, projectName }: { sessionId: stri
   const scrollToNode = useCallback((nodeId: string, behavior: ScrollBehavior = "smooth") => {
     const el = nodeRefs.current.get(nodeId);
     if (!el) return;
-    const scrollParent = el.closest(".run-detail-io-scroll");
+    const scrollParent = el.closest(".run-detail-io-scroll") as HTMLElement | null;
     if (scrollParent) {
       const marginTop = parseInt(getComputedStyle(el).marginTop, 10) || 0;
       scrollParent.scrollTo({ top: el.offsetTop - scrollParent.offsetTop - marginTop, behavior });
@@ -1051,7 +1115,6 @@ function RunViewContent({ sessionId, projectId, projectName }: { sessionId: stri
     const pos = graphLayout.positions.get(nodeId);
     if (!pos) return;
     api.setCenter(pos.x + NODE_W / 2, pos.y + NODE_H / 2, { zoom: 1, duration: 300 });
-    setSelectedNodeId(nodeId);
     setFocusedNodeId(nodeId);
     scrollToNode(nodeId, "smooth");
   }, [sortedNodeIds, graphLayout, scrollToNode]);
@@ -1127,10 +1190,6 @@ function RunViewContent({ sessionId, projectId, projectName }: { sessionId: stri
   const onCardClick = useCallback((nodeId: string) => {
     centerOnNode(nodeId);
   }, [centerOnNode]);
-
-  const onPaneClick = useCallback(() => {
-    setSelectedNodeId(null);
-  }, []);
 
   const nodesWithSelection = useMemo(
     () => rfNodes.map((n) => ({
@@ -1208,8 +1267,6 @@ function RunViewContent({ sessionId, projectId, projectName }: { sessionId: stri
                   nodeTypes={nodeTypes}
                   edgeTypes={edgeTypes}
                   onNodeClick={onNodeClick}
-                  onPaneClick={onPaneClick}
-                  onSelectionChange={({ nodes }) => { if (!nodes.length) setSelectedNodeId(null); }}
                   proOptions={{ hideAttribution: true }}
                   nodesDraggable={false}
                   panOnDrag={false}
@@ -1284,7 +1341,11 @@ function RunViewContent({ sessionId, projectId, projectName }: { sessionId: stri
       {!chatCollapsed && <div className="resize-handle resize-handle-h" onMouseDown={chatHandleDown} />}
       <div className={`run-chat-panel${chatCollapsed ? " collapsed" : ""}`} style={chatCollapsed ? undefined : { width: chatWidth, flex: "none" }}>
         {chatCollapsed ? (
-          <div className="run-chat-collapsed" onClick={() => setChatCollapsed(false)} title="Open chat">
+          <div
+            className="run-chat-collapsed"
+            onClick={() => setLayoutState((prev) => ({ ...prev, chatCollapsed: false }))}
+            title="Open chat"
+          >
             <PanelRight size={14} className="run-chat-collapsed-toggle" />
             <Sparkles size={13} className="run-chat-collapsed-icon" />
             <div className="run-chat-collapsed-arrow">
@@ -1292,7 +1353,7 @@ function RunViewContent({ sessionId, projectId, projectName }: { sessionId: stri
             </div>
           </div>
         ) : (
-          <TraceChat onCollapse={() => setChatCollapsed(true)} />
+          <TraceChat onCollapse={() => setLayoutState((prev) => ({ ...prev, chatCollapsed: true }))} />
         )}
       </div>
       </div>

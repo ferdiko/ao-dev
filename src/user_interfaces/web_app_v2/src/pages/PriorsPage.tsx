@@ -676,7 +676,6 @@ function DiffLine({ type, text }: { type: "add" | "remove" | "context"; text: st
 function computeLineDiff(original: string, proposed: string): { type: "add" | "remove" | "context"; text: string }[] {
   const origLines = original.split("\n");
   const propLines = proposed.split("\n");
-  const lines: { type: "add" | "remove" | "context"; text: string }[] = [];
 
   // Simple LCS-based diff
   const m = origLines.length, n = propLines.length;
@@ -702,7 +701,7 @@ function computeLineDiff(original: string, proposed: string): { type: "add" | "r
   return result.reverse();
 }
 
-function DiffFileViewer({ entry, nodes, onClose }: { entry: DiffEntry; nodes: FSNode[]; onClose: () => void }) {
+function DiffFileViewer({ entry, nodes }: { entry: DiffEntry; nodes: FSNode[] }) {
   const fileData = DIFF_FILE_CONTENT[entry.name];
 
   // For unchanged files, look up content from the filesystem
@@ -1005,7 +1004,7 @@ export function PriorsPage() {
         {/* Right: Editor */}
         <div className="priors-editor-panel">
           {diffViewingFile ? (
-            <DiffFileViewer key={diffViewingFile.name} entry={diffViewingFile} nodes={nodes} onClose={() => setDiffViewingFile(null)} />
+            <DiffFileViewer key={diffViewingFile.name} entry={diffViewingFile} nodes={nodes} />
           ) : selectedNode?.type === "file" ? (
             <SplitEditor
               key={selectedId!}

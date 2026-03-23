@@ -204,6 +204,7 @@ export interface ExperimentQueryParams {
 
 interface ProjectExperimentsResponse {
   type: string;
+  running: Experiment[];
   finished: Experiment[];
   finished_total: number;
   distinct_versions: string[];

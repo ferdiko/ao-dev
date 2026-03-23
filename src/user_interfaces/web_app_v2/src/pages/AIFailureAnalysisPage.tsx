@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -17,7 +17,6 @@ import {
   Send,
   Folder,
   X,
-  MessageSquareWarning,
   Check,
   ShieldAlert,
 } from "lucide-react";
@@ -156,12 +155,7 @@ function PriorSplitEditor({
   feedback?: SubmissionFeedback | null;
   initialMode?: EditorMode;
 }) {
-  const [mode, setMode] = useState<EditorMode>(initialMode ?? "split");
-
-  // Switch to feedback tab when new feedback arrives
-  useEffect(() => {
-    if (feedback) setMode("feedback");
-  }, [feedback]);
+  const [mode, setMode] = useState<EditorMode>(feedback ? "feedback" : (initialMode ?? "split"));
 
   return (
     <div className="fa-prior-editor">
@@ -632,7 +626,7 @@ export function AIFailureAnalysisPage() {
                     </div>
                   )}
                   <PriorSplitEditor
-                    key={selected.id}
+                    key={`${selected.id}:${feedbacks[selected.id]?.status ?? "none"}`}
                     content={selectedPrior}
                     onChange={(val) => setPriorContents((prev) => ({ ...prev, [selected.id]: val }))}
                     feedback={feedbacks[selected.id] ?? null}

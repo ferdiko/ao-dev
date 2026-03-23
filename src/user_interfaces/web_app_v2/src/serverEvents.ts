@@ -5,9 +5,16 @@
  * Auto-reconnects on disconnection while there are active subscribers.
  */
 
-type EventHandler = (data: any) => void;
+type ServerEvent = {
+  type: string;
+  [key: string]: unknown;
+};
+
+type EventHandler = (data: ServerEvent) => void;
 
 const listeners = new Map<string, Set<EventHandler>>();
+const replayableEventTypes = new Set(["experiment_list"]);
+const latestReplayableEvents = new Map<string, ServerEvent>();
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -19,10 +26,17 @@ function connect() {
 
   ws.onmessage = (event) => {
     try {
-      const msg = JSON.parse(event.data);
-      const handlers = listeners.get(msg.type);
+      const msg = JSON.parse(event.data) as unknown;
+      if (!msg || typeof msg !== "object" || typeof (msg as { type?: unknown }).type !== "string") {
+        return;
+      }
+      const typedMsg = msg as ServerEvent;
+      if (replayableEventTypes.has(typedMsg.type)) {
+        latestReplayableEvents.set(typedMsg.type, typedMsg);
+      }
+      const handlers = listeners.get(typedMsg.type);
       if (handlers) {
-        for (const handler of handlers) handler(msg);
+        for (const handler of handlers) handler(typedMsg);
       }
     } catch {
       // Ignore parse errors (e.g. keepalive comments)
@@ -53,16 +67,24 @@ export function subscribe(eventType: string, handler: EventHandler): () => void 
 
   if (!ws) connect();
 
+  const latestEvent = latestReplayableEvents.get(eventType);
+  if (latestEvent) {
+    handler(latestEvent);
+  }
+
   return () => {
     const set = listeners.get(eventType);
     if (set) {
       set.delete(handler);
       if (set.size === 0) listeners.delete(eventType);
     }
-    if (listeners.size === 0 && ws) {
+    if (listeners.size === 0) {
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      ws.close();
-      ws = null;
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+      latestReplayableEvents.clear();
     }
   };
 }

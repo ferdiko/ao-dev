@@ -400,7 +400,7 @@ def get_project_experiments(
     time_to: str = "",
     state: ServerState = Depends(get_state),
 ):
-    """Get paginated filtered finished experiments for a project (running comes via WebSocket)."""
+    """Get paginated filtered finished experiments plus the current running set for a project."""
     running_ids = {sid for sid, s in state.sessions.items() if s.status == "running"}
 
     # Map frontend keys to DB columns
@@ -422,17 +422,21 @@ def get_project_experiments(
     if time_to:
         filters["timestamp_to"] = time_to
 
+    session_map = {s.session_id: s for s in state.sessions.values()}
+    running_rows = DB.get_experiments_by_ids(running_ids, project_id=project_id)
+    running = [state._format_experiment_row(row, session_map) for row in running_rows]
+
     finished_rows, finished_total = DB.get_experiments_filtered(
         project_id=project_id, exclude_ids=running_ids, filters=filters,
         sort_col=sort_col, sort_dir=dir, limit=limit, offset=offset,
     )
-    session_map = {s.session_id: s for s in state.sessions.values()}
     finished = [state._format_experiment_row(row, session_map) for row in finished_rows]
 
     distinct_versions = DB.get_distinct_versions(project_id)
 
     return {
         "type": "experiment_list",
+        "running": running,
         "finished": finished,
         "finished_total": finished_total,
         "distinct_versions": distinct_versions,

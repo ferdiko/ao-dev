@@ -547,23 +547,25 @@ function RangeFilterSection({
   const isActive = rangeActive(range, bounds);
   const effectiveStep = step ?? 1;
 
-  const [minText, setMinText] = useState(String(range.min));
-  const [maxText, setMaxText] = useState(String(range.max));
-
-  useEffect(() => { setMinText(String(range.min)); }, [range.min]);
-  useEffect(() => { setMaxText(String(range.max)); }, [range.max]);
-
-  function commitMin(text: string) {
-    const v = parseFloat(text);
-    if (isNaN(v)) { setMinText(String(range.min)); return; }
+  function commitMin(input: HTMLInputElement) {
+    const v = parseFloat(input.value);
+    if (isNaN(v)) {
+      input.value = String(range.min);
+      return;
+    }
     const clamped = Math.max(bounds.min, Math.min(v, range.max));
+    input.value = String(clamped);
     onChange({ ...range, min: clamped });
   }
 
-  function commitMax(text: string) {
-    const v = parseFloat(text);
-    if (isNaN(v)) { setMaxText(String(range.max)); return; }
+  function commitMax(input: HTMLInputElement) {
+    const v = parseFloat(input.value);
+    if (isNaN(v)) {
+      input.value = String(range.max);
+      return;
+    }
     const clamped = Math.min(bounds.max, Math.max(v, range.min));
+    input.value = String(clamped);
     onChange({ ...range, max: clamped });
   }
 
@@ -586,12 +588,17 @@ function RangeFilterSection({
               <span className="filter-range-label">Min.</span>
               <div className="filter-range-input-wrap">
                 <input
+                  key={`min-${range.min}-${range.max}`}
                   type="text"
                   className="filter-range-input"
-                  value={minText}
-                  onChange={(e) => setMinText(e.target.value)}
-                  onBlur={(e) => commitMin(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") commitMin(minText); }}
+                  defaultValue={String(range.min)}
+                  onBlur={(e) => commitMin(e.currentTarget)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      commitMin(e.currentTarget);
+                      e.currentTarget.blur();
+                    }
+                  }}
                 />
                 <span className="filter-range-unit">{unit}</span>
               </div>
@@ -600,12 +607,17 @@ function RangeFilterSection({
               <span className="filter-range-label">Max.</span>
               <div className="filter-range-input-wrap">
                 <input
+                  key={`max-${range.min}-${range.max}`}
                   type="text"
                   className="filter-range-input"
-                  value={maxText}
-                  onChange={(e) => setMaxText(e.target.value)}
-                  onBlur={(e) => commitMax(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") commitMax(maxText); }}
+                  defaultValue={String(range.max)}
+                  onBlur={(e) => commitMax(e.currentTarget)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      commitMax(e.currentTarget);
+                      e.currentTarget.blur();
+                    }
+                  }}
                 />
                 <span className="filter-range-unit">{unit}</span>
               </div>
@@ -906,6 +918,7 @@ export function ProjectPage() {
     const timer = setTimeout(async () => {
       try {
         const resp = await fetchProjectExperiments(projectId, params, controller.signal);
+        setRunningRuns(resp.running.map(experimentToRun));
         setCompletedRuns(resp.finished.map(experimentToRun));
         setCompletedTotal(resp.finished_total);
         setDistinctVersions(resp.distinct_versions);

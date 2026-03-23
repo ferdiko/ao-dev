@@ -12,7 +12,7 @@ import {
   UserPlus,
   PanelLeft,
 } from "lucide-react";
-import { fetchProjects, fetchUser, type Project, type User } from "../api";
+import { fetchProjects, type Project, type User } from "../api";
 import { subscribe } from "../serverEvents";
 import logoWithSymbol from "../assets/logo_with_symbol.png";
 

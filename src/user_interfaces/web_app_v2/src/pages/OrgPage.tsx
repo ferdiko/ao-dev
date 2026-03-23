@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Breadcrumb } from "../components/Breadcrumb";
-import { useUser } from "../App";
+import { useUser } from "../userContext";
 import {
   fetchProjects,
   pickDirectory,

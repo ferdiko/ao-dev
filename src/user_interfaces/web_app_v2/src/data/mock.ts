@@ -69,8 +69,6 @@ export interface Run {
 export const mockProjects: Project[] = [
   {
     id: "proj-1",
-    tags: ["sql"],
-    comment: "Need to review edge case handling",
     name: "text-to-sql",
     description: "Text-to-SQL agent pipeline",
     createdAt: "2025-11-03",
