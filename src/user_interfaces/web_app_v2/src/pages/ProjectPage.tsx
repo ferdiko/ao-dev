@@ -1,9 +1,14 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronUp, ChevronDown, Search, X, Check, ChevronDown as ChevronDownIcon, Sparkles, Trash2, ExternalLink as ExternalLinkIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Search, X, ChevronDown as ChevronDownIcon } from "lucide-react";
 import { Breadcrumb } from "../components/Breadcrumb";
+import { CompletedRunsTable } from "../components/CompletedRunsTable";
+import { CompletedRunsToolbar } from "../components/CompletedRunsToolbar";
+import { SortableHeader } from "../components/SortableHeader";
 import { fetchProject, fetchProjectExperiments } from "../api";
 import type { Experiment, ExperimentQueryParams } from "../api";
+import { useCompletedSelection } from "../hooks/useCompletedSelection";
+import { useStoredSortState } from "../hooks/useStoredSortState";
 import { subscribe } from "../serverEvents";
 
 const ROWS_PER_PAGE_OPTIONS = [10, 20, 50, 100];
@@ -59,6 +64,8 @@ function formatTimestamp(raw: string): string {
 type SortDirection = "asc" | "desc";
 type SortState = { key: string; direction: SortDirection } | null;
 
+const DEFAULT_SORT: SortState = { key: "timestamp", direction: "desc" };
+
 function parseLatency(val: string): number {
   const n = parseFloat(val);
   return isNaN(n) ? Infinity : n;
@@ -100,37 +107,6 @@ function sortRuns(runs: Run[], sort: SortState): Run[] {
   if (!sort) return runs;
   const sorted = [...runs].sort((a, b) => compareRuns(a, b, sort.key));
   return sort.direction === "desc" ? sorted.reverse() : sorted;
-}
-
-function SortableHeader({
-  label,
-  sortKey,
-  sort,
-  onSort,
-  className: extraClass,
-}: {
-  label: string;
-  sortKey: string;
-  sort: SortState;
-  onSort: (key: string) => void;
-  className?: string;
-}) {
-  const active = sort?.key === sortKey;
-  return (
-    <th
-      className={`sortable-th${active ? " sorted" : ""}${extraClass ? ` ${extraClass}` : ""}`}
-      onClick={() => onSort(sortKey)}
-    >
-      <span className="th-sort-content">
-        {label}
-        {active && (
-          sort.direction === "asc"
-            ? <ChevronUp size={12} className="sort-icon" />
-            : <ChevronDown size={12} className="sort-icon" />
-        )}
-      </span>
-    </th>
-  );
 }
 
 // ── Subcomponents ────────────────────────────────────────
@@ -244,8 +220,6 @@ interface DataBounds {
   cost: { min: number; max: number };
 }
 
-const COMPLETED_SELECTION_STORAGE_KEY_PREFIX = "web_app_v2:completed_selection";
-
 function parseLatencyValue(val: string): number {
   const n = parseFloat(val);
   return isNaN(n) ? 0 : n;
@@ -304,29 +278,6 @@ function serializeFilters(filters: Filters): string {
     cost: filters.cost,
     startTime: filters.startTime,
   });
-}
-
-function getCompletedSelectionStorageKey(projectId: string): string {
-  return `${COMPLETED_SELECTION_STORAGE_KEY_PREFIX}:${projectId}`;
-}
-
-function loadCompletedSelection(projectId: string, filterKey: string): Set<string> {
-  try {
-    const raw = sessionStorage.getItem(getCompletedSelectionStorageKey(projectId));
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw) as { filterKey?: string; ids?: unknown };
-    if (parsed.filterKey !== filterKey || !Array.isArray(parsed.ids)) return new Set();
-    return new Set(parsed.ids.filter((id): id is string => typeof id === "string"));
-  } catch {
-    return new Set();
-  }
-}
-
-function persistCompletedSelection(projectId: string, filterKey: string, selection: Set<string>): void {
-  sessionStorage.setItem(
-    getCompletedSelectionStorageKey(projectId),
-    JSON.stringify({ filterKey, ids: Array.from(selection) }),
-  );
 }
 
 function rangeActive(range: RangeFilter, bounds: { min: number; max: number }): boolean {
@@ -907,10 +858,8 @@ export function ProjectPage() {
   const filterKey = useMemo(() => serializeFilters(filters), [filters]);
 
   // Selection (completed runs only)
-  const [selectedCompleted, setSelectedCompleted] = useState<Set<string>>(new Set());
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
-  const skipCompletedSelectionPersistRef = useRef(true);
   useEffect(() => {
     if (!actionsOpen) return;
     const handleClick = (e: MouseEvent) => {
@@ -923,12 +872,18 @@ export function ProjectPage() {
   // Running: pagination + sort
   const [runningRowsPerPage, setRunningRowsPerPage] = useState(10);
   const [runningPage, setRunningPage] = useState(1);
-  const [runningSort, setRunningSort] = useState<SortState>({ key: "timestamp", direction: "desc" });
+  const [runningSort, setRunningSort] = useStoredSortState({
+    fallbackState: DEFAULT_SORT,
+    storageKey: `web_app_v2:project_sort:${projectId ?? "unknown"}:running`,
+  });
 
   // Completed: pagination + sort
   const [completedRowsPerPage, setCompletedRowsPerPage] = useState(50);
   const [completedPage, setCompletedPage] = useState(1);
-  const [completedSort, setCompletedSort] = useState<SortState>({ key: "timestamp", direction: "desc" });
+  const [completedSort, setCompletedSort] = useStoredSortState({
+    fallbackState: DEFAULT_SORT,
+    storageKey: `web_app_v2:project_sort:${projectId ?? "unknown"}:completed`,
+  });
 
   // Debounce text filter changes
   const prevTextRef = useRef({ name: "", sessionId: "" });
@@ -986,7 +941,7 @@ export function ProjectPage() {
       if (prev?.key === key) return prev.direction === "asc" ? { key, direction: "desc" } : null;
       return { key, direction: "asc" };
     });
-  }, []);
+  }, [setRunningSort]);
 
   const handleRowKeyDown = useCallback((event: React.KeyboardEvent<HTMLTableRowElement>, sessionId: string) => {
     if (event.target !== event.currentTarget) return;
@@ -1001,7 +956,7 @@ export function ProjectPage() {
       return { key, direction: "asc" };
     });
     setCompletedPage(1);
-  }, []);
+  }, [setCompletedSort]);
 
   // Running: client-side sort/paginate (no filters applied)
   const allRunning = runningRuns;
@@ -1015,54 +970,29 @@ export function ProjectPage() {
   const safeCompletedPage = Math.min(completedPage, completedTotalPages);
   const completed = completedRuns;
   const visibleCompletedIds = useMemo(() => completed.map((run) => run.id), [completed]);
-  const selectedVisibleCount = useMemo(
-    () => visibleCompletedIds.reduce((count, id) => count + (selectedCompleted.has(id) ? 1 : 0), 0),
-    [visibleCompletedIds, selectedCompleted],
-  );
-  const allVisibleSelected = completed.length > 0 && selectedVisibleCount === completed.length;
-  const hiddenSelectedCount = Math.max(0, selectedCompleted.size - selectedVisibleCount);
+  const {
+    allVisibleSelected,
+    clearSelection: clearCompletedSelection,
+    hiddenSelectedCount,
+    selectedCount: selectedCompletedCount,
+    selectedIds: selectedCompleted,
+    toggleSelect: toggleCompletedSelect,
+    toggleSelectAllVisible: toggleCompletedSelectAll,
+  } = useCompletedSelection({
+    filterKey,
+    projectId,
+    visibleIds: visibleCompletedIds,
+  });
 
   useEffect(() => {
-    if (!projectId) return;
-    skipCompletedSelectionPersistRef.current = true;
-    setSelectedCompleted(loadCompletedSelection(projectId, filterKey));
     setActionsOpen(false);
   }, [projectId, filterKey]);
-
-  useEffect(() => {
-    if (!projectId) return;
-    if (skipCompletedSelectionPersistRef.current) {
-      skipCompletedSelectionPersistRef.current = false;
-      return;
-    }
-    persistCompletedSelection(projectId, filterKey, selectedCompleted);
-  }, [projectId, filterKey, selectedCompleted]);
 
   useEffect(() => {
     if (selectedCompleted.size === 0) {
       setActionsOpen(false);
     }
   }, [selectedCompleted]);
-
-  // Selection helpers (completed runs only)
-  const toggleCompletedSelect = (id: string) => {
-    setSelectedCompleted((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
-  const toggleCompletedSelectAll = () => {
-    setSelectedCompleted((prev) => {
-      const next = new Set(prev);
-      if (allVisibleSelected) {
-        for (const id of visibleCompletedIds) next.delete(id);
-      } else {
-        for (const id of visibleCompletedIds) next.add(id);
-      }
-      return next;
-    });
-  };
 
   if (loading) {
     return (
@@ -1149,128 +1079,42 @@ export function ProjectPage() {
 
         {/* Completed runs section */}
         <div className="runs-section completed-runs-section">
-          <div className="landing-section-title">
-            <span>Completed Runs ({completedTotal})</span>
-            {selectedCompleted.size > 0 && (
-              <div
-                className="runs-selection-pill"
-                title={hiddenSelectedCount > 0 ? `${selectedCompleted.size} selected across pages` : `${selectedCompleted.size} selected`}
-              >
-                <span className="runs-selection-pill-summary">
-                  <Check size={11} />
-                  <span>{selectedCompleted.size}</span>
-                </span>
-                <button
-                  className="runs-selection-pill-clear"
-                  onClick={() => setSelectedCompleted(new Set())}
-                  title="Clear selection"
-                >
-                  <X size={11} />
-                </button>
-              </div>
-            )}
-            <div className="actions-dropdown-wrap" ref={actionsRef}>
-              <button
-                className={`actions-dropdown-btn${selectedCompleted.size === 0 ? " actions-inactive" : ""}`}
-                onClick={() => { if (selectedCompleted.size > 0) setActionsOpen(!actionsOpen); }}
-              >
-                Actions
-                <ChevronDownIcon size={12} className={`actions-chevron${actionsOpen ? " rotated" : ""}`} />
-              </button>
-              {actionsOpen && selectedCompleted.size > 0 && (
-                <div className="actions-dropdown-menu">
-                  <button className="actions-dropdown-item" onClick={() => {
-                    const ids = Array.from(selectedCompleted).join(",");
-                    setActionsOpen(false);
-                    navigate(`/project/${projectId}/run/${ids}`);
-                  }}>
-                    <ExternalLinkIcon size={13} />
-                    Open runs
-                  </button>
-                  <button className="actions-dropdown-item" onClick={() => { setActionsOpen(false); navigate(`/project/${projectId}/sovara`); }}>
-                    <Sparkles size={13} />
-                    Ask Sovara
-                  </button>
-                  <button className="actions-dropdown-item actions-dropdown-item-danger" onClick={() => { setActionsOpen(false); /* TODO: delete */ }}>
-                    <Trash2 size={13} />
-                    Delete
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
+          <CompletedRunsToolbar
+            actionsOpen={actionsOpen}
+            actionsRef={actionsRef}
+            completedTotal={completedTotal}
+            hiddenSelectedCount={hiddenSelectedCount}
+            onAskSovara={() => {
+              setActionsOpen(false);
+              navigate(`/project/${projectId}/sovara`);
+            }}
+            onClearSelection={clearCompletedSelection}
+            onDeleteSelected={() => {
+              setActionsOpen(false);
+            }}
+            onOpenSelectedRuns={() => {
+              const ids = Array.from(selectedCompleted).join(",");
+              setActionsOpen(false);
+              navigate(`/project/${projectId}/run/${ids}`);
+            }}
+            onToggleActions={() => {
+              if (selectedCompletedCount > 0) setActionsOpen(!actionsOpen);
+            }}
+            selectedCount={selectedCompletedCount}
+          />
           <div className="runs-section-scroll">
-            <table className="runs-table">
-              <thead>
-                <tr className="header-group-row">
-                  <th className="cell-checkbox" />
-                  <th colSpan={10} />
-                  <th colSpan={2} className="header-group-label">Custom Metrics</th>
-                </tr>
-                <tr>
-                  <th className="cell-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={allVisibleSelected}
-                      onChange={toggleCompletedSelectAll}
-                    />
-                  </th>
-                  <SortableHeader label="Start Time" sortKey="timestamp" sort={completedSort} onSort={handleCompletedSort} />
-                  <SortableHeader label="Session ID" sortKey="sessionId" sort={completedSort} onSort={handleCompletedSort} />
-                  <SortableHeader label="Name" sortKey="name" sort={completedSort} onSort={handleCompletedSort} />
-                  <SortableHeader label="Input" sortKey="input" sort={completedSort} onSort={handleCompletedSort} />
-                  <SortableHeader label="Output" sortKey="output" sort={completedSort} onSort={handleCompletedSort} />
-                  <SortableHeader label="Version" sortKey="codeVersion" sort={completedSort} onSort={handleCompletedSort} />
-                  <SortableHeader label="Tags" sortKey="tags" sort={completedSort} onSort={handleCompletedSort} />
-                  <SortableHeader label="Comment" sortKey="comment" sort={completedSort} onSort={handleCompletedSort} />
-                  <SortableHeader label="Latency" sortKey="latency" sort={completedSort} onSort={handleCompletedSort} />
-                  <SortableHeader label="Cost" sortKey="cost" sort={completedSort} onSort={handleCompletedSort} />
-                  <SortableHeader label="Success" sortKey="success" sort={completedSort} onSort={handleCompletedSort} />
-                  <SortableHeader label="Confidence" sortKey="confidence" sort={completedSort} onSort={handleCompletedSort} />
-                </tr>
-              </thead>
-              <tbody>
-                {completed.map((run) => (
-                  <tr
-                    key={run.id}
-                    className="clickable-row"
-                    onClick={() => navigate(`/project/${projectId}/run/${run.sessionId}`)}
-                    onKeyDown={(event) => handleRowKeyDown(event, run.sessionId)}
-                    tabIndex={0}
-                    role="link"
-                    aria-label={`Open run ${run.name}`}
-                  >
-                    <td className="cell-checkbox" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selectedCompleted.has(run.id)}
-                        onChange={() => toggleCompletedSelect(run.id)}
-                      />
-                    </td>
-                    <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>
-                    <td><span className="cell-id-link">{run.sessionId}</span></td>
-                    <td>{run.name}</td>
-                    <td className="cell-content">{run.input}</td>
-                    <td className="cell-content">{run.output || "—"}</td>
-                    <td><span className="cell-id-link">{run.codeVersion}</span></td>
-                    <td className="cell-tags">{"—"}</td>
-                    <td className="cell-comment">{run.comment || "—"}</td>
-                    <td className="cell-metric">{run.latency}</td>
-                    <td className="cell-metric">{run.cost}</td>
-                    <td className="cell-metric">
-                      {run.success === null ? "—" : run.success ? (
-                        <span className="metric-badge success">Pass</span>
-                      ) : (
-                        <span className="metric-badge fail">Fail</span>
-                      )}
-                    </td>
-                    <td className="cell-metric">
-                      {run.confidence === null ? "—" : `${run.confidence}%`}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <CompletedRunsTable
+              allVisibleSelected={allVisibleSelected}
+              formatTimestamp={formatTimestamp}
+              onOpenRun={(sessionId) => navigate(`/project/${projectId}/run/${sessionId}`)}
+              onRowKeyDown={handleRowKeyDown}
+              onSort={handleCompletedSort}
+              onToggleSelect={toggleCompletedSelect}
+              onToggleSelectAll={toggleCompletedSelectAll}
+              runs={completed}
+              selectedIds={selectedCompleted}
+              sort={completedSort}
+            />
           </div>
           <PaginationBar
             rowsPerPage={completedRowsPerPage}
