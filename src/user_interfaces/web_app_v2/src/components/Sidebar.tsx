@@ -10,6 +10,7 @@ import {
   Lightbulb,
   Play,
   UserPlus,
+  PanelLeft,
 } from "lucide-react";
 import { fetchProjects, fetchUser, type Project, type User } from "../api";
 import { subscribe } from "../serverEvents";
@@ -48,11 +49,13 @@ const settingsItems: NavItem[] = [
   },
 ];
 
-export function Sidebar({ projectId, style, children, user, onSetupProfile, onUserSettings, onProjectSettings }: {
+export function Sidebar({ projectId, style, children, user, collapsed, onToggleCollapse, onSetupProfile, onUserSettings, onProjectSettings }: {
   projectId?: string;
   style?: React.CSSProperties;
   children?: React.ReactNode;
   user?: User | null;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
   onSetupProfile?: () => void;
   onUserSettings?: () => void;
   onProjectSettings?: () => void;
@@ -106,25 +109,37 @@ export function Sidebar({ projectId, style, children, user, onSetupProfile, onUs
     return (
       <button
         key={item.id}
-        className="sidebar-item"
+        className={`sidebar-item${collapsed ? " sidebar-item-collapsed" : ""}`}
         onClick={callback ?? (route ? () => navigate(route) : undefined)}
+        title={collapsed ? item.label : undefined}
       >
         <span className="sidebar-item-icon">{item.icon}</span>
-        {item.label}
+        {!collapsed && item.label}
       </button>
     );
   }
 
   return (
-    <aside className="sidebar" style={style}>
-      {/* Header: Org info */}
+    <aside className={`sidebar${collapsed ? " sidebar-collapsed" : ""}`} style={style}>
+      {/* Header */}
       <div className="sidebar-header">
-        <div className="sidebar-logo" onClick={() => navigate("/")}>
-          <img src={logoWithSymbol} alt="Sovara Labs" />
-        </div>
+        {collapsed ? (
+          <button className="sidebar-collapse-btn" onClick={onToggleCollapse} title="Expand sidebar">
+            <PanelLeft size={18} />
+          </button>
+        ) : (
+          <div className="sidebar-header-row">
+            <div className="sidebar-logo" onClick={() => navigate("/")}>
+              <img src={logoWithSymbol} alt="Sovara Labs" />
+            </div>
+            <button className="sidebar-collapse-btn" onClick={onToggleCollapse} title="Collapse sidebar">
+              <PanelLeft size={18} />
+            </button>
+          </div>
+        )}
 
         {/* Project selector dropdown */}
-        {project && (
+        {!collapsed && project && (
           <div className="sidebar-project-selector-row" ref={dropdownRef}>
             <button
               className="sidebar-project-selector"
@@ -157,23 +172,24 @@ export function Sidebar({ projectId, style, children, user, onSetupProfile, onUs
       <nav className="sidebar-nav">
         {project ? (
           <>
-            <div className="sidebar-section">Observability</div>
+            {!collapsed && <div className="sidebar-section">Observability</div>}
             {observabilityItems.map(renderNavItem)}
 
-            <div className="sidebar-section">Optimization</div>
+            {!collapsed && <div className="sidebar-section">Optimization</div>}
             {optimizationItems.map(renderNavItem)}
           </>
         ) : (
           <>
-            <div className="sidebar-section">Organization</div>
+            {!collapsed && <div className="sidebar-section">Organization</div>}
             <button
-              className="sidebar-item active"
+              className={`sidebar-item active${collapsed ? " sidebar-item-collapsed" : ""}`}
               onClick={() => navigate("/")}
+              title={collapsed ? "Projects" : undefined}
             >
               <span className="sidebar-item-icon">
                 <BarChart3 size={16} />
               </span>
-              Projects
+              {!collapsed && "Projects"}
             </button>
           </>
         )}
@@ -183,28 +199,39 @@ export function Sidebar({ projectId, style, children, user, onSetupProfile, onUs
       <div className="sidebar-bottom">
         {project && (
           <div className="sidebar-bottom-nav">
-            <div className="sidebar-section">Settings</div>
+            {!collapsed && <div className="sidebar-section">Settings</div>}
             {settingsItems.map(renderNavItem)}
           </div>
         )}
         <div className="sidebar-footer">
           {user ? (
-            <div className="sidebar-user">
-              <div className="sidebar-avatar">
+            collapsed ? (
+              <button
+                className="sidebar-avatar"
+                onClick={onUserSettings}
+                title="User settings"
+                style={{ cursor: "pointer" }}
+              >
                 {((parts) => parts.length === 1 ? parts[0][0] : parts[0][0] + parts[parts.length - 1][0])(user.full_name.split(" ")).toUpperCase()}
-              </div>
-              <div className="sidebar-user-info">
-                <div className="sidebar-user-name">{user.full_name}</div>
-                <div className="sidebar-user-email">{user.email}</div>
-              </div>
-              <button className="sidebar-user-settings" onClick={onUserSettings} title="User settings">
-                <Settings size={16} />
               </button>
-            </div>
+            ) : (
+              <div className="sidebar-user">
+                <div className="sidebar-avatar">
+                  {((parts) => parts.length === 1 ? parts[0][0] : parts[0][0] + parts[parts.length - 1][0])(user.full_name.split(" ")).toUpperCase()}
+                </div>
+                <div className="sidebar-user-info">
+                  <div className="sidebar-user-name">{user.full_name}</div>
+                  <div className="sidebar-user-email">{user.email}</div>
+                </div>
+                <button className="sidebar-user-settings" onClick={onUserSettings} title="User settings">
+                  <Settings size={16} />
+                </button>
+              </div>
+            )
           ) : user === null && onSetupProfile ? (
             <button className="sidebar-setup-profile" onClick={onSetupProfile}>
               <UserPlus size={16} />
-              Setup Profile
+              {!collapsed && "Setup Profile"}
             </button>
           ) : null}
         </div>

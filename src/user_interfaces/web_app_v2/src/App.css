@@ -16,7 +16,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  overflow: hidden;
+  transition: margin-left 0.2s ease;
 }
 
 
@@ -34,6 +34,16 @@
 .resize-handle-v {
   height: 6px;
   cursor: row-resize;
+}
+.resize-handle-h {
+  width: 2px;
+  margin: 0 4px;
+  cursor: col-resize;
+  background: var(--color-primary);
+}
+.resize-handle-h:hover,
+.resize-handle-h:active {
+  background: var(--color-primary);
 }
 
 /* Sidebar resize handle (inside the fixed sidebar) */
@@ -69,6 +79,12 @@
   bottom: 0;
   z-index: 100;
   overflow-y: auto;
+  transition: width 0.2s ease;
+}
+
+.sidebar-collapsed {
+  align-items: center;
+  overflow: hidden;
 }
 
 .sidebar-header {
@@ -80,11 +96,45 @@
   flex-shrink: 0;
 }
 
+.sidebar-collapsed .sidebar-header {
+  height: var(--header-row-1);
+  padding: 0;
+  justify-content: center;
+  align-items: center;
+}
+
+.sidebar-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--header-row-1);
+  width: 100%;
+}
+
+.sidebar-collapse-btn {
+  background: none;
+  border: none;
+  color: var(--color-sidebar-text);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.sidebar-collapse-btn:hover {
+  opacity: 1;
+  background: var(--color-sidebar-hover);
+}
+
 .sidebar-logo {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: var(--header-row-1);
   cursor: pointer;
   border-radius: 6px;
 }
@@ -252,6 +302,11 @@
   flex-shrink: 0;
 }
 
+.sidebar-item-collapsed {
+  justify-content: center;
+  padding: 8px 0;
+}
+
 .sidebar-bottom {
   margin-top: auto;
 }
@@ -265,9 +320,14 @@
   height: var(--footer-row);
   display: flex;
   align-items: center;
+  justify-content: center;
   padding: 0 12px;
   border-top: 1px solid rgba(0, 0, 0, 0.08);
   flex-shrink: 0;
+}
+
+.sidebar-collapsed .sidebar-footer {
+  padding: 0;
 }
 
 .sidebar-setup-profile {
@@ -375,12 +435,14 @@
   width: 26px;
   height: 26px;
   background: var(--color-primary);
+  border: none;
+  outline: none;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   color: white;
   flex-shrink: 0;
 }
@@ -2414,10 +2476,11 @@
   flex-direction: row;
   min-height: 0;
   overflow: hidden;
+  background: #ffffff;
 }
 
 .run-view-left {
-  flex: 7;
+  flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -2430,15 +2493,14 @@
   display: flex;
   min-height: 0;
   overflow: hidden;
+  background: #ffffff;
 }
 
 /* ── Graph panel (left, 20%) ───────────── */
 
 .run-graph-panel {
-  flex: 2;
   display: flex;
   flex-direction: column;
-  min-width: 270px;
   min-height: 0;
   overflow: hidden;
 }
@@ -2594,6 +2656,7 @@
 /* Focused trace card in detail panel */
 .trace-node-card.focused {
   border-color: var(--color-primary);
+  overflow-anchor: auto;
 }
 
 .graph-controls-btn {
@@ -2737,33 +2800,79 @@
 /* ── Detail panel (center, 50%) ─────────── */
 
 .run-detail-panel {
-  flex: 5;
+  flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  min-width: 0;
+  min-width: 200px;
   overflow: hidden;
   background: var(--color-surface);
-  border-left: 1px solid var(--color-border);
 }
 
 /* ── Chat panel (right, 30%) ────────────── */
 
 .run-chat-panel {
-  flex: 3;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-left: 1px solid var(--color-border);
   background: #ffffff;
+  transition: width 0.25s ease;
+}
+.run-chat-panel.collapsed {
+  width: 40px !important;
+  flex: none;
+  overflow: visible;
 }
 .run-chat-panel .trace-chat {
   flex: 1;
-  height: 100%;
-  border: none;
-  border-radius: 0;
+  min-height: 0;
+  background: #ffffff;
+}
+
+/* Collapsed chat strip */
+.run-chat-collapsed {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface);
+  cursor: pointer;
+}
+.run-chat-collapsed-toggle {
+  position: absolute;
+  top: calc(var(--header-row-2) / 2 - 7px);
+  color: var(--color-text-muted);
+}
+.run-chat-collapsed:hover .run-chat-collapsed-toggle {
+  color: var(--color-text);
+}
+.run-chat-collapsed-icon {
+  color: var(--color-primary);
+}
+.run-chat-collapsed-arrow {
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  transition: color 0.15s, border-color 0.15s;
+}
+.run-chat-collapsed:hover .run-chat-collapsed-arrow {
+  color: var(--color-text);
+  border-color: var(--color-text-muted);
 }
 
 .run-detail-header-title {
@@ -3107,6 +3216,7 @@
   margin-top: 20px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
+  overflow-anchor: none;
   overflow: hidden;
   background: var(--color-surface-warm);
   cursor: pointer;
@@ -3375,7 +3485,6 @@
   display: flex;
   flex-direction: column;
   min-height: 100px;
-  background: var(--color-surface-warm);
 }
 .trace-chat-header {
   display: flex;
@@ -3392,9 +3501,35 @@
 .trace-chat-header-title {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   height: var(--header-row-2);
   padding: 0 14px;
   border-bottom: 1px solid var(--color-border);
+}
+.trace-chat-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0 10px 10px 10px;
+  border-radius: 0 0 10px 10px;
+  border: 1px solid var(--color-border);
+  border-top: none;
+  background: var(--color-surface-warm);
+  overflow: hidden;
+}
+.trace-chat-collapse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.trace-chat-collapse:hover {
+  color: var(--color-text);
 }
 .trace-chat-title {
   display: flex;

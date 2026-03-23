@@ -26,8 +26,10 @@ import {
 } from "../api";
 import { subscribe } from "../serverEvents";
 import { layoutGraph, NODE_W, NODE_H, type Point } from "../graphLayout";
-import { Sparkles, Pencil, RotateCcw, Loader2, Undo2, ThumbsUp, ThumbsDown, Copy, X, ChevronRight } from "lucide-react";
+import { Sparkles, Pencil, RotateCcw, Loader2, Undo2, ThumbsUp, ThumbsDown, Copy, X, ChevronRight, PanelRight } from "lucide-react";
 import logoBlack from "../assets/logo_black.png";
+import { TraceChat } from "../components/TraceChat";
+import { useResize } from "../hooks/useResize";
 
 // ── Types ────────────────────────────────────────────────
 
@@ -865,6 +867,24 @@ function RunViewContent({ sessionId, projectId, projectName }: { sessionId: stri
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("pretty");
   const [rerunning, setRerunning] = useState(false);
+  const [chatCollapsed, setChatCollapsed] = useState(false);
+
+  // Panel widths (pixels). null = use flex default.
+  const GRAPH_MIN = 180; const GRAPH_MAX = 600;
+  const CHAT_MIN = 200; const CHAT_MAX = 700;
+  const [graphWidth, setGraphWidth] = useState(340);
+  const [chatWidth, setChatWidth] = useState(340);
+  const columnsRef = useRef<HTMLDivElement>(null);
+
+  const onGraphResize = useCallback((delta: number) => {
+    setGraphWidth((w) => Math.min(GRAPH_MAX, Math.max(GRAPH_MIN, w + delta)));
+  }, []);
+  const onChatResize = useCallback((delta: number) => {
+    setChatWidth((w) => Math.min(CHAT_MAX, Math.max(CHAT_MIN, w - delta)));
+  }, []);
+  const graphHandleDown = useResize("horizontal", onGraphResize);
+  const chatHandleDown = useResize("horizontal", onChatResize);
+
   const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const graphApi = useRef<GraphApiHandle | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -1178,7 +1198,7 @@ function RunViewContent({ sessionId, projectId, projectName }: { sessionId: stri
 
       <div className="run-view-body">
         {/* Left: Graph */}
-        <div className="run-graph-panel">
+        <div className="run-graph-panel" style={{ width: graphWidth, flex: "none" }}>
           <div className="run-graph-canvas" ref={canvasRef}>
             {hasGraph ? (
               <ReactFlowProvider>
@@ -1230,6 +1250,7 @@ function RunViewContent({ sessionId, projectId, projectName }: { sessionId: stri
           </div>
         </div>
 
+        <div className="resize-handle resize-handle-h" onMouseDown={graphHandleDown} />
         {/* Center: I/O Detail */}
         <div className="run-detail-panel">
           <div className="run-detail-body">
@@ -1259,6 +1280,21 @@ function RunViewContent({ sessionId, projectId, projectName }: { sessionId: stri
 
       </div>
       </div>{/* end run-view-left */}
+
+      {!chatCollapsed && <div className="resize-handle resize-handle-h" onMouseDown={chatHandleDown} />}
+      <div className={`run-chat-panel${chatCollapsed ? " collapsed" : ""}`} style={chatCollapsed ? undefined : { width: chatWidth, flex: "none" }}>
+        {chatCollapsed ? (
+          <div className="run-chat-collapsed" onClick={() => setChatCollapsed(false)} title="Open chat">
+            <PanelRight size={14} className="run-chat-collapsed-toggle" />
+            <Sparkles size={13} className="run-chat-collapsed-icon" />
+            <div className="run-chat-collapsed-arrow">
+              <ChevronRight size={11} style={{ transform: "rotate(180deg)" }} />
+            </div>
+          </div>
+        ) : (
+          <TraceChat onCollapse={() => setChatCollapsed(true)} />
+        )}
+      </div>
       </div>
   );
 }

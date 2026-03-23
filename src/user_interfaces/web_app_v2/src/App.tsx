@@ -36,9 +36,11 @@ export function useUser() {
 const SIDEBAR_MIN = 140;
 const SIDEBAR_MAX = 500;
 const SIDEBAR_DEFAULT = 240;
+const SIDEBAR_COLLAPSED = 48;
 
-function AppLayout({ projectId, children }: { projectId?: string; children: React.ReactNode }) {
+function AppLayout({ projectId, defaultCollapsed, children }: { projectId?: string; defaultCollapsed?: boolean; children: React.ReactNode }) {
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(defaultCollapsed ?? false);
   const { user, refreshUser } = useUser();
   const navigate = useNavigate();
   const [showSetupProfile, setShowSetupProfile] = useState(false);
@@ -52,6 +54,8 @@ function AppLayout({ projectId, children }: { projectId?: string; children: Reac
     }
   }, [projectId]);
 
+  const effectiveWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth;
+
   const onSidebarResize = useCallback((delta: number) => {
     setSidebarWidth((w) => Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, w + delta)));
   }, []);
@@ -62,15 +66,19 @@ function AppLayout({ projectId, children }: { projectId?: string; children: Reac
     <div className="app-layout">
       <Sidebar
         projectId={projectId}
-        style={{ width: sidebarWidth }}
+        style={{ width: effectiveWidth }}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
         user={user}
         onSetupProfile={() => setShowSetupProfile(true)}
         onUserSettings={() => setShowUserSettings(true)}
         onProjectSettings={() => setShowProjectSettings(true)}
       >
-        <div className="sidebar-resize-handle" onMouseDown={onSidebarHandleDown} />
+        {!sidebarCollapsed && (
+          <div className="sidebar-resize-handle" onMouseDown={onSidebarHandleDown} />
+        )}
       </Sidebar>
-      <main className="main-content" style={{ marginLeft: sidebarWidth }}>
+      <main className="main-content" style={{ marginLeft: effectiveWidth }}>
         {children}
       </main>
       {user === null && (
@@ -152,7 +160,7 @@ function ProjectRoute() {
 function RunRoute() {
   const { projectId } = useParams<{ projectId: string }>();
   return (
-    <AppLayout projectId={projectId}>
+    <AppLayout projectId={projectId} defaultCollapsed>
       <RunView />
     </AppLayout>
   );
