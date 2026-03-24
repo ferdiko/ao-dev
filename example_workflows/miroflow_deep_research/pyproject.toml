@@ -1,7 +1,7 @@
 [project]
 name = "miroflow-example"
 version = "0.1.0"
-description = "Example workflow using MiroFlow with AO visualization"
+description = "Example workflow using MiroFlow with Sovara visualization"
 requires-python = ">=3.12, <3.14"
 dependencies = [
     "fire>=0.7.0",
@@ -10,7 +10,7 @@ dependencies = [
     "miroflow-contrib>=0.1.0",
     "miroflow-tool>=0.1.0",
     "python-dotenv>=1.0.0",
-    "ao-dev>=0.0.3",
+    "sovara>=0.0.3",
 ]
 
 [tool.uv.sources]
@@ -18,5 +18,5 @@ dependencies = [
 miroflow = { path = "MiroFlow/libs/miroflow", editable = true }
 miroflow-contrib = { path = "MiroFlow/libs/miroflow-contrib", editable = true }
 miroflow-tool = { path = "MiroFlow/libs/miroflow-tool", editable = true }
-# Local editable source for ao-dev (relative to this file)
-ao-dev = { path = "../..", editable = true }
+# Local editable source for sovara (relative to this file)
+sovara = { path = "../..", editable = true }

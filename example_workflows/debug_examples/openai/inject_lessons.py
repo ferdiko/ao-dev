@@ -6,11 +6,11 @@ into an LLM prompt. The lessons are automatically tracked so the UI
 can show which lessons were applied to which runs.
 
 Usage:
-    ao-record example_workflows/debug_examples/openai/inject_lessons.py
+    so-record example_workflows/debug_examples/openai/inject_lessons.py
 """
 
 from openai import OpenAI
-from ao.runner.lessons import inject_lesson
+from sovara.runner.lessons import inject_lesson
 
 
 client = OpenAI()

@@ -22,45 +22,45 @@
     //   "justMyCode": false,
     // },
     {
-      "name": "ao-tool record",
+      "name": "so-tool record",
       "type": "debugpy",
       "request": "launch",
-      "module": "ao.cli.ao_tool",
+      "module": "sovara.cli.so_tool",
       "console": "integratedTerminal",
       "args": ["record", "example_workflows/debug_examples/openai/debate.py"],
       "justMyCode": false
     },
     {
-      "name": "ao-tool probe",
+      "name": "so-tool probe",
       "type": "debugpy",
       "request": "launch",
-      "module": "ao.cli.ao_tool",
+      "module": "sovara.cli.so_tool",
       "args": ["probe", "b6aaf796-8e25-4e9a-aae6-a47f261ced54", "--node", "229386ef-fa49-4505-a28a-0049c2a5eb3e"],
       "console": "integratedTerminal",
       "justMyCode": false
     },
     {
-      "name": "ao-config",
+      "name": "so-config",
       "type": "debugpy",
       "request": "launch",
-      "module": "ao.cli.ao_config",
+      "module": "sovara.cli.so_config",
       "console": "integratedTerminal",
       "justMyCode": false
     },
     {
-      "name": "ao-server",
+      "name": "so-server",
       "type": "debugpy",
       "request": "launch",
-      "module": "ao.cli.ao_server",
+      "module": "sovara.cli.so_server",
       "args": ["restart"],
       "console": "integratedTerminal",
       "justMyCode": false
     },
     {
-      "name": "ao-tool edit-and-rerun",
+      "name": "so-tool edit-and-rerun",
       "type": "debugpy",
       "request": "launch",
-      "module": "ao.cli.ao_tool",
+      "module": "sovara.cli.so_tool",
       "args": [
         "edit-and-rerun",
         "--output",
@@ -73,10 +73,10 @@
       "justMyCode": false
     },
     {
-      "name": "ao-record",
+      "name": "so-record",
       "type": "debugpy",
       "request": "launch",
-      "module": "ao.cli.ao_record",
+      "module": "sovara.cli.so_record",
       // Anthropic examples
       // "args": ["./example_workflows/debug_examples/anthropic/async_debate.py"],
       // "args": ["./example_workflows/debug_examples/anthropic/debate.py"],
@@ -132,10 +132,10 @@
       "request": "launch",
       "runtimeExecutable": "${execPath}",
       "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}/src/user_interfaces/vscode_extension"
+        "--extensionDevelopmentPath=${workspaceFolder}/ui/vscode_extension"
       ],
       "outFiles": [
-        "${workspaceFolder}/src/user_interfaces/vscode_extension/dist/**/*.js"
+        "${workspaceFolder}/ui/vscode_extension/dist/**/*.js"
       ],
       "internalConsoleOptions": "openOnSessionStart"
     }

@@ -1,8 +1,8 @@
-site_name: AO
+site_name: Sovara
 site_description: A development tool for LLM call visualization and debugging
-site_url: https://ao-agent-ops.github.io/ao-dev/
-repo_url: https://github.com/ao-agent-ops/ao-dev
-repo_name: ao-dev
+site_url: https://docs.sovara-labs.com/
+repo_url: https://github.com/SovaraLabs/sovara
+repo_name: sovara
 docs_dir: .
 site_dir: ../site
 
@@ -87,12 +87,12 @@ nav:
       - Server: developer-guide/server.md
       - Edge Detection: developer-guide/edge-detection.md
       - API Patching: developer-guide/api-patching.md
-      - AO Tool CLI: developer-guide/ao-tool.md
+      - Sovara Tool CLI: developer-guide/so-tool.md
       - Testing: developer-guide/testing.md
 
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/ao-agent-ops/ao-dev
+      link: https://github.com/SovaraLabs/sovara
     - icon: fontawesome/brands/discord
       link: https://discord.gg/fjsNSa6TAh

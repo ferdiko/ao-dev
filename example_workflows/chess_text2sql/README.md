@@ -22,4 +22,4 @@ You first need to preprocess the data (and download it). See CHESS/README.md
 
 ## Running
 
-I introdcued a `--num_tasks` parameter if you don't want to run the whole BRID benchmark for debugging, so you might want to modify this. The run scripts are in `run` (e.g., `sh run/run_main_ir_ss_ch.sh`, `sh run/develop_main_ir_ss_ch.sh` --- `develop` = `ao-record` version). See the CHESS/README.md to see what version of the agent different scripts are using.
+I introdcued a `--num_tasks` parameter if you don't want to run the whole BRID benchmark for debugging, so you might want to modify this. The run scripts are in `run` (e.g., `sh run/run_main_ir_ss_ch.sh`, `sh run/develop_main_ir_ss_ch.sh` --- `develop` = `so-record` version). See the CHESS/README.md to see what version of the agent different scripts are using.

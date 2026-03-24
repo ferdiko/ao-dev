@@ -3,13 +3,13 @@
 We implement example workflows here.
 
 > [!IMPORTANT]  
-> For some of the examples, you might need to modify your project root (i.e., run `ao-config` and set it to the root of the example repo).
+> For some of the examples, you might need to modify your project root (i.e., run `so-config` and set it to the root of the example repo).
 
 All example workflows except for `debug_examples/` are git modules that live in separate github repos. These are private repos inside our organization and you might need to ask for permission to access them. To clone one of these repos, follow the README.md in the corresponding dir.
 
 If you want to add a new workflow, do the following:
 1.  Create a decriptive name for the example (e.g, `example_workflows/chess_text2sql`). The actual example repo will be inside that folder (e.g., `chess_text2sql/CHESS`).
-2. Your example workflow will live in its OWN private github repo inside our agops-project organization. It will not be automatically cloned with `ao`. Create that private repo and ask for help if you don't have the permissions to do so. Push the example repo to our private one. 
+2. Your example workflow will live in its OWN private github repo inside our agops-project organization. It will not be automatically cloned with `sovara`. Create that private repo and ask for help if you don't have the permissions to do so. Push the example repo to our private one. 
 
 For unintialized repos:
 ```

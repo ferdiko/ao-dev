@@ -4,9 +4,9 @@ This page documents the command-line interface modules.
 
 ## ao_record
 
-The main entry point for running Python scripts with AO analysis.
+The main entry point for running Python scripts with Sovara analysis.
 
-::: ao.cli.ao_record
+::: sovara.cli.so_record
     options:
       show_root_heading: true
       show_source: true
@@ -17,7 +17,7 @@ The main entry point for running Python scripts with AO analysis.
 
 Server management commands for starting, stopping, and controlling the development server.
 
-::: ao.cli.ao_server
+::: sovara.cli.so_server
     options:
       show_root_heading: true
       show_source: true
@@ -26,9 +26,9 @@ Server management commands for starting, stopping, and controlling the developme
 
 ## ao_config
 
-Interactive configuration tool for AO settings.
+Interactive configuration tool for Sovara settings.
 
-::: ao.cli.ao_config
+::: sovara.cli.so_config
     options:
       show_root_heading: true
       show_source: true

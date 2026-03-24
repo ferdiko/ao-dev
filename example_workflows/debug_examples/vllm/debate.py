@@ -24,7 +24,7 @@ To run this example:
 
 2. Run this script:
 
-   ao-record ./example_workflows/debug_examples/vllm_debate.py
+   so-record ./example_workflows/debug_examples/vllm_debate.py
 
 Note: vLLM provides an OpenAI-compatible API, so we use the OpenAI client
 with a custom base_url pointing to the vLLM server.

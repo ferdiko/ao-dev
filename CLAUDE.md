@@ -1,6 +1,6 @@
-# AO - LLM Dataflow Graph System
+# Sovara - LLM Dataflow Graph System
 
-AO is a development tool that creates interactive dataflow graphs of LLM calls, enabling visualization, editing, and debugging of data flow in agentic AI applications. Each node in the data flow graph is an LLM or tool call and edges denote the output of one LLM/tool call forming part of the input of another.
+Sovara is a development tool that creates interactive dataflow graphs of LLM calls, enabling visualization, editing, and debugging of data flow in agentic AI applications. Each node in the data flow graph is an LLM or tool call and edges denote the output of one LLM/tool call forming part of the input of another.
 
 ## Edit & Rerun
 
@@ -14,12 +14,12 @@ On rerun, cached outputs are returned for unchanged inputs, and edited values ar
 
 ## Project Structure
 
-- @src/cli/ - CLI tools (`ao-record`, `ao-server`, `ao-config`)
-- @src/common/ - Shared utilities (config, constants, logger, utils)
-- @src/server/ - Core server (main_server, file_watcher, database_manager)
-- @src/runner/ - Runtime execution (agent_runner, string_matching, context_manager)
-- @src/runner/monkey_patching/ - API interception (patches/, api_parsers/)
-- @src/user_interfaces/ - VS Code extension and web app
+- @src/sovara/cli/ - CLI tools (`so-record`, `so-server`, `so-config`)
+- @src/sovara/common/ - Shared utilities (config, constants, logger, utils)
+- @src/sovara/server/ - Core server (app, state, database_manager)
+- @src/sovara/runner/ - Runtime execution (agent_runner, string_matching, context_manager)
+- @src/sovara/runner/monkey_patching/ - API interception (patches/, api_parsers/)
+- @ui/ - VS Code extension and web app
 - @tests/billable/ - Tests that make LLM API calls
 - @example_workflows/ - AI workflow examples (bird-bench, human_eval, swe_bench, debug_examples, etc.)
 - @docs/ - Documentation for mkdocs site
@@ -27,22 +27,22 @@ On rerun, cached outputs are returned for unchanged inputs, and edited values ar
 ## Quick File References
 
 VSCode extension files:
-- @src/user_interfaces/vscode_extension/src/ – Contains relevant source code for the extensions.
+- @ui/vscode_extension/src/ – Contains relevant source code for the extensions.
 
 Core system files:
-- @src/server/main_server.py - Manages the server that interfaces user script runner and extensions/UIs
-- @src/server/database_manager.py - Manages communication with the database and content registry for edge detection
-- @src/server/file_watcher.py - Git versioning for code snapshots
-- @src/runner/agent_runner.py - Runtime environment setup
-- @src/runner/string_matching.py - Content-based edge detection algorithm
-- @src/runner/monkey_patching/patches/httpx_patch.py - LLM API interception example
-- @src/runner/README.md - Overall runner system documentation
+- @src/sovara/server/app.py - FastAPI app factory for the local server
+- @src/sovara/server/database_manager.py - Manages communication with the database and content registry for edge detection
+- @src/sovara/server/state.py - In-memory state, git versioning, and process coordination
+- @src/sovara/runner/agent_runner.py - Runtime environment setup
+- @src/sovara/runner/string_matching.py - Content-based edge detection algorithm
+- @src/sovara/runner/monkey_patching/patches/httpx_patch.py - LLM API interception example
+- @src/sovara/runner/README.md - Overall runner system documentation
 
 ## How It Works
 
-1. **Runtime Setup**: @src/runner/agent_runner.py establishes server connection and applies monkey patches
-2. **LLM Interception**: @src/runner/monkey_patching/patches/ intercept API calls (httpx, requests, etc.)
-3. **Edge Detection**: @src/runner/string_matching.py checks if previous outputs appear in current input
+1. **Runtime Setup**: @src/sovara/runner/agent_runner.py establishes server connection and applies monkey patches
+2. **LLM Interception**: @src/sovara/runner/monkey_patching/patches/ intercept API calls (httpx, requests, etc.)
+3. **Edge Detection**: @src/sovara/runner/string_matching.py checks if previous outputs appear in current input
 4. **Visualization**: Interactive graph shows LLM calls as nodes and content matches as edges
 
 ## Installation & Setup
@@ -53,11 +53,11 @@ Check if you are working on the main branch. If not, check the main branch for u
 ## Key Commands
 
 ```bash
-# Running (replace python with ao-record)
-ao-record script.py
+# Running (replace python with so-record)
+so-record script.py
 
 # Server management
-ao-server start/stop/restart/clear/logs
+so-server start/stop/restart/clear/logs
 
 # Testing
 python -m pytest -v tests/billable/  # Tests that make LLM API calls

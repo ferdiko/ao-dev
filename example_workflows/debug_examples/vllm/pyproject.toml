@@ -1,12 +1,12 @@
 [project]
-name = "ao-examples-vllm"
+name = "sovara-examples-vllm"
 version = "0.1.0"
-description = "AO debug examples for vLLM"
+description = "Sovara debug examples for vLLM"
 requires-python = ">=3.10"
 dependencies = [
-    "ao-dev",
+    "sovara",
     "openai",
 ]
 
 [tool.uv.sources]
-ao-dev = { path = "../../..", editable = true }
+sovara = { path = "../../..", editable = true }

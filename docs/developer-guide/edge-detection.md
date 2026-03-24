@@ -1,6 +1,6 @@
 # Edge Detection
 
-AO detects dataflow between LLM calls using content-based matching. This document explains how edges are created in the dataflow graph.
+Sovara detects dataflow between LLM calls using content-based matching. This document explains how edges are created in the dataflow graph.
 
 ## Overview
 
@@ -26,7 +26,7 @@ Key properties:
 
 ### String Matching Module
 
-The matching logic is in `src/runner/string_matching.py`:
+The matching logic is in `src/sovara/runner/string_matching.py`:
 
 ```python
 find_source_nodes(session_id, input_dict, api_type) -> List[str]

@@ -1,18 +1,18 @@
 # Architecture
 
-This page provides a high-level overview of AO's architecture and how its components work together.
+This page provides a high-level overview of Sovara's architecture and how its components work together.
 
 ## System Overview
 
-AO consists of three main processes that work together:
+Sovara consists of three main processes that work together:
 
 ![Processes Overview](../media/processes.png)
 
 ### 1. User Program (Green)
 
-The user launches their program with `ao-record script.py`. This feels exactly like running `python script.py` - same terminal I/O, same crash behavior, and debugger support.
+The user launches their program with `so-record script.py`. This feels exactly like running `python script.py` - same terminal I/O, same crash behavior, and debugger support.
 
-**Key point:** User code runs completely unmodified. AO uses monkey patching to intercept LLM calls and content-based matching to detect dataflow edges.
+**Key point:** User code runs completely unmodified. Sovara uses monkey patching to intercept LLM calls and content-based matching to detect dataflow edges.
 
 **Components:**
 
@@ -47,7 +47,7 @@ The VS Code extension (or web app) that displays the dataflow graph and provides
 
 ## Content-Based Edge Detection
 
-AO detects dataflow between LLM calls using content-based matching:
+Sovara detects dataflow between LLM calls using content-based matching:
 
 1. **Store outputs**: When an LLM call completes, all text strings from the response are stored in an in-memory registry
 2. **Match inputs**: When a new LLM call is made, we check if any previously stored output strings appear as substrings in the input
@@ -60,7 +60,7 @@ This approach is simple and robust:
 
 ## Execution Flow
 
-1. User runs `ao-record script.py`
+1. User runs `so-record script.py`
 2. Agent runner sets up environment (random seeds, server connection)
 3. Agent runner connects to server (starts it if needed)
 4. Monkey patches are applied to LLM libraries
@@ -74,24 +74,27 @@ This approach is simple and robust:
 
 ```
 src/
-├── cli/                    # Command-line interface
-│   ├── ao_record.py       # Main launch command
-│   ├── ao_server.py       # Server management
-│   └── ao_config.py       # Configuration
-├── runner/                 # Runtime execution
-│   ├── agent_runner.py     # Main runner (setup + execution)
-│   ├── string_matching.py  # Content-based edge detection
-│   ├── context_manager.py  # Session management
-│   └── monkey_patching/    # API interception
-│       ├── apply_monkey_patches.py
-│       └── patches/        # Per-API patches
-├── server/                 # Core server
-│   ├── main_server.py      # Main server logic
-│   ├── file_watcher.py     # Git versioning
-│   └── database_manager.py # Caching/storage + content registry
-└── user_interfaces/        # UI components
-    ├── vscode_extension/   # VS Code extension
-    └── web_app/            # Standalone web app
+└── sovara/
+    ├── cli/                    # Command-line interface
+    │   ├── so_record.py        # Main launch command
+    │   ├── so_server.py        # Server management
+    │   └── so_config.py        # Configuration
+    ├── runner/                 # Runtime execution
+    │   ├── agent_runner.py     # Main runner (setup + execution)
+    │   ├── string_matching.py  # Content-based edge detection
+    │   ├── context_manager.py  # Session management
+    │   └── monkey_patching/    # API interception
+    │       ├── apply_monkey_patches.py
+    │       └── patches/        # Per-API patches
+    └── server/                 # Core server
+        ├── app.py              # FastAPI app factory
+        ├── state.py            # In-memory state and git versioning
+        └── database_manager.py # Caching/storage + content registry
+
+ui/
+├── shared_components/      # Shared React components and types
+├── vscode_extension/       # VS Code extension
+└── web_app/                # Standalone web app
 ```
 
 ## Next Steps

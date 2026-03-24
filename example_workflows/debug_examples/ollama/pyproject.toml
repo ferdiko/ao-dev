@@ -1,12 +1,12 @@
 [project]
-name = "ao-examples-ollama"
+name = "sovara-examples-ollama"
 version = "0.1.0"
-description = "AO debug examples for Ollama"
+description = "Sovara debug examples for Ollama"
 requires-python = ">=3.10"
 dependencies = [
-    "ao-dev",
+    "sovara",
     "ollama",
 ]
 
 [tool.uv.sources]
-ao-dev = { path = "../../..", editable = true }
+sovara = { path = "../../..", editable = true }

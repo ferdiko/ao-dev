@@ -1,24 +1,24 @@
-# AO Agent Dev: What-if Questions over Agent Trajectories  
+# Sovara: What-if Questions over Agent Trajectories
 
-AO Agent Dev is a developer tool for agent builders. It supports arbitrary Python progams (like your existing agents!) and will visualize your agent's LLM and MCP calls into a dataflow graph. You can then inspect, edit and rerun this graph and understand how to fix your agent.
+Sovara is a developer tool for agent builders. It supports arbitrary Python progams (like your existing agents!) and will visualize your agent's LLM and MCP calls into a dataflow graph. You can then inspect, edit and rerun this graph and understand how to fix your agent.
 
 [![Quickstart video](docs/media/quickstart_screenshot.png)](https://youtu.be/woVctiSRJU0)
 
 
 ## Quickstart
 
-`AO Agent Dev` integrates into VS Code or IDEs based on it, like Cursor. 
+`Sovara` integrates into VS Code or IDEs based on it, like Cursor.
 
-Simply download (1) our [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=agentops.ao-agent-dev) (type ao dev into the marketplace search and install the one with the blue icon by "Agent Ops"), (2) install our pip package:
+Simply download (1) our [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=SovaraLabs.sovara) (type sovara dev into the marketplace search and install the one with the blue icon by "Sovara Labs"), (2) install our pip package:
 
 ```bash
-pip install ao-dev
+pip install sovara
 ```
 
 Or if you use [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv add ao-dev
+uv add sovara
 ```
 
 **Then, give it a spin:**
@@ -65,47 +65,47 @@ if __name__ == "__main__":
     main()
 ```
 
-2. Run the script using `ao-record`.
+2. Run the script using `so-record`.
 
 ```bash
-ao-record openai_example.py
+so-record openai_example.py
 ```
 
 This should show you the agent's trajectory graph like in the video above. You can edit inputs and outputs in the graph and rerun.
 
 ## Integration with Coding Agents
-Coding Agents already accelerate generic coding quite successfully. By augmenting them with `ao`, you can supercharge your agent development while making sure you adhere to state-of-the-art coding practices for enterprise-grade agents.
+Coding Agents already accelerate generic coding quite successfully. By augmenting them with `sovara`, you can supercharge your agent development while making sure you adhere to state-of-the-art coding practices for enterprise-grade agents.
 
 <h3><img src="docs/media/cc.png" alt="Claude Code" height="24" align="absmiddle">&nbsp;&nbsp;Claude Code</h3>
 
 **Setup:**
 
 ```bash
-ao-tool install-skill
+so-tool install-skill
 ```
 
 This interactive command will:
-1. Copy the AO skill file to your project's `.claude/skills/ao/` directory
-2. Add Bash permissions so Claude Code can run `ao-tool` commands without prompts
+1. Copy the Sovara skill file to your project's `.claude/skills/sovara/` directory
+2. Add Bash permissions so Claude Code can run `so-tool` commands without prompts
 
-After setup, restart Claude Code and ask "What skills are available?". The ao skill should now show up, and you can start developing/improving your agent as you would normally do.
+After setup, restart Claude Code and ask "What skills are available?". The sovara skill should now show up, and you can start developing/improving your agent as you would normally do.
 
 **Why use this integration?**
 
-- **Keep context clean**: Agent runs produce verbose logs that quickly pollute Claude's context window. With `ao-tool`, Claude queries only the specific nodes it needs.
+- **Keep context clean**: Agent runs produce verbose logs that quickly pollute Claude's context window. With `so-tool`, Claude queries only the specific nodes it needs.
 - **Structured access**: Claude gets structured JSON data (inputs, outputs, graph topology) rather than parsing raw logs.
 - **Edit and rerun**: Claude can programmatically edit an LLM's input or output and trigger a rerun to test hypotheses.
 
 ## Documentation
 
-For complete documentation, installation guides, and tutorials, visit our **[Documentation Site](https://ao-agent-ops.github.io/ao-dev/)**.
+For complete documentation, installation guides, and tutorials, visit our **[Documentation Site](https://docs.sovara-labs.com/)**.
 
 ## Building from source and developing
 
-See the [Installation Guide](https://ao-agent-ops.github.io/ao-dev/getting-started/installation/) for development setup and the [Developer Guide](https://ao-agent-ops.github.io/ao-dev/developer-guide/architecture/) for architecture details. More details can also be found in the READMEs of the corresponding dirs in `src/`.
+See the [Installation Guide](https://docs.sovara-labs.com/getting-started/installation/) for development setup and the [Developer Guide](https://docs.sovara-labs.com/developer-guide/architecture/) for architecture details. More details can also be found in the READMEs of the corresponding dirs in `src/`.
 
 ## Community
 
 - [Join our Discord](https://discord.gg/fjsNSa6TAh)
-- [GitHub Issues](https://github.com/agent-ops-project/ao-dev/issues)
+- [GitHub Issues](https://github.com/SovaraLabs/sovara/issues)
 - We're just getting started on this tool and are eager to hear your feedback and resolve issues you ran into! We hope you enjoy it as much as we do.

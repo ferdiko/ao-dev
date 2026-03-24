@@ -207,7 +207,7 @@ wheels = [
 ]
 
 [[package]]
-name = "ao-dev"
+name = "sovara"
 version = "0.1.5"
 source = { editable = "." }
 dependencies = [

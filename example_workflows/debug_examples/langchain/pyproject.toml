@@ -1,14 +1,14 @@
 [project]
-name = "ao-examples-langchain"
+name = "sovara-examples-langchain"
 version = "0.1.0"
-description = "AO debug examples for LangChain"
+description = "Sovara debug examples for LangChain"
 requires-python = ">=3.10"
 dependencies = [
-    "ao-dev",
+    "sovara",
     "langchain",
     "langchain-anthropic",
     "langchain-openai",
 ]
 
 [tool.uv.sources]
-ao-dev = { path = "../../..", editable = true }
+sovara = { path = "../../..", editable = true }

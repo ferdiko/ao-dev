@@ -14,7 +14,7 @@ To run:
     export BRAVE_API_KEY=your_brave_api_key
     export SERPER_API_KEY=your_serper_api_key
     export ANTHROPIC_API_KEY=your_anthropic_api_key
-    ao-record example_workflows/debug_examples/crewai_multi_tool.py
+    so-record example_workflows/debug_examples/crewai_multi_tool.py
 """
 
 from crewai import Agent, Task, Crew, Process, LLM

@@ -1,12 +1,12 @@
 [project]
-name = "ao-examples-google"
+name = "sovara-examples-google"
 version = "0.1.0"
-description = "AO debug examples for Google/VertexAI"
+description = "Sovara debug examples for Google/VertexAI"
 requires-python = ">=3.10"
 dependencies = [
-    "ao-dev",
+    "sovara",
     "google-genai",
 ]
 
 [tool.uv.sources]
-ao-dev = { path = "../../..", editable = true }
+sovara = { path = "../../..", editable = true }

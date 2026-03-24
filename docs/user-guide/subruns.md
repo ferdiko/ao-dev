@@ -1,20 +1,20 @@
 # Subruns
 
-Subruns allow you to create separate tracked sessions within a single `ao-record` execution. This is particularly useful for evaluation scripts where you want each sample to be tracked independently.
+Subruns allow you to create separate tracked sessions within a single `so-record` execution. This is particularly useful for evaluation scripts where you want each sample to be tracked independently.
 
 ## Basic Usage
 
 Use the `launch` context manager to create subruns:
 
 ```
-from ao import launch
+from sovara import launch
 
 for sample in samples:
     with launch("sample-name"):
         eval_sample(sample)
 ```
 
-Each iteration creates a separate run in the AO UI, allowing you to:
+Each iteration creates a separate run in the Sovara UI, allowing you to:
 
 - View each sample's dataflow graph independently
 - Compare results across samples
@@ -36,7 +36,7 @@ Subruns can run concurrently using Python's threading or multiprocessing:
 
 ```
 from concurrent.futures import ThreadPoolExecutor
-from ao import launch
+from sovara import launch
 
 def process_sample(sample):
     with launch(f"sample-{sample.id}"):
@@ -66,7 +66,7 @@ When the context exits, the session is closed and the graph is finalized.
 ### Evaluation Pipelines
 
 ```
-from ao import launch
+from sovara import launch
 
 results = []
 for sample in test_dataset:
@@ -81,7 +81,7 @@ print(f"Average score: {sum(results) / len(results)}")
 ### A/B Testing
 
 ```
-from ao import launch
+from sovara import launch
 
 configs = [
     {"model": "gpt-4", "temperature": 0.7},
@@ -96,7 +96,7 @@ for config in configs:
 ### Debugging Specific Cases
 
 ```
-from ao import launch
+from sovara import launch
 
 failed_samples = [s for s in samples if s.status == "failed"]
 

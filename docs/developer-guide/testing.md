@@ -1,6 +1,6 @@
 # Testing
 
-This guide covers how to run AO's test suite and write new tests.
+This guide covers how to run Sovara's test suite and write new tests.
 
 ## Running Tests
 
@@ -27,7 +27,7 @@ uv run pytest -v -s tests/non_billable/
 If you installed with conda, activate the environment first:
 
 ```bash
-conda activate ao
+conda activate sovara
 
 # Run all non-billable tests
 pytest tests/non_billable/ -v
@@ -123,17 +123,17 @@ Create `pyproject.toml`:
 
 ```toml
 [project]
-name = "ao-examples-newprovider"
+name = "sovara-examples-newprovider"
 version = "0.1.0"
-description = "AO debug examples for NewProvider"
+description = "Sovara debug examples for NewProvider"
 requires-python = ">=3.10"
 dependencies = [
-    "ao-dev",
+    "sovara",
     "newprovider-sdk",  # The provider's SDK
 ]
 
 [tool.uv.sources]
-ao-dev = { path = "../../..", editable = true }
+sovara = { path = "../../..", editable = true }
 ```
 
 Generate `uv.lock`:
@@ -210,7 +210,7 @@ def server_connection():
 ### View Server Logs
 
 ```bash
-ao-server logs
+so-server logs
 ```
 
 ### Run with Debug Output
@@ -230,7 +230,7 @@ uv run pytest -v "tests/non_billable/test_file.py::test_specific_function"
 For API call tests, the user program executes as a replay by the server. To see the output:
 
 ```bash
-ao-server logs
+so-server logs
 ```
 
 This shows the output of the user program, including any crash information.
@@ -244,7 +244,7 @@ This shows the output of the user program, including any crash information.
 uv run pytest tests/non_billable/ -v
 
 # Run with coverage
-uv run pytest tests/non_billable/ --cov=ao --cov-report=html
+uv run pytest tests/non_billable/ --cov=sovara --cov-report=html
 ```
 
 ### Billable Tests in CI
@@ -258,7 +258,7 @@ Key considerations:
 
 - Tests must be deterministic (use fixed random seeds)
 - API tests should use mocks or replay mode when possible
-- Edge detection tests require the full `ao-record` environment
+- Edge detection tests require the full `so-record` environment
 
 ## Next Steps
 

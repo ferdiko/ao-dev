@@ -1,41 +1,41 @@
 # API Reference
 
-This section provides auto-generated API documentation from the AO source code.
+This section provides auto-generated API documentation from the Sovara source code.
 
 ## Overview
 
-AO's Python API is organized into several modules:
+Sovara's Python API is organized into several modules:
 
 ### CLI Modules
 
-- [**CLI**](cli.md) - Command-line interface entry points (`ao-record`, `ao-server`, `ao-config`)
+- [**CLI**](cli.md) - Command-line interface entry points (`so-record`, `so-server`, `so-config`)
 
 ## Module Structure
 
 ```
-ao/
+sovara/
 ├── cli/                    # Command-line tools
-│   ├── ao_record.py       # Main launch command
-│   ├── ao_server.py       # Server management
-│   └── ao_config.py       # Configuration tool
+│   ├── so_record.py       # Main launch command
+│   ├── so_server.py       # Server management
+│   └── so_config.py       # Configuration tool
 ├── runner/                 # Runtime execution
 │   ├── string_matching.py  # Content-based edge detection
 │   ├── context_manager.py  # Session management
 │   └── monkey_patching/    # API interception
 └── server/                 # Core server
-    ├── file_watcher.py     # Git versioning
+    ├── app.py             # FastAPI app factory
     ├── database_manager.py # Caching and content registry
-    └── main_server.py      # Main server
+    └── state.py           # Session state and git versioning
 ```
 
 ## Using the API
 
-Most users interact with AO through the CLI commands. However, you can also use the Python API directly:
+Most users interact with Sovara through the CLI commands. However, you can also use the Python API directly:
 
 ### Context Manager for Subruns
 
 ```python
-from ao import launch
+from sovara import launch
 
 with launch("my-run"):
     # Your LLM code here

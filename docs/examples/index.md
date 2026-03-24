@@ -1,9 +1,9 @@
 # Example Workflows
 
-AO includes several example workflows to help you understand how to use the tool and test your setup.
+Sovara includes several example workflows to help you understand how to use the tool and test your setup.
 
 !!! note "Project Root Configuration"
-    For some examples, you may need to modify your project root. Run `ao-config` and set it to the root of the example repo.
+    For some examples, you may need to modify your project root. Run `so-config` and set it to the root of the example repo.
 
 ## Built-in Examples
 
@@ -23,7 +23,7 @@ Over 30 simple workflows for testing different LLM providers and frameworks:
 
 ```bash
 # Run an example
-ao-record ./example_workflows/debug_examples/openai_debate.py
+so-record ./example_workflows/debug_examples/openai_debate.py
 ```
 
 These examples are included directly in the repository and don't require additional setup.
@@ -35,7 +35,7 @@ Location: `example_workflows/mcp/`
 Examples demonstrating MCP (Model Context Protocol) tool integration:
 
 ```bash
-ao-record ./example_workflows/mcp/google_search.py
+so-record ./example_workflows/mcp/google_search.py
 ```
 
 ## External Example Workflows
@@ -100,7 +100,7 @@ To add a new example workflow:
    - Setup instructions
    - Any known issues or quirks
 
-5. From the ao root, add the submodule:
+5. From the sovara root, add the submodule:
    ```bash
    git submodule add https://github.com/agops-project/my_agent.git example_workflows/my_agent/repo
    ```
@@ -111,13 +111,13 @@ All examples follow the same pattern:
 
 ```bash
 # Activate your environment
-conda activate ao
+conda activate sovara
 
 # Set project root if needed
-ao-config
+so-config
 
 # Run the example
-ao-record ./example_workflows/EXAMPLE_NAME/script.py
+so-record ./example_workflows/EXAMPLE_NAME/script.py
 ```
 
 ## Next Steps

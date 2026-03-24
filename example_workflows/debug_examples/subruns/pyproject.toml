@@ -1,12 +1,12 @@
 [project]
-name = "ao-examples-subruns"
+name = "sovara-examples-subruns"
 version = "0.1.0"
-description = "AO debug examples for subruns/concurrent execution"
+description = "Sovara debug examples for subruns/concurrent execution"
 requires-python = ">=3.10"
 dependencies = [
-    "ao-dev",
+    "sovara",
     "openai",
 ]
 
 [tool.uv.sources]
-ao-dev = { path = "../../..", editable = true }
+sovara = { path = "../../..", editable = true }

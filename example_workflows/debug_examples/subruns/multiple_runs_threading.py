@@ -1,6 +1,6 @@
 import concurrent.futures
 from openai import OpenAI
-from ao.runner.context_manager import ao_launch
+from sovara.runner.context_manager import sovara_launch
 
 
 client = OpenAI()
@@ -33,7 +33,7 @@ def eval_sample(prompt):
 def run_single_threaded_eval(prompt):
     """Run a single evaluation in its own context (threaded)"""
     country = prompt.split(" ")[-1][:-1]
-    with ao_launch(run_name=country):
+    with sovara_launch(run_name=country):
         return eval_sample(prompt)
 
 

@@ -1,6 +1,6 @@
 # VS Code Extension
 
-The AO VS Code extension provides an interactive visual interface for exploring LLM call dataflow graphs.
+The Sovara VS Code extension provides an interactive visual interface for exploring LLM call dataflow graphs.
 
 ## Installation
 
@@ -9,7 +9,7 @@ The AO VS Code extension provides an interactive visual interface for exploring 
 1. Install Node.js if you haven't already
 2. Navigate to the user interfaces directory:
    ```bash
-   cd src/user_interfaces/
+   cd ui/
    npm run install:all
    ```
 3. Build the extension:
@@ -19,7 +19,7 @@ The AO VS Code extension provides an interactive visual interface for exploring 
 
 ### Running the Extension
 
-1. Open the AO project in VS Code
+1. Open the Sovara project in VS Code
 2. From the debugger options (in `launch.json`), select "Run Extension"
 3. Press F5 or click the Run button
 4. A new VS Code window opens with the extension active
@@ -106,18 +106,18 @@ If using the web app in Chrome:
 
 ## Web App Alternative
 
-AO also supports a standalone web application:
+Sovara also supports a standalone web application:
 
 ### Running the Web App
 
 1. Start or restart the backend:
    ```bash
-   uv run ao-server restart
+   uv run so-server restart
    ```
 
 2. In another terminal, start the frontend dev server:
    ```bash
-   cd src/user_interfaces/
+   cd ui/
    npm run dev:webapp
    ```
 

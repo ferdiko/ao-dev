@@ -8,21 +8,21 @@
 ## Quick Install (pip)
 
 ```bash
-pip install ao-dev
+pip install sovara
 ```
 
 ## Quick Install (uv)
 
-If you use [uv](https://docs.astral.sh/uv/) for package management, add `ao-dev` to your project's dependencies:
+If you use [uv](https://docs.astral.sh/uv/) for package management, add `sovara` to your project's dependencies:
 
 ```bash
-uv add ao-dev
+uv add sovara
 ```
 
 Then run your scripts with:
 
 ```bash
-uv run ao-record script.py
+uv run so-record script.py
 ```
 
 ## Verifying Installation
@@ -30,8 +30,8 @@ uv run ao-record script.py
 After installation, verify that the CLI commands are available:
 
 ```bash
-ao-record --help
-ao-server --help
+so-record --help
+so-server --help
 ```
 
 ## Building from Source
@@ -41,7 +41,7 @@ ao-server --help
 If you're starting from a clean sheet, create a conda environment with the required dependencies:
 
 ```bash
-conda create -n ao python=3.13 nodejs sqlite -y && conda activate ao
+conda create -n sovara python=3.13 nodejs sqlite -y && conda activate sovara
 ```
 
 ### Install and Build
@@ -50,7 +50,7 @@ For non-developers, install the project and build the UI:
 
 ```bash
 pip install -e .
-cd src/user_interfaces && npm run install:all && npm run build:extension
+cd ui && npm run install:all && npm run build:extension
 ```
 
 ### Running the Extension
@@ -64,7 +64,7 @@ Open this project in a new VS Code window. Select the "Run Extension" option fro
 In the new window, you can now open any project that you are working on. For example, run the `openai_debate.py` example from the `example_workflows/debug_examples/` folder:
 
 ```bash
-ao-record ./example_workflows/debug_examples/openai_debate.py
+so-record ./example_workflows/debug_examples/openai_debate.py
 ```
 
 > **Note:** This example depends on the OpenAI API. You may need to install it first: `pip install openai`
@@ -73,20 +73,12 @@ ao-record ./example_workflows/debug_examples/openai_debate.py
 
 ## Developer Installation
 
-If you are contributing to AO, install with development dependencies and set up pre-commit hooks:
+If you are contributing to Sovara, install with development dependencies and set up pre-commit hooks:
 
 ```bash
 pip install -e ".[dev]"
 pre-commit install
-cd src/user_interfaces && npm run install:all && npm run build:extension
-```
-
-### IDE Linter Configuration
-
-Some Python linters may incorrectly report that modules inside the codebase can't be found. Run the following in the project root to resolve this:
-
-```bash
-ln -s src ao
+cd ui && npm run install:all && npm run build:extension
 ```
 
 ## Next Steps

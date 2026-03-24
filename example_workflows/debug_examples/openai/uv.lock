@@ -35,7 +35,7 @@ wheels = [
 ]
 
 [[package]]
-name = "ao-dev"
+name = "sovara"
 version = "0.1.5"
 source = { editable = "../../../" }
 dependencies = [
@@ -91,11 +91,11 @@ requires-dist = [
 provides-extras = ["dev", "examples", "docs"]
 
 [[package]]
-name = "ao-examples-openai"
+name = "sovara-examples-openai"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "ao-dev" },
+    { name = "sovara" },
     { name = "e2b-code-interpreter" },
     { name = "openai" },
     { name = "openai-agents" },
@@ -103,7 +103,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ao-dev", editable = "../../../" },
+    { name = "sovara", editable = "../../../" },
     { name = "e2b-code-interpreter" },
     { name = "openai" },
     { name = "openai-agents" },
