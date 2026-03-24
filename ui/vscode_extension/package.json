@@ -1,9 +1,17 @@
 {
   "name": "sovara",
   "displayName": "Sovara",
-  "description": "Visualize, edit and improve agent workflows.",
-  "repository": "https://github.com/SovaraLabs/sovara",
-  "version": "0.1.5",
+  "description": "Inspect, edit, and replay agent workflows without leaving VS Code.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SovaraLabs/sovara.git"
+  },
+  "homepage": "https://sovara-labs.com",
+  "bugs": {
+    "url": "https://github.com/SovaraLabs/sovara/issues",
+    "email": "hello@sovara-labs.com"
+  },
+  "version": "0.2.0",
   "publisher": "SovaraLabs",
   "license": "Apache-2.0",
   "icon": "icon.png",
@@ -11,17 +19,51 @@
     "vscode": "^1.74.0"
   },
   "categories": [
-    "Other"
+    "Visualization",
+    "Machine Learning"
   ],
+  "keywords": [
+    "agent",
+    "agents",
+    "agentic",
+    "workflow",
+    "workflows",
+    "llm",
+    "prompt",
+    "trace",
+    "graph",
+    "visualization",
+    "debugging",
+    "observability",
+    "optimization",
+    "optimize"
+  ],
+  "galleryBanner": {
+    "color": "#E7F1E6",
+    "theme": "dark"
+  },
+  "markdown": "github",
+  "pricing": "Free",
+  "qna": false,
+  "preview": true,
+  "author": {
+    "name": "Sovara Labs"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
   "activationEvents": [
-    "*"
+    "onStartupFinished",
+    "onWebviewPanel:sovara.graphTab"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "sovara.showGraph",
-        "title": "Show Graph Panel",
+        "title": "Open Sidebar",
         "category": "Sovara"
       }
     ],

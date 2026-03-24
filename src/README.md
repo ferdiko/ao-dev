@@ -143,10 +143,10 @@ python -m venv .venv-test
 .venv-test/bin/pip install dist/sovara-${VERSION}-*.whl
 ```
 
-8. Test the installed package by recording the OpenAI debate example. This validates that the installed wheel works, not just the local source tree.
+8. Test the installed package by recording the OpenAI debate example with `so-record`. This validates that the installed wheel works, not just the local source tree, and preserves normal interactive terminal behavior.
 
 ```bash
-OPENAI_API_KEY=... uv run --no-project --python .venv-test/bin/python --with openai -m sovara.cli.so_tool record --run-name "OAI-debate-run-1" --timeout 60 example_workflows/debug_examples/openai/debate.py
+uv run --no-project --python .venv-test/bin/python --with openai so-record --run-name "OAI-debate-run-1" example_workflows/debug_examples/openai/debate.py
 ```
 
 9. Do a test upload first.
@@ -186,8 +186,8 @@ python -m twine upload dist/sovara-${VERSION}*
 
 - You can change developer settings and look at statistics at https://marketplace.visualstudio.com/manage/.
 
-1. ‼️ Look at `ui/vscode_extension/package.json`. Make sure name, description, version, etc. are what you want. (Don't worry about "icon", see below)
-2. ‼️ Look at the marketplace description at [/docs/release/VSIX_DESC.md](/docs/release/VSIX_DESC.md). Also look at the icon at [/docs/release/marketplace_icon.png](/docs/release/marketplace_icon.png)
+1. ‼️ Look at  [package.json](../ui/vscode_extension/package.json). Make sure the extension metadata is what you want.
+2. ‼️ Look at the [README](../ui/vscode_extension/README.md) for the Marketplace description and [icon](../ui/vscode_extension/icon.png) for the extension icon.
 3. Install `@vscode/vsce` globally if you haven't already. You can run this from any directory:
    `npm install -g @vscode/vsce`
 4. Create VSIX package: `cd ui/vscode_extension` and run `./build-vsix.sh`.

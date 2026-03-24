@@ -26,7 +26,7 @@ line-length = 100
 
 [project]
 name = "sovara"
-version = "0.1.5"
+version = "0.2.0"
 description = "A development tool for LLM call visualization and debugging"
 readme = "docs/release/PYPI_DESC.md"
 requires-python = ">=3.10"

@@ -236,18 +236,8 @@ src/static_analysis/CodeQL-Analyst/databases
 # VS Code extension builds
 *.vsix
 
-# sim link
-/ao
-
 # Claude local
 CLAUDE.local.md
 
-# Rewritten files
-*.ao_rewritten.py
-
 # Project identifiers
-**/.ao
-
-# Misc
-run_debug_examples.sh
-**/example_workflows/debug_examples/test_commands.txt
+**/.sovara

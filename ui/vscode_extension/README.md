@@ -1,77 +1,59 @@
-# Sovara VS Code Extension
+# Sovara for VS Code
 
-A VS Code extension that displays an interactive graph view in the sidebar with nodes and edges.
+Inspect, edit, and replay agent workflows without leaving VS Code.
 
-## Installation
+Sovara turns recorded runs into an interactive graph inside the editor so you can trace prompts, outputs, dependencies, and cached reruns in one place.
 
-1. Install Node.js
-2. In this dir (`vscode_extension`), run `npm install`
-3. Run `npm run compile` to build the extension. When developing run `npm run watch` so the extension is continuously re-compiled as you do changes.
-4. From the debugger options (from `launch.json`) select "Run extension" and run.
-5. A new window will open with the extension active. The graph view will appear in the Explorer sidebar.
+## Features
 
+- Browse recent runs from the Sovara sidebar
+- Open full graph tabs for individual runs
+- Inspect inputs, outputs, attachments, and code locations
+- Edit a node and rerun only downstream work
+- Reconnect to the local Sovara server automatically
 
-## Usage
+## Requirements
 
-### Adding Nodes
-The extension listens for messages from the backend. To add a node programmatically:
+- VS Code `1.74+`
+- A Python environment with `sovara` installed
+- A project you run through `so-record`
 
-```javascript
-// In GraphViewProvider
-provider.addNode({
-    id: 'unique-id',
-    input: 'Input text',
-    output: 'Output text',
-    stack_trace: 'File "/path/to/file.py", line 42, in main',
-    label: 'Node Label'
-});
+## Quick Start
+
+1. Install `sovara` in the Python environment VS Code should use:
+
+   ```bash
+   uv add --dev sovara
+   # or
+   pip install sovara
+   ```
+
+2. Open your project in VS Code.
+3. Record a run:
+
+   ```bash
+   so-record python your_script.py
+   ```
+
+4. Open the Sovara icon in the Activity Bar and select a run.
+
+By default the extension connects to `127.0.0.1:5959`. It can start `so-server` automatically when `sovara` is installed in the selected Python environment. If you prefer to start it yourself:
+
+```bash
+so-server start
 ```
 
-### Node Interactions
-- **Hover** over a node to see the action menu
-- **Edit Input**: Modify the node's input string
-- **Edit Output**: Modify the node's output string
-- **Change Label**: Update the node's display label
-- **See in Code**: Navigate to code location
-- **Document Preview**: Base64-encoded files (PDF, images, DOCX) are detected and shown as clickable buttons to open in your default app
+## Settings
 
-### Backend Communication
-The extension sends messages to the backend when:
-- A node's input, output, or label is edited
-- The webview is ready to receive data
+- `sovara.pythonServerHost`: Host for the local Sovara server
+- `sovara.pythonServerPort`: Port for the local Sovara server
 
-Message format:
-```typescript
-{
-    type: 'updateNode',
-    payload: {
-        nodeId: string,
-        field: 'input' | 'output' | 'label',
-        value: string
-    }
-}
-```
+## Command
 
-## Dev
+- `Sovara: Open Sidebar`
 
-Some basics:
+## Support
 
- - If you want to see the logs in the extension: `Cmd+P` and then type `> Developer: Toggle Developer Tools`. 
-
-### Architecture
-
-See README at project root for architecture diagram. Below might be outdated.
-
-#### Extension <-> Webview
-
- - Webview send message to extension. Utilities (e.g., `sendMessage()`) in `src/webview/utils/messaging.ts`
- - Webview receive message from extension: `src/webview/App.tsx`
- - Extension receive message from webview: `src/providers/GraphViewProvider.ts`
- - Extension send to webview happens in several places using `webview.postMessage()`. For example in `GraphViewProvider.ts`
-
-#### Extension <-> Python bridge
-
- - Extension receives and sends messages in `GraphViewProvider.ts` (see `_sendToPython` and `_handlePythonMessage`)
-
-### Graph layout
-We use our custom algorithm to determine where nodes are placed in the web view pannel and where edge flow between them. [The algo can be found here.](https://drive.google.com/file/d/1eKiijfvaGs_-5sajpeqk923Xbvro7x3X/view?usp=drive_link)
+- Repository: https://github.com/SovaraLabs/sovara
+- Issues: https://github.com/SovaraLabs/sovara/issues
+- Email: hello@sovara-labs.com

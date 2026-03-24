@@ -1,13 +1,16 @@
 #!/bin/bash
-# Build script for creating .vsix package
+# Build script for creating a .vsix package.
 # This works around vsce's inability to handle our UI workspace layout
-# while webpack resolves sources from the shared components package alias
+# while webpack resolves sources from the shared components package alias.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TEMP_DIR=$(mktemp -d)
 EXTENSION_NAME="sovara"
+
+cd "$SCRIPT_DIR"
 
 echo "Building extension in temp directory: $TEMP_DIR"
 
@@ -45,14 +48,14 @@ with open('${TEMP_DIR}/extension/package.json', 'w') as f:
     json.dump(pkg, f, indent=2)
 EOF
 
-# Copy readme for VS Code marketplace
-cp ../../../docs/release/VSIX_DESC.md "$TEMP_DIR/extension/README.md"
+# Copy the extension README used by the Marketplace
+cp README.md "$TEMP_DIR/extension/README.md"
 
 # Copy license file from repo root
-cp ../../../LICENSE "$TEMP_DIR/extension/LICENSE"
+cp "$REPO_ROOT/LICENSE" "$TEMP_DIR/extension/LICENSE"
 
-# Copy icon
-cp ../../../docs/release/marketplace_icon.png "$TEMP_DIR/extension/icon.png"
+# Copy the extension icon declared in package.json
+cp icon.png "$TEMP_DIR/extension/icon.png"
 
 # Step 4: Create a minimal .vscodeignore in temp
 cat > "$TEMP_DIR/extension/.vscodeignore" << 'EOF'
@@ -66,7 +69,7 @@ if ! command -v vsce >/dev/null 2>&1; then
     echo "ERROR: 'vsce' is not installed. Run 'npm install -g @vscode/vsce' from any directory and try again."
     exit 1
 fi
-vsce package --no-dependencies --allow-star-activation
+vsce package --no-dependencies
 
 # Step 6: Move the .vsix back to original directory
 VSIX_FILE=$(ls *.vsix 2>/dev/null | head -1)
