@@ -14,7 +14,7 @@ To run:
     export SERPER_API_KEY=your_key
     export PARALLEL_API_KEY=your_key
     export ANTHROPIC_API_KEY=your_key
-    ao-record example_workflows/debug_examples/crewai_advanced_tools.py
+    so-record example_workflows/debug_examples/crewai_advanced_tools.py
 """
 
 from crewai import Agent, Task, Crew, Process, LLM

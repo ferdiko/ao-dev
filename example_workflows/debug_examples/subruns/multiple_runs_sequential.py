@@ -5,7 +5,7 @@ needed for running evals).
 """
 
 from openai import OpenAI
-from ao.runner.context_manager import ao_launch
+from sovara.runner.context_manager import sovara_launch
 
 
 client = OpenAI()
@@ -38,5 +38,5 @@ def eval_sample(prompt):
 # Run all samples sequentially.
 for prompt in prompts:
     country = prompt.split(" ")[-1][:-1]
-    with ao_launch(run_name=country):
+    with sovara_launch(run_name=country):
         eval_sample(prompt)

@@ -1,13 +1,13 @@
 [project]
-name = "ao-examples-crewai"
+name = "sovara-examples-crewai"
 version = "0.1.0"
-description = "AO debug examples for CrewAI"
+description = "Sovara debug examples for CrewAI"
 requires-python = ">=3.10"
 dependencies = [
-    "ao-dev",
+    "sovara",
     "crewai",
     "crewai-tools",
 ]
 
 [tool.uv.sources]
-ao-dev = { path = "../../..", editable = true }
+sovara = { path = "../../..", editable = true }

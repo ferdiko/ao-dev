@@ -1,25 +1,25 @@
 # CLI Commands
 
-AO provides three main CLI commands for running and managing your LLM applications.
+Sovara provides three main CLI commands for running and managing your LLM applications.
 
-## ao-record
+## so-record
 
-The primary command for running Python scripts with AO analysis.
+The primary command for running Python scripts with Sovara analysis.
 
 ### Basic Usage
 
 ```bash
 # Run a script
-ao-record script.py
+so-record script.py
 
 # Run a script with arguments
-ao-record script.py --arg1 value1 --arg2 value2
+so-record script.py --arg1 value1 --arg2 value2
 
 # Run a module (like you would with python -m mypackage.mymodule)
-ao-record -m mypackage.mymodule
+so-record -m mypackage.mymodule
 
 # Run with environment variables
-ENV_VAR=value ao-record script.py
+ENV_VAR=value so-record script.py
 ```
 
 ### Options
@@ -33,61 +33,57 @@ ENV_VAR=value ao-record script.py
 
 ```bash
 # Run a simple script
-ao-record my_agent.py
+so-record my_agent.py
 
 # Run a module from a package
-ao-record -m agents.research_agent
+so-record -m agents.research_agent
 
 # Run with a custom run name
-ao-record --run-name "experiment-v1" my_agent.py
+so-record --run-name "experiment-v1" my_agent.py
 
 # Pass arguments to your script
-ao-record my_agent.py --model gpt-4 --temperature 0.7
+so-record my_agent.py --model gpt-4 --temperature 0.7
 ```
 
-## ao-server
+## so-server
 
-Manage the AO development server.
+Manage the Sovara development server.
 
 ### Commands
 
 ```bash
 # Start the server
-ao-server start
+so-server start
 
 # Stop the server
-ao-server stop
+so-server stop
 
 # Restart the server (useful after code changes)
-ao-server restart
+so-server restart
 
 # Clear all recorded runs and cached LLM calls
-ao-server clear
+so-server clear
 
 # View server logs
-ao-server logs
-
-# View git versioning logs
-ao-server git-logs
+so-server logs
 
 # Clear all log files
-ao-server clear-logs
+so-server clear-logs
 ```
 
 ### Notes
 
-- The server automatically starts when you run `ao-record` if it's not already running
-- If you make changes to server code, run `ao-server restart` to apply them
-- Log files are stored in `~/.cache/ao/logs/`:
+- The server automatically starts when you run `so-record` if it's not already running
+- If you make changes to server code, run `so-server restart` to apply them
+- Log files are stored in `~/.sovara/logs/`:
   - `main_server.log` - Main server logs
-  - `file_watcher.log` - File watcher / git versioning logs
 
 ### Troubleshooting
 
 Check if the server process is running:
 
 ```bash
-ps aux | grep main_server.py
+ps aux | grep 'so_server\|uvicorn'
 ```
 
 Check which processes are using the server port:
@@ -96,14 +92,14 @@ Check which processes are using the server port:
 lsof -i :5959
 ```
 
-## ao-config
+## so-config
 
-Configure AO settings interactively.
+Configure Sovara settings interactively.
 
 ### Usage
 
 ```bash
-ao-config
+so-config
 ```
 
 This launches an interactive configuration wizard that prompts you for:
@@ -113,25 +109,25 @@ This launches an interactive configuration wizard that prompts you for:
 
 ### When to Use
 
-Run `ao-config` when:
+Run `so-config` when:
 
-- Setting up AO for a new project
+- Setting up Sovara for a new project
 - Changing the project root directory
 - Configuring database settings for caching
 
 !!! tip "Project Root"
-    For some example workflows, you may need to set the project root to the example's directory. Run `ao-config` and set it to the root of the example repo.
+    For some example workflows, you may need to set the project root to the example's directory. Run `so-config` and set it to the root of the example repo.
 
 ## Environment Variables
 
-AO respects the following environment variables:
+Sovara respects the following environment variables:
 
 ### Core Variables
 
 | Variable | Description |
 |----------|-------------|
-| `AO_SESSION_ID` | Current session identifier |
-| `AO_SEED` | Random seed for reproducibility |
+| `SOVARA_SESSION_ID` | Current session identifier |
+| `SOVARA_SEED` | Random seed for reproducibility |
 
 ### Server Configuration
 
@@ -144,12 +140,12 @@ AO respects the following environment variables:
 
 | Variable | Description |
 |----------|-------------|
-| `AO_HOME` | Base directory for AO files (default: `~/.cache/ao`) |
-| `AO_CONFIG` | Path to config file (default: `~/.cache/ao/config.yaml`) |
-| `AO_CACHE` | Cache directory (default: `~/.cache/ao/cache`) |
-| `AO_LOG_DIR` | Log directory (default: `~/.cache/ao/logs`) |
-| `DB_PATH` | Database directory (default: `~/.cache/ao/db`) |
-| `GIT_DIR` | Git versioning directory (default: `~/.cache/ao/git`) |
+| `SOVARA_HOME` | Base directory for Sovara files (default: `~/.sovara`) |
+| `SOVARA_CONFIG` | Path to config file (default: `~/.sovara/config.yaml`) |
+| `SOVARA_CACHE` | Cache directory (default: `~/.cache/.sovara`) |
+| `SOVARA_LOG_DIR` | Log directory (default: `~/.sovara/logs`) |
+| `SOVARA_DB_PATH` | Database directory (default: `~/.sovara/db`) |
+| `SOVARA_GIT_DIR` | Git versioning directory (default: `~/.sovara/git`) |
 
 ## Next Steps
 

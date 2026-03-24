@@ -1,10 +1,10 @@
 # API Patching
 
-AO uses monkey patching to intercept LLM API calls and record their inputs/outputs for building dataflow graphs.
+Sovara uses monkey patching to intercept LLM API calls and record their inputs/outputs for building dataflow graphs.
 
 ## Overview
 
-When you import an LLM SDK (like OpenAI or Anthropic), AO patches the relevant methods to:
+When you import an LLM SDK (like OpenAI or Anthropic), Sovara patches the relevant methods to:
 
 1. Record the call inputs
 2. Execute the original API call
@@ -14,7 +14,7 @@ When you import an LLM SDK (like OpenAI or Anthropic), AO patches the relevant m
 
 ## Supported APIs
 
-AO intercepts LLM calls via HTTP library patches:
+Sovara intercepts LLM calls via HTTP library patches:
 
 | Patch | Covers |
 |-------|--------|
@@ -30,23 +30,23 @@ Patches are applied lazily when you import the relevant module. The `PATCHES` di
 
 ```python
 PATCHES = {
-    "httpx": ("ao.runner.monkey_patching.patches.httpx_patch", "httpx_patch"),
-    "requests": ("ao.runner.monkey_patching.patches.requests_patch", "requests_patch"),
-    "google.genai": ("ao.runner.monkey_patching.patches.genai_patch", "genai_patch"),
-    "mcp": ("ao.runner.monkey_patching.patches.mcp_patches", "mcp_patch"),
+    "httpx": ("sovara.runner.monkey_patching.patches.httpx_patch", "httpx_patch"),
+    "requests": ("sovara.runner.monkey_patching.patches.requests_patch", "requests_patch"),
+    "google.genai": ("sovara.runner.monkey_patching.patches.genai_patch", "genai_patch"),
+    "mcp": ("sovara.runner.monkey_patching.patches.mcp_patches", "mcp_patch"),
     ...
 }
 ```
 
-When you `import httpx`, AO's import hook triggers `httpx_patch()` before returning the module.
+When you `import httpx`, Sovara's import hook triggers `httpx_patch()` before returning the module.
 
 ## Patch Structure
 
 A typical patch follows this pattern (see `httpx_patch.py` for a complete example):
 
 ```python
-from ao.runner.string_matching import find_source_nodes, store_output_strings
-from ao.runner.context_manager import get_session_id
+from sovara.runner.string_matching import find_source_nodes, store_output_strings
+from sovara.runner.context_manager import get_session_id
 
 def patched_function(self, *args, **kwargs):
     api_type = "my_api.method"
@@ -81,7 +81,7 @@ def patched_function(self, *args, **kwargs):
 
 ## Content-Based Edge Detection
 
-AO detects dataflow between LLM calls using content-based matching:
+Sovara detects dataflow between LLM calls using content-based matching:
 
 1. **Store outputs**: When an LLM call completes, all text strings from the response are stored
 2. **Match inputs**: When a new LLM call is made, we check if any stored output strings appear in the input
@@ -102,15 +102,15 @@ client.chat.completions.create(...)
 
 ### Step 2: Create the Patch File
 
-Add a new file in `src/runner/monkey_patching/patches/`:
+Add a new file in `src/sovara/runner/monkey_patching/patches/`:
 
 ```python
-# src/runner/monkey_patching/patches/my_api_patch.py
+# src/sovara/runner/monkey_patching/patches/my_api_patch.py
 
 from functools import wraps
-from ao.runner.monkey_patching.patching_utils import get_input_dict, send_graph_node_and_edges
-from ao.runner.string_matching import find_source_nodes, store_output_strings
-from ao.server.database_manager import DB
+from sovara.runner.monkey_patching.patching_utils import get_input_dict, send_graph_node_and_edges
+from sovara.runner.string_matching import find_source_nodes, store_output_strings
+from sovara.server.database_manager import DB
 
 def patch_my_api_send(original_send):
     @wraps(original_send)
@@ -149,8 +149,8 @@ Add your patch to the `PATCHES` dict in `apply_monkey_patches.py`:
 
 ```python
 PATCHES = {
-    "httpx": ("ao.runner.monkey_patching.patches.httpx_patch", "httpx_patch"),
-    "my_api": ("ao.runner.monkey_patching.patches.my_api_patch", "my_api_patch"),  # Add here
+    "httpx": ("sovara.runner.monkey_patching.patches.httpx_patch", "httpx_patch"),
+    "my_api": ("sovara.runner.monkey_patching.patches.my_api_patch", "my_api_patch"),  # Add here
     ...
 }
 ```
@@ -217,7 +217,7 @@ def patch_method(original):
 Each LLM API has different request/response formats. API parsers extract relevant information:
 
 ```
-src/runner/monkey_patching/api_parsers/
+src/sovara/runner/monkey_patching/api_parsers/
 ├── httpx_api_parser.py    # OpenAI, Anthropic (via httpx)
 ├── requests_api_parser.py # APIs using requests
 ├── genai_api_parser.py    # Google GenAI

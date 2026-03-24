@@ -1,13 +1,13 @@
 #!/bin/bash
-# Start all ao-dev services in development mode.
+# Start all sovara services in development mode.
 # Usage: ./dev.sh
 # Stop:  Ctrl-C (kills all background processes)
 
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-WEB_APP="$ROOT/src/user_interfaces/web_app"
-VSCODE_EXT="$ROOT/src/user_interfaces/vscode_extension"
+WEB_APP="$ROOT/ui/web_app"
+VSCODE_EXT="$ROOT/ui/vscode_extension"
 
 # Trap Ctrl-C to kill all background processes
 cleanup() {
@@ -19,12 +19,12 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "=== ao-dev ==="
+echo "=== sovara ==="
 echo ""
 
 # 1. Python server
-echo "[ao-server]  Starting..."
-uv run ao-server start 2>&1 | sed 's/^/[ao-server]  /' &
+echo "[so-server]  Starting..."
+uv run so-server start 2>&1 | sed 's/^/[so-server]  /' &
 
 # 2. Web app client (Vite dev server)
 echo "[web-client] Starting on :5173..."

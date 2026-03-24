@@ -1,10 +1,10 @@
 # Server
 
-The development server is the core of AO. It receives events from user processes, manages the dataflow graph, and controls the UI. All communication goes: agent_runner <-> server <-> UI.
+The development server is the core of Sovara. It receives events from user processes, manages the dataflow graph, and controls the UI. All communication goes: agent_runner <-> server <-> UI.
 
 ## Overview
 
-The server (`main_server.py`) handles:
+The server (`app.py` plus `state.py`) handles:
 
 - TCP socket communication with runner processes
 - Session and run management
@@ -13,28 +13,20 @@ The server (`main_server.py`) handles:
 - User edit management
 - UI updates
 
-## Server Processes
+## Server Runtime
 
-The server spawns a background process:
-
-### Main Server
-
-Receives all UI and runner messages and forwards them. Core forwarding logic.
-
-### File Watcher
-
-The file watcher handles **git versioning**: On every `ao-record`, it checks if any user files have changed and commits them if so. It adds a version timestamp to the run, so the user knows what version of the code they ran. This git versioner is completely independent of any git operations the user performs. It is saved in `~/.cache/ao/git`. We expect it to commit more frequently than the user, as it commits on any file change once the user runs `ao-record`.
+The `so-server` CLI launches a detached FastAPI server process. Git versioning work is scheduled from `ServerState` in background tasks so each run can be tied to a code snapshot stored under `~/.sovara/git`.
 
 ## Server Commands
 
-The server starts automatically when you run `ao-record` or interact with the UI. It also automatically shuts down after periods of inactivity.
+The server starts automatically when you run `so-record` or interact with the UI. It also automatically shuts down after periods of inactivity.
 
 ```bash
 # Manual server management
-ao-server start
-ao-server stop
-ao-server restart
-ao-server clear    # Clear all cached data and DB
+so-server start
+so-server stop
+so-server restart
+so-server clear    # Clear all cached data and DB
 ```
 
 > **Note:** When you make changes to the server code, you need to restart the server for changes to take effect!
@@ -44,8 +36,8 @@ ao-server clear    # Clear all cached data and DB
 All server logs are written to files (not visible in any terminal). Use these commands to view them:
 
 ```bash
-ao-server logs      # Main server logs
-ao-server git-logs  # Git versioning logs (file_watcher.py)
+so-server logs        # Main server logs
+so-server clear-logs  # Clear the log file before a fresh restart
 ```
 
 ## Debugging the Server
@@ -53,7 +45,7 @@ ao-server git-logs  # Git versioning logs (file_watcher.py)
 Check if the server is running:
 
 ```bash
-ps aux | grep main_server.py
+ps aux | grep 'so_server\|uvicorn'
 ```
 
 Check which processes are using the port:
@@ -70,7 +62,7 @@ The database (SQLite) stores:
 - **User edits** - Input/output modifications
 - **Graph topology** - For reconstructing past runs
 
-See `src/server/database_backends/sqlite.py` for the DB schema.
+See `src/sovara/server/database_backends/sqlite.py` for the DB schema.
 
 ### Key Concepts
 
@@ -115,7 +107,7 @@ This approach runs user code completely unmodified and works with any LLM librar
 
 ## Session Management
 
-Each `ao-record` execution creates a session. Within a session:
+Each `so-record` execution creates a session. Within a session:
 
 - Multiple runs can occur (via subruns or restarts)
 - Each run builds its own dataflow graph
@@ -138,8 +130,8 @@ Runner Process <---> Server <---> UI (VS Code/Web)
 
 When modifying server code:
 
-1. Make your changes to files in `src/server/`
-2. Restart the server: `ao-server restart`
+1. Make your changes to files in `src/sovara/server/`
+2. Restart the server: `so-server restart`
 3. Changes take effect immediately
 
 ## Next Steps

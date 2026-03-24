@@ -13,7 +13,7 @@ import importlib
 
 def _get_all_patch_functions():
     """Dynamically load all patch functions from PATCHES."""
-    from ao.runner.monkey_patching.apply_monkey_patches import PATCHES
+    from sovara.runner.monkey_patching.apply_monkey_patches import PATCHES
 
     patch_functions = []
     for module_prefix, (patch_module, patch_func_name) in PATCHES.items():

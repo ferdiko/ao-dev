@@ -6,7 +6,7 @@ import time
 import subprocess
 import re
 from dataclasses import dataclass
-from ao.server.database_manager import DB
+from sovara.server.database_manager import DB
 
 
 @dataclass
@@ -32,14 +32,14 @@ def print_graph(graph: dict, label: str) -> None:
 
 def _run_script_with_ao_record(script_path: str, env: dict) -> tuple[int, str]:
     """
-    Run a script using ao-record via uv and return (return_code, session_id).
+    Run a script using so-record via uv and return (return_code, session_id).
 
-    Uses `uv run --directory <provider_dir> ao-record <script_name>` to run
+    Uses `uv run --directory <provider_dir> so-record <script_name>` to run
     the script in its provider-specific uv environment.
 
     Parses the session_id from the runner's output.
     """
-    env["AO_NO_DEBUG_MODE"] = "True"
+    env["SOVARA_NO_DEBUG_MODE"] = "True"
     env["PYTHONUNBUFFERED"] = "1"  # Ensure output isn't buffered
 
     # Extract directory and script name for uv run
@@ -47,7 +47,7 @@ def _run_script_with_ao_record(script_path: str, env: dict) -> tuple[int, str]:
     script_name = os.path.basename(script_path)
 
     proc = subprocess.Popen(
-        ["uv", "run", "--directory", script_dir, "ao-record", script_name],
+        ["uv", "run", "--directory", script_dir, "so-record", script_name],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -75,11 +75,11 @@ def _run_script_with_ao_record(script_path: str, env: dict) -> tuple[int, str]:
 
 async def run_test(script_path: str):
     """
-    Run a test script twice using ao-record and return data for caching validation.
+    Run a test script twice using so-record and return data for caching validation.
 
     This function:
     1. Restarts the server for clean state
-    2. Runs the script once via ao-record
+    2. Runs the script once via so-record
     3. Captures LLM calls and graph topology
     4. Runs the script again (should use cached results)
     5. Captures LLM calls and graph again
@@ -88,7 +88,7 @@ async def run_test(script_path: str):
     # Set up environment
     env = os.environ.copy()
     ao_random_seed = random.randint(0, 2**31 - 1)
-    env["AO_SEED"] = str(ao_random_seed)
+    env["SOVARA_SEED"] = str(ao_random_seed)
 
     # First run
     print("\n" + "=" * 60)
@@ -119,7 +119,7 @@ async def run_test(script_path: str):
     print("\n" + "=" * 60)
     print("STARTING SECOND RUN (should use cache)")
     print("=" * 60)
-    env["AO_SESSION_ID"] = session_id
+    env["SOVARA_SESSION_ID"] = session_id
     returncode_rerun, _ = _run_script_with_ao_record(script_path, env)
     assert returncode_rerun == 0, f"Re-run failed with return_code {returncode_rerun}"
 
@@ -153,10 +153,18 @@ def caching_asserts(run_data_obj: RunData):
     # Compare graph topology between runs
     assert len(run_data_obj.graph["nodes"]) == len(
         run_data_obj.new_graph["nodes"]
-    ), f"Number of nodes in graph topology doesn't match after re-run. {len(run_data_obj.graph["nodes"])}; New:{len(run_data_obj.new_graph["nodes"])}"
+    ), (
+        "Number of nodes in graph topology doesn't match after re-run. "
+        f'{len(run_data_obj.graph["nodes"])}; '
+        f'New:{len(run_data_obj.new_graph["nodes"])}'
+    )
     assert len(run_data_obj.graph["edges"]) == len(
         run_data_obj.new_graph["edges"]
-    ), f"Number of edges in graph topology doesn't match after re-run. Original: {len(run_data_obj.graph["edges"])}; New: {len(run_data_obj.new_graph["edges"])}\n\n"
+    ), (
+        "Number of edges in graph topology doesn't match after re-run. "
+        f'Original: {len(run_data_obj.graph["edges"])}; '
+        f'New: {len(run_data_obj.new_graph["edges"])}\n\n'
+    )
 
     # Check that node IDs match between the two graphs
     original_node_ids = {node["id"] for node in run_data_obj.graph["nodes"]}

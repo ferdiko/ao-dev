@@ -5,44 +5,28 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.package-data]
-"ao.assets" = ["SKILL.md"]
+"sovara.assets" = ["SKILL.md"]
 
 [tool.setuptools]
-# Map ao package to src directory with subpackages
-package-dir = {"ao" = "src"}
-packages = [
-    "ao",
-    "ao.assets",
-    "ao.cli",
-    "ao.common",
-    "ao.runner",
-    "ao.runner.monkey_patching",
-    "ao.runner.monkey_patching.api_parsers",
-    "ao.runner.monkey_patching.patches",
-    "ao.server",
-    "ao.server.database_backends",
-    "ao.server.handlers",
-    "ao.server.routes"
-]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["sovara*"]
 
 [project.scripts]
-# Console commands for the ao package
-ao-record = "ao.cli.ao_record:main"
-ao-config = "ao.cli.ao_config:main"
-ao-server = "ao.cli.ao_server:main"
-ao-tool = "ao.cli.ao_tool:main"
-
-# Aliases for quick access
-record = "ao.cli.ao_record:main"
-server = "ao.cli.ao_server:main"
-tool = "ao.cli.ao_tool:main"
+# Console commands for the Sovara package
+so-record = "sovara.cli.so_record:main"
+so-config = "sovara.cli.so_config:main"
+so-server = "sovara.cli.so_server:main"
+so-tool = "sovara.cli.so_tool:main"
 
 [tool.black]
 line-length = 100
 
 [project]
-name = "ao-dev"
-version = "0.1.5"
+name = "sovara"
+version = "0.2.0"
 description = "A development tool for LLM call visualization and debugging"
 readme = "docs/release/PYPI_DESC.md"
 requires-python = ">=3.10"

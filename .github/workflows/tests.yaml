@@ -24,31 +24,31 @@ jobs:
       uses: ./.github/actions/setup-test-environment
 
     - name: Setup isolated test database
-      run: mkdir -p ~/.cache/ao/tests/non-billable
+      run: mkdir -p ~/.cache/sovara/tests/non-billable
 
     - name: Launch main server
       run: |
-        export DB_PATH="$HOME/.cache/ao/tests/non-billable"
+        export SOVARA_DB_PATH="$HOME/.cache/sovara/tests/non-billable"
         export PYTHON_PORT=5959
-        uv run ao-server start
+        uv run so-server start
 
     - name: Run tests
       env:
-        DB_PATH: ~/.cache/ao/tests/non-billable
+        SOVARA_DB_PATH: ~/.cache/sovara/tests/non-billable
         PYTHON_PORT: 5959
       run: |
         uv run pytest -v -s tests/non_billable/
 
     - name: Clean up
       if: always()
-      run: rm -rf ~/.cache/ao/tests/non-billable
+      run: rm -rf ~/.cache/sovara/tests/non-billable
 
   web-app:
     name: Web App
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: src/user_interfaces/web_app
+        working-directory: ui/web_app
 
     steps:
     - uses: actions/checkout@v4
@@ -58,7 +58,7 @@ jobs:
       with:
         node-version: '22'
         cache: npm
-        cache-dependency-path: src/user_interfaces/web_app/package-lock.json
+        cache-dependency-path: ui/web_app/package-lock.json
 
     - name: Install UI workspace dependencies
       run: npm ci

@@ -1,6 +1,6 @@
 # Installation (Development)
 
-This guide covers how to install AO from source for development purposes.
+This guide covers how to install Sovara from source for development purposes.
 
 ## Prerequisites
 
@@ -25,8 +25,8 @@ brew install uv
 ### Clone and Install
 
 ```bash
-git clone https://github.com/ao-agent-ops/ao-dev.git
-cd ao-dev
+git clone https://github.com/SovaraLabs/sovara.git
+cd sovara
 
 # Install with all development dependencies
 uv sync --extra dev --extra docs
@@ -43,10 +43,10 @@ With uv, use `uv run` to execute commands in the project environment:
 
 ```bash
 # Run the server
-uv run ao-server start
+uv run so-server start
 
 # Record a script
-uv run ao-record script.py
+uv run so-record script.py
 
 # Run tests
 uv run pytest
@@ -63,12 +63,12 @@ Traditional installation using conda for environment management and pip for pack
 
 ```bash
 # Create and activate conda environment
-conda create -n ao python=3.13 -y
-conda activate ao
+conda create -n sovara python=3.13 -y
+conda activate sovara
 
 # Clone the repository
-git clone https://github.com/ao-agent-ops/ao-dev.git
-cd ao-dev
+git clone https://github.com/SovaraLabs/sovara.git
+cd sovara
 
 # Install in development mode with all extras
 pip install -e ".[dev,docs]"
@@ -79,13 +79,13 @@ pip install -e ".[dev,docs]"
 With conda, activate the environment first:
 
 ```bash
-conda activate ao
+conda activate sovara
 
 # Run the server
-ao-server start
+so-server start
 
 # Record a script
-ao-record script.py
+so-record script.py
 
 # Run tests
 pytest
@@ -99,7 +99,7 @@ mkdocs serve
 The VS Code extension requires additional setup:
 
 ```bash
-cd src/user_interfaces/vscode_extension
+cd ui/vscode_extension
 
 # Install npm dependencies
 npm install
@@ -119,14 +119,14 @@ After installation, verify everything works:
 
 ```bash
 # Check CLI tools are available
-ao-server --help
-ao-record --help
+so-server --help
+so-record --help
 
 # Start the server
-ao-server start
+so-server start
 
 # Check server logs
-ao-server logs
+so-server logs
 
 # Run a simple test
 uv run pytest tests/non_billable/ -v --tb=short

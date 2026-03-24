@@ -2,9 +2,9 @@
 
 import threading
 import time
-from ao.runner import context_manager
-from ao.runner import string_matching
-from ao.server.database_backends import sqlite
+from sovara.runner import context_manager
+from sovara.runner import string_matching
+from sovara.server.database_backends import sqlite
 
 
 class SlowSet(set):
@@ -133,7 +133,7 @@ class TestOccurrenceCounter:
         Without the occurrence counter, all threads hit offset 0 and get
         the same node_id. With it, each gets a unique offset (0-4).
         """
-        from ao.server.database_manager import DB
+        from sovara.server.database_manager import DB
 
         session_id = "test-occurrence"
         input_hash = "deadbeef"

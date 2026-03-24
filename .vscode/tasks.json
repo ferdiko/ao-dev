@@ -4,7 +4,7 @@
     {
       "label": "build-extension",
       "type": "shell",
-      "command": "bash -l -c 'cd ${workspaceFolder}/src/user_interfaces && npm run build:extension'",
+      "command": "bash -l -c 'cd ${workspaceFolder}/ui && npm run build:extension'",
       "group": {
         "kind": "build",
         "isDefault": true
@@ -17,12 +17,12 @@
     {
       "label": "npm: watch",
       "type": "shell",
-      "command": "cd ${workspaceFolder}/src/user_interfaces/vscode_extension && npm run watch",
+      "command": "cd ${workspaceFolder}/ui/vscode_extension && npm run watch",
       "isBackground": true,
       "problemMatcher": {
         "owner": "webpack",
         "source": "webpack",
-        "fileLocation": ["relative", "${workspaceFolder}/src/user_interfaces/vscode_extension"],
+        "fileLocation": ["relative", "${workspaceFolder}/ui/vscode_extension"],
         "pattern": {
           "regexp": ".*",
           "file": 1,

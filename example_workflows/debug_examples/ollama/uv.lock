@@ -35,7 +35,7 @@ wheels = [
 ]
 
 [[package]]
-name = "ao-dev"
+name = "sovara"
 version = "0.0.3"
 source = { editable = "../../../" }
 dependencies = [
@@ -86,17 +86,17 @@ requires-dist = [
 provides-extras = ["dev", "examples", "docs"]
 
 [[package]]
-name = "ao-examples-ollama"
+name = "sovara-examples-ollama"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "ao-dev" },
+    { name = "sovara" },
     { name = "ollama" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "ao-dev", editable = "../../../" },
+    { name = "sovara", editable = "../../../" },
     { name = "ollama" },
 ]
 

@@ -20,7 +20,7 @@ Usage:
     ollama pull llama3.2:1b
 
     # Run this example
-    ao-record ./example_workflows/debug_examples/ollama_native_debate.py
+    so-record ./example_workflows/debug_examples/ollama_native_debate.py
 """
 
 import ollama

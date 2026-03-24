@@ -1,6 +1,6 @@
 # Quickstart
 
-This guide will get you up and running with AO in a few minutes.
+This guide will get you up and running with Sovara in a few minutes.
 
 ## Step 1: Create an Example Project
 
@@ -43,30 +43,30 @@ python openai_example.py
 
 The output should be `87` (42 + 1 = 43, 42 + 2 = 44, 43 + 44 = 87).
 
-## Step 2: Configure AO
+## Step 2: Configure Sovara
 
-Run `ao-config` and set the project root to your `my-agent` folder:
+Run `so-config` and set the project root to your `my-agent` folder:
 
 ```bash
-ao-config
+so-config
 ```
 
 ## Step 3: Start the Server
 
-Start the AO server:
+Start the Sovara server:
 
 ```bash
-ao-server start
+so-server start
 ```
 
-## Step 4: Run with AO
+## Step 4: Run with Sovara
 
-Install the [AO VS Code Extension](https://marketplace.visualstudio.com/items?itemName=agentops.ao-agent-dev) from the VS Code marketplace.
+Install the [Sovara VS Code Extension](https://marketplace.visualstudio.com/items?itemName=SovaraLabs.sovara) from the VS Code marketplace.
 
-Open your `my-agent` folder in VS Code, then run the example with AO in the terminal:
+Open your `my-agent` folder in VS Code, then run the example with Sovara in the terminal:
 
 ```bash
-ao-record openai_example.py
+so-record openai_example.py
 ```
 
 The VS Code extension will display the dataflow graph showing how data flows between the LLM calls.

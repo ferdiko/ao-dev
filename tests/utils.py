@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from ao.server.database_manager import DB
+from sovara.server.database_manager import DB
 
 
 def cleanup_test_db():
@@ -9,8 +9,8 @@ def cleanup_test_db():
     DB.execute("DELETE FROM attachments")
 
     # Clean up environment variables
-    if "AO_SESSION_ID" in os.environ:
-        del os.environ["AO_SESSION_ID"]
+    if "SOVARA_SESSION_ID" in os.environ:
+        del os.environ["SOVARA_SESSION_ID"]
 
 
 def restart_server():
@@ -18,7 +18,7 @@ def restart_server():
     import subprocess
     import time
 
-    subprocess.run(["ao-server", "restart"], check=False)
+    subprocess.run(["so-server", "restart"], check=False)
     time.sleep(1)
 
 

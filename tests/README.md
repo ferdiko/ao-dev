@@ -47,5 +47,5 @@ This ensures billable tests can only be run with explicit admin approval.
 
 ### test_api_calls.py
 
-For `test_api_calls.py`, the user progam is executed as a replay by the server. So you need to run `ao-server logs` to see the output of the user program (e.g., how it crashed).
+For `test_api_calls.py`, the user progam is executed as a replay by the server. So you need to run `so-server logs` to see the output of the user program (e.g., how it crashed).
 

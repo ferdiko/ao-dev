@@ -6,7 +6,7 @@ client before.
 
 import asyncio
 from openai import OpenAI  # TODO: AsyncOpenAI
-from ao.runner.context_manager import ao_launch
+from sovara.runner.context_manager import sovara_launch
 
 client = OpenAI()
 model = "gpt-3.5-turbo"
@@ -37,7 +37,7 @@ async def async_eval_sample(prompt):
 async def run_single_async_eval(prompt):
     """Run a single evaluation in its own context"""
     country = prompt.split(" ")[-1][:-1]
-    with ao_launch(run_name=country):
+    with sovara_launch(run_name=country):
         return await async_eval_sample(prompt)
 
 
