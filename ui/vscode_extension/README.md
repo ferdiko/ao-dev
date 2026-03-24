@@ -32,7 +32,7 @@ Sovara turns recorded runs into an interactive graph inside the editor so you ca
 3. Record a run:
 
    ```bash
-   so-record python your_script.py
+   so-record your_script.py
    ```
 
 4. Open the Sovara icon in the Activity Bar and select a run.
