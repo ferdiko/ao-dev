@@ -103,36 +103,102 @@ Our CI test suit comprises of ["non_billable"](/tests/non_billable) and ["billab
 
 ## Releasing
 
-### pip package
+### PyPI package
 
-1. ‼️ Check `pyproject.toml`: Check version number, package name, dependencies and anything else that's relevant.
-2. ‼️ Check the PyPi description at [/docs/release/PYPI_DESC.md](/docs/release/PYPI_DESC.md).
-3. ‼️ Set the `logger` level (not `server_logger`) to `CRITICAL` [here](/src/common/logger.py). The server_logger can stay at `DEBUG`.
-4. Install `pip install build twine` if you haven't already.
-5. Run `python -m build` in root dir. This wil create a `dist/` dir.
-6. Test install locally: `pip install dist/ao_dev-0.0.5-py3-none-any.whl` (you need to check the name of the `.whl` file).
-7. Do a test upload, it's worth it:
-   1. Publish to TestPyPI first: `python -m twine upload --repository testpypi dist/*`. Then try to install from TestPyPi. Ask Ferdi if you don't have the key to our TestPyPI account.
-   2. When installing from TestPyPI, do the following (just swap out the package name at the end of the command): `pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ ao-dev==0.0.1`
-8. Upload to PyPI: `python -m twine upload dist/*`. Ask Ferdi if you don't have the key to our PyPI account.
-9. Make a release on github: This is just to keep track of things, no need to put any description. Just go to "Releases" and do "Draft new release".
+Use `uv` as the default workflow. The equivalent `pip` / `python -m ...` commands are included below for reference.
+
+1. ‼️ Check `pyproject.toml`: confirm version number, package name, dependencies, and anything else that is relevant.
+2. Export the package version into your shell so the later commands can reuse it:
+
+```bash
+# run from ao-dev/
+export VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)"
+```
+
+3. ‼️ Check the PyPI description at [/docs/release/PYPI_DESC.md](/docs/release/PYPI_DESC.md).
+4. ‼️ Set the `logger` level (not `server_logger`) to `CRITICAL` [here](/src/common/logger.py). The `server_logger` can stay at `DEBUG`.
+5. Install build/upload tooling if needed.
+
+```bash
+# uv way
+uv tool install twine
+
+# pip way
+pip install build twine
+```
+
+6. Build the package in the repo root. This creates `dist/`.
+
+```bash
+# uv way
+uv build
+
+# pip way
+python -m build
+```
+
+7. Test-install the built wheel locally into a clean test venv. The wheel should match `dist/ao_dev-${VERSION}-*.whl`.
+
+```bash
+# uv way
+uv venv .venv-test
+uv pip install --python .venv-test/bin/python dist/ao_dev-${VERSION}-*.whl
+
+# pip way
+python -m venv .venv-test
+.venv-test/bin/pip install dist/ao_dev-${VERSION}-*.whl
+```
+
+8. Test the installed package by recording the OpenAI debate example. This validates that the installed wheel works, not just the local source tree.
+
+```bash
+OPENAI_API_KEY=... uv run --no-project --python .venv-test/bin/python --with openai -m ao.cli.ao_tool record --run-name "OAI-debate-run-1" --timeout 60 example_workflows/debug_examples/openai/debate.py
+```
+
+9. Do a test upload first.
+
+```bash
+# uv way
+uvx twine upload --repository testpypi dist/ao_dev-${VERSION}*
+
+# pip way
+python -m twine upload --repository testpypi dist/ao_dev-${VERSION}*
+```
+
+10. Verify install from TestPyPI.
+
+```bash
+# uv way
+uv pip install --python .venv-test/bin/python --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ ao-dev==$VERSION
+
+# pip way
+.venv-test/bin/pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ ao-dev==$VERSION
+```
+
+11. Upload to PyPI.
+
+```bash
+# uv way
+uvx twine upload dist/ao_dev-${VERSION}*
+
+# pip way
+python -m twine upload dist/ao_dev-${VERSION}*
+```
+
+12. Make a release on GitHub. This is just to keep track of things; no description is needed. Go to "Releases" and do "Draft new release".
 
 
 ### VS Code extension
 
-- You can change developer settings and look at statistics at https://marketplace.visualstudio.com/manage/. Ask Ferdi if you need a log in.
+- You can change developer settings and look at statistics at https://marketplace.visualstudio.com/manage/.
 
 1. ‼️ Look at `src/user_interfaces/vscode_extension/package.json`. Make sure name, description, version, etc. are what you want. (Don't worry about "icon", see below)
 2. ‼️ Look at the marketplace description at [/docs/release/VSIX_DESC.md](/docs/release/VSIX_DESC.md). Also look at the icon at [/docs/release/marketplace_icon.png](/docs/release/marketplace_icon.png)
-3. Install `npm install -g @vscode/vsce` if you haven't already.
+3. Install `@vscode/vsce` globally if you haven't already. You can run this from any directory:
+   `npm install -g @vscode/vsce`
 4. Create VSIX package: `cd src/user_interfaces/vscode_extension` and run `./build-vsix.sh`.
 5. Try to install the VSIX locally to see if it works: Go to the marketplace, click the three dots at the top right of the panel, click "Install from VSIX...".
-6. Publish to store: Upload via https://marketplace.visualstudio.com/manage/. Ask Ferdi for log-in if you don't have it.
-
-### Hosted web app
-
-> [!NOTE]  
-> We stopped hosting the web app.
+6. Publish to store: Upload via https://marketplace.visualstudio.com/manage/.
 
 ## Further resources
 

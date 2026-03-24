@@ -32,8 +32,8 @@ cp -r src/webview/templates "$TEMP_DIR/extension/src/webview/"
 
 # Copy codicons to dist/ (vsce excludes node_modules, so we put them in dist/)
 mkdir -p "$TEMP_DIR/extension/dist/codicons"
-cp ../node_modules/@vscode/codicons/dist/codicon.css "$TEMP_DIR/extension/dist/codicons/"
-cp ../node_modules/@vscode/codicons/dist/codicon.ttf "$TEMP_DIR/extension/dist/codicons/"
+cp node_modules/@vscode/codicons/dist/codicon.css "$TEMP_DIR/extension/dist/codicons/"
+cp node_modules/@vscode/codicons/dist/codicon.ttf "$TEMP_DIR/extension/dist/codicons/"
 
 # Copy package.json and remove prepublish script (we already built)
 python3 << EOF
@@ -62,7 +62,11 @@ EOF
 # Step 5: Run vsce package from temp directory (skip prepublish since we already built)
 echo "Creating VSIX package..."
 cd "$TEMP_DIR/extension"
-npx vsce package --no-dependencies --allow-star-activation
+if ! command -v vsce >/dev/null 2>&1; then
+    echo "ERROR: 'vsce' is not installed. Run 'npm install -g @vscode/vsce' from any directory and try again."
+    exit 1
+fi
+vsce package --no-dependencies --allow-star-activation
 
 # Step 6: Move the .vsix back to original directory
 VSIX_FILE=$(ls *.vsix 2>/dev/null | head -1)

@@ -18,7 +18,8 @@ const extensionConfig = {
   },
   resolve: {
     extensions: ['.ts', '.js'],
-    mainFields: ['module', 'main']
+    mainFields: ['module', 'main'],
+    modules: [path.resolve(__dirname, 'node_modules'), 'node_modules']
   },
   module: {
     rules: [
@@ -53,6 +54,7 @@ const webviewConfig = {
   resolve: {
     extensions: ['.ts', '.tsx', '.js', '.jsx'],
     mainFields: ['browser', 'module', 'main'],
+    modules: [path.resolve(__dirname, 'node_modules'), 'node_modules'],
     fallback: {
       "path": false,
       "fs": false
@@ -98,12 +100,12 @@ const webviewConfig = {
       'process.versions': JSON.stringify(process.versions),
       'process.type': JSON.stringify(process.type),
       'process.arch': JSON.stringify(process.arch),
-      'process.env.NODE_ENV': JSON.stringify('development')
+      'process.env.NODE_ENV': JSON.stringify('production')
     }),
     new CopyPlugin({
       patterns: [
-        { from: '../node_modules/@vscode/codicons/dist/codicon.css', to: 'codicons/' },
-        { from: '../node_modules/@vscode/codicons/dist/codicon.ttf', to: 'codicons/' },
+        { from: path.resolve(__dirname, 'node_modules/@vscode/codicons/dist/codicon.css'), to: 'codicons/' },
+        { from: path.resolve(__dirname, 'node_modules/@vscode/codicons/dist/codicon.ttf'), to: 'codicons/' },
         { from: 'icon.png', to: 'icon.png' }
       ]
     })
