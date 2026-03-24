@@ -3,11 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "description": "UI workspace for the Sovara VS Code extension and web app",
-  "workspaces": [
-    "shared_components",
-    "vscode_extension",
-    "web_app"
-  ],
   "scripts": {
     "install:all": "npm --prefix vscode_extension install && npm --prefix web_app install",
     "build:all": "npm run build:extension && npm run build:webapp",
