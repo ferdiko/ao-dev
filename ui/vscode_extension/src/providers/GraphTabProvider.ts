@@ -829,7 +829,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         const { data, fileType, documentKey } = payload;
 
         // Whitelist of file types we'll open with system default app
-        const openableTypes = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'docx', 'xlsx'];
+        const openableTypes = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'docx', 'xlsx', 'pptx'];
         const shouldOpen = openableTypes.includes(fileType);
 
         try {

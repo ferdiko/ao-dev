@@ -1,0 +1,6 @@
+<panel title="Synthetic Fixture">
+  <section kind="attachments">
+    <item mime="application/pdf">example.pdf</item>
+    <item mime="image/png">example.png</item>
+  </section>
+</panel>

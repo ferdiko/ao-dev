@@ -1,10 +1,17 @@
 import { useState, useCallback, useMemo, useRef } from "react";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { AttachmentStrip } from "./AttachmentPreview";
 import { extractAttachments } from "../attachmentUtils";
-import { Sparkles, Pencil, Loader2, Copy } from "lucide-react";
+import { Sparkles, Pencil, Loader2, Copy, ChevronDown, ChevronRight, Braces } from "lucide-react";
+import {
+  detectDocument,
+  formatFileSize,
+  getFileExtension,
+  type DetectedDocument,
+} from "@sovara/shared-components/utils/documentDetection";
 import type { EditKey, GraphEdge, GraphNode } from "../hooks/useRunSessionState";
 
 function topoSortNodes(graphNodes: GraphNode[], graphEdges: GraphEdge[]): GraphNode[] {
@@ -36,43 +43,23 @@ function topoSortNodes(graphNodes: GraphNode[], graphEdges: GraphEdge[]): GraphN
 }
 
 const syntaxTheme: Record<string, React.CSSProperties> = {
-  'code[class*="language-"]': { color: "#2c2c2c", fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace', fontSize: "12.5px", lineHeight: "1.6" },
-  'pre[class*="language-"]': { background: "transparent", margin: 0, padding: 0, overflow: "auto" },
-  comment: { color: "#8a8a7e" },
-  string: { color: "#43884e" },
-  number: { color: "#b45309" },
-  boolean: { color: "#b45309" },
-  keyword: { color: "#7c3aed" },
-  punctuation: { color: "#8a8a7e" },
-  property: { color: "#5a5a52" },
-  operator: { color: "#8a8a7e" },
-  "attr-name": { color: "#5a5a52" },
-  function: { color: "#6f42c1" },
-  builtin: { color: "#6f42c1" },
-  "class-name": { color: "#b45309" },
+  ...oneLight,
+  'pre[class*="language-"]': {
+    ...(oneLight['pre[class*="language-"]'] || {}),
+    background: "transparent",
+    margin: 0,
+    padding: 0,
+    textShadow: "none",
+  },
+  'code[class*="language-"]': {
+    ...(oneLight['code[class*="language-"]'] || {}),
+    background: "transparent",
+    fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+    fontSize: "12.5px",
+    lineHeight: "1.6",
+    textShadow: "none",
+  },
 };
-
-const LANG_PATTERNS: [RegExp, string][] = [
-  [/^\s*SELECT\b|^\s*INSERT\b|^\s*UPDATE\b|^\s*DELETE\b|^\s*CREATE\b|^\s*ALTER\b|^\s*DROP\b|^\s*WITH\b.*\bAS\b/im, "sql"],
-  [/^\s*\{[\s\S]*"[^"]+"\s*:/m, "json"],
-  [/^\s*\[[\s\S]*\{[\s\S]*"[^"]+"\s*:/m, "json"],
-  [/^\s*(def |import |from |class \w+[:(]|if __name__)/m, "python"],
-  [/^\s*(fn |let mut |use |pub |impl |struct |enum .*\{|mod )/m, "rust"],
-  [/^\s*(const |let |var |function |import .* from |export |=>\s*\{)/m, "javascript"],
-  [/^\s*(interface |type \w+ =|:\s*(string|number|boolean))/m, "typescript"],
-  [/^\s*(package |func |import \(|fmt\.|go\s+\w+)/m, "go"],
-  [/^\s*<[a-zA-Z][\s\S]*>/m, "html"],
-  [/^\s*(#!\s*\/|^\s*\$\s+\w|^\s*(echo|curl|grep|awk|sed|cat|ls|cd|mkdir)\b)/m, "bash"],
-];
-
-function detectLanguage(text: string): string | null {
-  const trimmed = text.trim();
-  if (!trimmed || trimmed.length < 8) return null;
-  for (const [pattern, lang] of LANG_PATTERNS) {
-    if (pattern.test(trimmed)) return lang;
-  }
-  return null;
-}
 
 const LANG_DISPLAY: Record<string, string> = {
   sql: "SQL",
@@ -81,13 +68,241 @@ const LANG_DISPLAY: Record<string, string> = {
   rust: "Rust",
   javascript: "JavaScript",
   typescript: "TypeScript",
+  tsx: "TSX",
   go: "Go",
   html: "HTML",
   bash: "Bash",
   css: "CSS",
   yaml: "YAML",
   xml: "XML",
+  text: "Text",
 };
+
+const MAX_PRETTY_DEPTH = 4;
+const FENCED_CODE_RE = /^```([a-zA-Z0-9_+-]+)?\n([\s\S]*?)\n```$/;
+const XML_RE = /^<([A-Za-z_][\w:.-]*)(\s+[^<>]*)?>[\s\S]*<\/\1>$|^<([A-Za-z_][\w:.-]*)(\s+[^<>]*)?\/>$/;
+const STRONG_MARKDOWN_PATTERNS = [
+  /^#{1,6}\s/m,
+  /^[-*+]\s/m,
+  /^\d+\.\s/m,
+  /^>\s/m,
+  /\|.+\|/,
+  /\[[^\]]+\]\([^)]+\)/,
+  /```[\s\S]*```/,
+];
+
+type StringClassification =
+  | { kind: "json"; parsed: unknown; label: "json object" | "json list" }
+  | { kind: "markdown" }
+  | { kind: "code"; language: string; fenced: boolean }
+  | { kind: "xml" }
+  | { kind: "plain" };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isScalarValue(value: unknown): boolean {
+  return value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
+function getScalarTypeLabel(value: unknown): "null" | "string" | "int" | "float" | "boolean" {
+  if (value === null) return "null";
+  if (typeof value === "string") return "string";
+  if (typeof value === "boolean") return "boolean";
+  if (typeof value === "number") return Number.isInteger(value) ? "int" : "float";
+  return "string";
+}
+
+function normalizeLanguage(language: string | undefined): string | null {
+  if (!language) return null;
+  const normalized = language.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "js") return "javascript";
+  if (normalized === "ts") return "typescript";
+  return normalized;
+}
+
+function looksLikeXml(value: string): boolean {
+  return XML_RE.test(value);
+}
+
+function looksLikeMarkdown(value: string): boolean {
+  if (STRONG_MARKDOWN_PATTERNS.some((pattern) => pattern.test(value))) {
+    return true;
+  }
+
+  const inlineCodeMatches = value.match(/`[^`\n]+`/g) || [];
+  return inlineCodeMatches.length >= 2 && value.includes("\n");
+}
+
+function inferCodeLanguage(value: string): string {
+  const trimmed = value.trim();
+
+  if (/^\s*SELECT\b[\s\S]*\bFROM\b/i.test(trimmed) || /\bGROUP BY\b/i.test(trimmed)) {
+    return "sql";
+  }
+
+  if (/^\s*(def |from |import )/m.test(trimmed) || /\blambda\b/.test(trimmed)) {
+    return "python";
+  }
+
+  if (/^\s*package\s+\w+/m.test(trimmed) && /\bfunc\s+\w+\(/.test(trimmed)) {
+    return "go";
+  }
+
+  if (/^\s*#\!\/bin\/(ba)?sh/m.test(trimmed) || /(^|\n)\s*(echo|export|cd|grep|uv|python3?)\b/.test(trimmed)) {
+    return "bash";
+  }
+
+  if (/<[A-Za-z]/.test(trimmed) && /\{[^}]*[:=][^}]*\}/.test(trimmed)) {
+    return "tsx";
+  }
+
+  if (/\binterface\s+\w+/.test(trimmed) || /\btype\s+\w+\s*=/.test(trimmed) || /\bexport\s+function\b/.test(trimmed)) {
+    return "typescript";
+  }
+
+  if (/\bfunction\b/.test(trimmed) || /\bconsole\./.test(trimmed) || /=>/.test(trimmed)) {
+    return "javascript";
+  }
+
+  if (looksLikeXml(trimmed)) {
+    return "xml";
+  }
+
+  return "text";
+}
+
+function inferUnfencedCodeLanguage(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed.includes("\n") && trimmed.length < 24) {
+    return null;
+  }
+
+  const language = inferCodeLanguage(trimmed);
+  if (language === "text") {
+    return null;
+  }
+
+  const looksCodeLike =
+    /[{}();=]/.test(trimmed) ||
+    /\b(function|class|def|import|export|return|SELECT|FROM|WHERE|package|func)\b/.test(trimmed);
+
+  return looksCodeLike ? language : null;
+}
+
+function classifyStringContent(value: string): StringClassification {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { kind: "plain" };
+  }
+
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (Array.isArray(parsed)) {
+        return { kind: "json", parsed, label: "json list" };
+      }
+      if (isRecord(parsed)) {
+        return { kind: "json", parsed, label: "json object" };
+      }
+    } catch {
+      // Fall through to the next classifier.
+    }
+  }
+
+  const fenced = trimmed.match(FENCED_CODE_RE);
+  if (fenced) {
+    return {
+      kind: "code",
+      language: normalizeLanguage(fenced[1]) || inferCodeLanguage(fenced[2]),
+      fenced: true,
+    };
+  }
+
+  if (looksLikeXml(trimmed)) {
+    return { kind: "xml" };
+  }
+
+  if (looksLikeMarkdown(value)) {
+    return { kind: "markdown" };
+  }
+
+  const inferredLanguage = inferUnfencedCodeLanguage(value);
+  if (inferredLanguage) {
+    return { kind: "code", language: inferredLanguage, fenced: false };
+  }
+
+  return { kind: "plain" };
+}
+
+function unwrapFencedCode(value: string): { language: string; code: string } | null {
+  const match = value.trim().match(FENCED_CODE_RE);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    language: normalizeLanguage(match[1]) || inferCodeLanguage(match[2]),
+    code: match[2],
+  };
+}
+
+function shouldCollapseLongText(value: string): boolean {
+  return value.length > 360 || value.split("\n").length > 10;
+}
+
+function getStringPreview(value: string, maxLength = 180): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength).trimEnd()}…`;
+}
+
+function getUniformObjectArrayColumns(value: unknown[]): string[] | null {
+  if (value.length === 0 || !value.every((item) => isRecord(item))) {
+    return null;
+  }
+
+  const firstColumns = Object.keys(value[0] as Record<string, unknown>);
+  if (firstColumns.length === 0 || firstColumns.length > 8) {
+    return null;
+  }
+
+  const signature = firstColumns.join("\u0000");
+  for (const item of value as Record<string, unknown>[]) {
+    if (Object.keys(item).join("\u0000") !== signature) {
+      return null;
+    }
+    for (const key of firstColumns) {
+      const cell = item[key];
+      if (!isScalarValue(cell)) {
+        return null;
+      }
+
+      if (typeof cell === "string") {
+        if (detectDocument(cell, item) || shouldCollapseLongText(cell)) {
+          return null;
+        }
+
+        if (classifyStringContent(cell).kind !== "plain") {
+          return null;
+        }
+      }
+    }
+  }
+
+  return firstColumns;
+}
+
+function stringifyScalar(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
+}
 
 function CodeBlock({ code, language }: { code: string; language: string }) {
   const [copied, setCopied] = useState(false);
@@ -110,7 +325,16 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
       <SyntaxHighlighter
         language={language}
         style={syntaxTheme}
-        customStyle={{ background: "transparent", padding: "12px 14px", margin: 0, fontSize: "12.5px" }}
+        customStyle={{
+          margin: 0,
+          padding: "12px 14px",
+          borderRadius: 0,
+          background: "transparent",
+          fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+          fontSize: "12.5px",
+          lineHeight: "1.6",
+        }}
+        codeTagProps={{ style: { background: "transparent" } }}
         wrapLongLines
       >
         {code}
@@ -119,75 +343,354 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
   );
 }
 
-type PrettyBlock =
-  | { type: "label"; label: string }
-  | { type: "markdown"; content: string }
-  | { type: "code"; code: string; language: string }
-  | { type: "separator" };
-
-function addContentBlocks(content: string, blocks: PrettyBlock[]) {
-  const parts = content.split(/(```\w*\n[\s\S]*?```)/g);
-  for (const part of parts) {
-    const fenceMatch = part.match(/^```(\w*)\n([\s\S]*?)```$/);
-    if (fenceMatch) {
-      const lang = fenceMatch[1] || detectLanguage(fenceMatch[2]) || "text";
-      blocks.push({ type: "code", code: fenceMatch[2].replace(/\n$/, ""), language: lang });
-    } else if (part.trim()) {
-      const detected = detectLanguage(part.trim());
-      if (detected) {
-        blocks.push({ type: "code", code: part.trim(), language: detected });
-      } else {
-        blocks.push({ type: "markdown", content: part });
-      }
-    }
-  }
+function PrettyBadge({ label }: { label: string }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "1px 6px",
+        borderRadius: "999px",
+        background: "rgba(138, 138, 126, 0.06)",
+        border: "1px solid rgba(138, 138, 126, 0.14)",
+        fontSize: "9.5px",
+        fontWeight: 500,
+        color: "var(--color-text-muted)",
+      }}
+    >
+      {label}
+    </span>
+  );
 }
 
-function extractPrettyBlocks(data: Record<string, unknown>): PrettyBlock[] {
-  const blocks: PrettyBlock[] = [];
+function RawToggleIconButton({
+  showingRaw,
+  onClick,
+}: {
+  showingRaw: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={showingRaw ? "Show rendered" : "Show raw"}
+      aria-label={showingRaw ? "Show rendered" : "Show raw"}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "20px",
+        height: "20px",
+        borderRadius: "999px",
+        border: showingRaw ? "1px solid rgba(67, 136, 78, 0.24)" : "1px solid rgba(138, 138, 126, 0.14)",
+        background: showingRaw ? "rgba(67, 136, 78, 0.08)" : "rgba(138, 138, 126, 0.04)",
+        color: showingRaw ? "#43884e" : "var(--color-text-muted)",
+        cursor: "pointer",
+        padding: 0,
+      }}
+    >
+      <Braces size={12} />
+    </button>
+  );
+}
 
-  const messages = data.messages as Array<{ role: string; content: string | Array<{ type: string; text?: string }> }> | undefined;
-  if (messages) {
-    messages.forEach((message, index) => {
-      if (index > 0) blocks.push({ type: "separator" });
-      blocks.push({ type: "label", label: message.role });
-      if (typeof message.content === "string") {
-        addContentBlocks(message.content, blocks);
-      } else if (Array.isArray(message.content)) {
-        for (const part of message.content) {
-          if (part.type === "text" && part.text) addContentBlocks(part.text, blocks);
-        }
-      }
-    });
-    return blocks;
+function ChevronToggleButton({
+  expanded,
+  onClick,
+  title,
+}: {
+  expanded: boolean;
+  onClick: () => void;
+  title: string;
+}) {
+  const Icon = expanded ? ChevronDown : ChevronRight;
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "20px",
+        height: "20px",
+        borderRadius: "999px",
+        border: "1px solid rgba(138, 138, 126, 0.14)",
+        background: "rgba(138, 138, 126, 0.04)",
+        color: "var(--color-text-muted)",
+        cursor: "pointer",
+        padding: 0,
+      }}
+    >
+      <Icon size={13} />
+    </button>
+  );
+}
+
+function PrettyCard({
+  label,
+  badge,
+  actions,
+  depth,
+  compact = false,
+  children,
+}: {
+  label: string | null;
+  badge?: string;
+  actions?: React.ReactNode;
+  depth: number;
+  compact?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ marginBottom: "10px", marginLeft: depth > 0 ? "12px" : 0 }}>
+      {(label || badge || actions) && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "8px",
+            marginBottom: "6px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+            {label && (
+              <span
+                style={{
+                  color: "var(--color-text)",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {label}
+              </span>
+            )}
+            {badge && <PrettyBadge label={badge} />}
+          </div>
+          {actions}
+        </div>
+      )}
+      <div
+        style={{
+          border: "1px solid var(--color-border)",
+          borderRadius: "10px",
+          background: "rgba(255,255,255,0.42)",
+          padding: compact ? "8px 10px" : "12px",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function CompactScalarValue({
+  value,
+}: {
+  value: unknown;
+}) {
+  const scalarText = stringifyScalar(value);
+  const color =
+    value === null
+      ? "#8a8a7e"
+      : typeof value === "boolean"
+        ? "#b45309"
+        : typeof value === "number"
+          ? "#b45309"
+          : "#43884e";
+
+  return (
+    <div
+      style={{
+        minWidth: 0,
+        fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+        fontSize: "12.5px",
+        lineHeight: "1.5",
+        color,
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+      }}
+    >
+      {scalarText}
+    </div>
+  );
+}
+
+function ScalarBox({ label, value, depth }: { label: string | null; value: unknown; depth: number }) {
+  return (
+    <PrettyCard label={label} badge={getScalarTypeLabel(value)} depth={depth} compact>
+      <CompactScalarValue value={value} />
+    </PrettyCard>
+  );
+}
+
+function isInlineSimpleValue(value: unknown, siblingData?: Record<string, unknown>): boolean {
+  if (value === null || typeof value === "number" || typeof value === "boolean") {
+    return true;
   }
 
-  const choices = data.choices as Array<{ message: { role: string; content: string } }> | undefined;
-  if (choices) {
-    choices.forEach((choice, index) => {
-      if (index > 0) blocks.push({ type: "separator" });
-      if (choice.message?.role) blocks.push({ type: "label", label: choice.message.role });
-      if (choice.message?.content) addContentBlocks(choice.message.content, blocks);
-    });
-    return blocks;
+  if (typeof value !== "string") {
+    return false;
   }
 
-  const entries = Object.entries(data);
-  if (entries.length > 0 && entries.every(([key]) => typeof key === "string")) {
-    for (const [key, value] of entries) {
-      if (value === null || value === undefined) continue;
-      blocks.push({ type: "label", label: key });
-      if (typeof value === "string") {
-        addContentBlocks(value, blocks);
-      } else {
-        blocks.push({ type: "code", code: JSON.stringify(value, null, 2), language: "json" });
-      }
-    }
-    if (blocks.length > 0) return blocks;
+  if (detectDocument(value, siblingData)) {
+    return false;
   }
 
-  blocks.push({ type: "code", code: JSON.stringify(data, null, 2), language: "json" });
-  return blocks;
+  if (shouldCollapseLongText(value)) {
+    return false;
+  }
+
+  return classifyStringContent(value).kind === "plain";
+}
+
+function InlineValueRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: unknown;
+}) {
+  const isString = typeof value === "string";
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        padding: "8px 10px",
+        borderRadius: "8px",
+        border: "1px solid rgba(138, 138, 126, 0.14)",
+        background: "rgba(255,255,255,0.26)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: "140px", maxWidth: "240px" }}>
+        <span
+          style={{
+            color: "var(--color-text)",
+            fontSize: "13px",
+            fontWeight: 600,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </span>
+        <PrettyBadge label={getScalarTypeLabel(value)} />
+      </div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        {isString ? (
+          <div
+            style={{
+              fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+              fontSize: "12.5px",
+              lineHeight: "1.5",
+              color: "#43884e",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {value}
+          </div>
+        ) : (
+          <CompactScalarValue value={value} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ArrayIndexLabel({ index }: { index: number }) {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        minWidth: "16px",
+        fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+        fontSize: "11px",
+        lineHeight: 1,
+        color: "var(--color-text-muted)",
+        opacity: 0.7,
+        textAlign: "right",
+      }}
+    >
+      {index}
+    </span>
+  );
+}
+
+function ArrayItemBox({
+  index,
+  children,
+}: {
+  index: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(138, 138, 126, 0.14)",
+        borderRadius: "8px",
+        background: "rgba(255,255,255,0.26)",
+        padding: "8px 10px",
+      }}
+    >
+      <div style={{ marginBottom: "6px" }}>
+        <ArrayIndexLabel index={index} />
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function InlineArrayItemRow({
+  index,
+  value,
+}: {
+  index: number;
+  value: unknown;
+}) {
+  const isString = typeof value === "string";
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        padding: "8px 10px",
+        borderRadius: "8px",
+        border: "1px solid rgba(138, 138, 126, 0.14)",
+        background: "rgba(255,255,255,0.26)",
+      }}
+    >
+      <ArrayIndexLabel index={index} />
+      <div style={{ minWidth: 0, flex: 1 }}>
+        {isString ? (
+          <div
+            style={{
+              fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+              fontSize: "12.5px",
+              lineHeight: "1.5",
+              color: "#43884e",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {value}
+          </div>
+        ) : (
+          <CompactScalarValue value={value} />
+        )}
+      </div>
+    </div>
+  );
 }
 
 function MarkdownContent({ markdown }: { markdown: string }) {
@@ -195,13 +698,16 @@ function MarkdownContent({ markdown }: { markdown: string }) {
     <Markdown
       remarkPlugins={[remarkGfm]}
       components={{
-        code({ className, children, ...props }) {
-          const match = /language-(\w+)/.exec(className || "");
-          const codeStr = String(children).replace(/\n$/, "");
-          if (match) {
-            return <CodeBlock code={codeStr} language={match[1]} />;
+        code(props: any) {
+          const text = String(props.children ?? "").replace(/\n$/, "");
+          const languageMatch = /language-([\w+-]+)/.exec(props.className || "");
+          const isBlock = Boolean(languageMatch) || text.includes("\n");
+
+          if (!isBlock) {
+            return <code className="io-inline-code">{props.children}</code>;
           }
-          return <code className="io-inline-code" {...props}>{children}</code>;
+
+          return <CodeBlock code={text} language={languageMatch?.[1] ?? inferCodeLanguage(text)} />;
         },
       }}
     >
@@ -210,25 +716,322 @@ function MarkdownContent({ markdown }: { markdown: string }) {
   );
 }
 
-function PrettyContent({ data }: { data: Record<string, unknown> }) {
-  const blocks = useMemo(() => extractPrettyBlocks(data), [data]);
+function PrettyStringValue({
+  label,
+  value,
+  depth,
+  siblingData,
+  onOpenDocument,
+}: {
+  label: string | null;
+  value: string;
+  depth: number;
+  siblingData?: Record<string, unknown>;
+  onOpenDocument: (doc: DetectedDocument) => void;
+}) {
+  const [showRaw, setShowRaw] = useState(false);
+  const [expanded, setExpanded] = useState(!shouldCollapseLongText(value));
+  const detectedDoc = detectDocument(value, siblingData);
+  const classification = classifyStringContent(value);
+  const canToggleRaw =
+    Boolean(detectedDoc) ||
+    classification.kind === "json" ||
+    classification.kind === "markdown" ||
+    classification.kind === "xml";
+  const canCollapseVisibleText = shouldCollapseLongText(value) && (showRaw || classification.kind === "plain");
+
+  const actions = (
+    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+      {canToggleRaw && (
+        <RawToggleIconButton
+          showingRaw={showRaw}
+          onClick={() => setShowRaw((current) => !current)}
+        />
+      )}
+      {canCollapseVisibleText && (
+        <ChevronToggleButton
+          expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+          title={expanded ? "Collapse" : "Expand"}
+        />
+      )}
+    </div>
+  );
+
+  if (detectedDoc && !showRaw) {
+    return (
+      <PrettyCard label={label} badge={detectedDoc.type} depth={depth} actions={actions}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "12px", color: "var(--color-text-muted)" }}>
+            {formatFileSize(detectedDoc.size)} · {detectedDoc.mimeType}
+          </span>
+          <button
+            onClick={() => onOpenDocument(detectedDoc)}
+            style={{
+              border: "1px solid var(--color-border)",
+              borderRadius: "6px",
+              background: "var(--color-surface-warm)",
+              color: "var(--color-text)",
+              padding: "4px 8px",
+              fontSize: "12px",
+              cursor: "pointer",
+            }}
+          >
+            {`Open ${detectedDoc.type.toUpperCase()}`}
+          </button>
+        </div>
+      </PrettyCard>
+    );
+  }
+
+  if (classification.kind === "json" && !showRaw && depth < MAX_PRETTY_DEPTH) {
+    return (
+      <PrettyCard label={label} badge={classification.label} depth={depth} actions={actions}>
+        <PrettyValue
+          label={null}
+          value={classification.parsed}
+          depth={depth + 1}
+          siblingData={isRecord(classification.parsed) ? classification.parsed : undefined}
+          onOpenDocument={onOpenDocument}
+        />
+      </PrettyCard>
+    );
+  }
+
+  if (classification.kind === "markdown" && !showRaw) {
+    return (
+      <PrettyCard label={label} badge="markdown" depth={depth} actions={actions}>
+        <MarkdownContent markdown={value} />
+      </PrettyCard>
+    );
+  }
+
+  if (classification.kind === "xml" && !showRaw) {
+    return (
+      <PrettyCard label={label} badge="xml" depth={depth} actions={actions}>
+        <CodeBlock code={value} language="xml" />
+      </PrettyCard>
+    );
+  }
+
+  if (classification.kind === "code" && !showRaw) {
+    const code = classification.fenced ? (unwrapFencedCode(value)?.code ?? value) : value;
+    return (
+      <PrettyCard
+        label={label}
+        badge={classification.fenced ? `fenced · ${classification.language}` : `code · ${classification.language}`}
+        depth={depth}
+      >
+        <CodeBlock code={code} language={classification.language} />
+      </PrettyCard>
+    );
+  }
 
   return (
+    <PrettyCard label={label} badge="string" depth={depth} actions={actions}>
+      <pre
+        style={{
+          margin: 0,
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+          fontSize: "12.5px",
+          lineHeight: "1.55",
+          color: "#43884e",
+        }}
+      >
+        {expanded ? value : getStringPreview(value)}
+      </pre>
+    </PrettyCard>
+  );
+}
+
+function PrettyArrayValue({
+  label,
+  value,
+  depth,
+  onOpenDocument,
+}: {
+  label: string | null;
+  value: unknown[];
+  depth: number;
+  onOpenDocument: (doc: DetectedDocument) => void;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const columns = getUniformObjectArrayColumns(value);
+
+  let content: React.ReactNode;
+  if (!expanded) {
+    content = <div style={{ color: "var(--color-text-muted)", fontSize: "13px" }}>{`${value.length} items`}</div>;
+  } else if (value.length === 0) {
+    content = <div style={{ color: "var(--color-text-muted)", fontSize: "13px" }}>Empty array</div>;
+  } else if (columns) {
+    content = (
+      <div style={{ overflowX: "auto" }}>
+        <table>
+          <thead>
+            <tr>
+              {columns.map((column) => (
+                <th key={column}>{column}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {value.map((row, rowIndex) => (
+              <tr key={`row-${rowIndex}`}>
+                {columns.map((column) => {
+                  const cell = (row as Record<string, unknown>)[column];
+                  const rendered = typeof cell === "string" ? getStringPreview(cell, 90) : stringifyScalar(cell);
+                  return <td key={`${rowIndex}-${column}`}>{rendered}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  } else {
+    content = (
+      <div style={{ display: "grid", gap: "10px" }}>
+        {value.map((item, index) => (
+          isInlineSimpleValue(item) ? (
+            <InlineArrayItemRow key={`array-${index}`} index={index} value={item} />
+          ) : (
+            <ArrayItemBox key={`array-${index}`} index={index}>
+              <PrettyValue
+                label={null}
+                value={item}
+                depth={depth + 1}
+                siblingData={isRecord(item) ? item : undefined}
+                onOpenDocument={onOpenDocument}
+              />
+            </ArrayItemBox>
+          )
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <PrettyCard
+      label={label}
+      badge={`list · ${value.length}`}
+      depth={depth}
+      actions={<ChevronToggleButton expanded={expanded} onClick={() => setExpanded((current) => !current)} title={expanded ? "Collapse" : "Expand"} />}
+    >
+      {content}
+    </PrettyCard>
+  );
+}
+
+function PrettyObjectValue({
+  label,
+  value,
+  depth,
+  onOpenDocument,
+}: {
+  label: string | null;
+  value: Record<string, unknown>;
+  depth: number;
+  onOpenDocument: (doc: DetectedDocument) => void;
+}) {
+  const entries = Object.entries(value);
+  const content = (
+    <div style={{ display: "grid", gap: "10px" }}>
+      {entries.map(([childKey, childValue]) => (
+        isInlineSimpleValue(childValue, value) ? (
+          <InlineValueRow key={childKey} label={childKey} value={childValue} />
+        ) : (
+          <PrettyValue
+            key={childKey}
+            label={childKey}
+            value={childValue}
+            depth={depth + 1}
+            siblingData={value}
+            onOpenDocument={onOpenDocument}
+          />
+        )
+      ))}
+    </div>
+  );
+
+  if (label === null) {
+    return content;
+  }
+
+  return (
+    <PrettyCard label={label} badge={`object · ${entries.length}`} depth={depth}>
+      {entries.length > 0 ? content : <div style={{ color: "var(--color-text-muted)", fontSize: "13px" }}>Empty object</div>}
+    </PrettyCard>
+  );
+}
+
+function PrettyValue({
+  label,
+  value,
+  depth,
+  siblingData,
+  onOpenDocument,
+}: {
+  label: string | null;
+  value: unknown;
+  depth: number;
+  siblingData?: Record<string, unknown>;
+  onOpenDocument: (doc: DetectedDocument) => void;
+}) {
+  if (depth > MAX_PRETTY_DEPTH) {
+    return (
+      <PrettyCard label={label} badge="nested" depth={depth} compact>
+        <div
+          style={{
+            fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+            fontSize: "12px",
+            color: "var(--color-text-muted)",
+          }}
+        >
+          More nested content is hidden here. Switch to JSON view to inspect it.
+        </div>
+      </PrettyCard>
+    );
+  }
+
+  if (value === null || typeof value === "number" || typeof value === "boolean") {
+    return <ScalarBox label={label} value={value} depth={depth} />;
+  }
+
+  if (typeof value === "string") {
+    return (
+      <PrettyStringValue
+        label={label}
+        value={value}
+        depth={depth}
+        siblingData={siblingData}
+        onOpenDocument={onOpenDocument}
+      />
+    );
+  }
+
+  if (Array.isArray(value)) {
+    return <PrettyArrayValue label={label} value={value} depth={depth} onOpenDocument={onOpenDocument} />;
+  }
+
+  if (isRecord(value)) {
+    return <PrettyObjectValue label={label} value={value} depth={depth} onOpenDocument={onOpenDocument} />;
+  }
+
+  return <ScalarBox label={label} value={String(value)} depth={depth} />;
+}
+
+function PrettyContent({
+  data,
+  onOpenDocument,
+}: {
+  data: Record<string, unknown>;
+  onOpenDocument: (doc: DetectedDocument) => void;
+}) {
+  return (
     <div className="io-pretty-content">
-      {blocks.map((block, index) => {
-        switch (block.type) {
-          case "label":
-            return <div key={index} className="io-role-label">{block.label}</div>;
-          case "markdown":
-            return <div key={index}><MarkdownContent markdown={block.content} /></div>;
-          case "code":
-            return <CodeBlock key={index} code={block.code} language={block.language} />;
-          case "separator":
-            return <hr key={index} className="io-separator" />;
-          default:
-            return null;
-        }
-      })}
+      <PrettyValue label={null} value={data} depth={0} siblingData={data} onOpenDocument={onOpenDocument} />
     </div>
   );
 }
@@ -268,6 +1071,20 @@ function IOPanel({
   const myKey: EditKey = `${nodeId}:${label as "Input" | "Output"}`;
   const isActiveEdit = editLock === myKey;
   const isLocked = (editLock !== null && !isActiveEdit) || (hasAnyEdit && !isEdited);
+  const handleOpenDocument = useCallback((doc: DetectedDocument) => {
+    const binary = atob(doc.data);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    const blob = new Blob([bytes], { type: doc.mimeType });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `document.${getFileExtension(doc.type)}`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, []);
 
   const generateGhost = useCallback((value: string) => {
     if (ghostTimer.current) clearTimeout(ghostTimer.current);
@@ -363,7 +1180,7 @@ function IOPanel({
   }, [editValue, jsonStr]);
 
   return (
-    <div className={`io-panel${isEdited ? " io-panel-edited" : ""}`}>
+    <div className={`io-panel${isEdited ? " io-panel-edited" : ""}`} onClick={(event) => event.stopPropagation()}>
       <div className="io-panel-header">
         <span className="io-panel-label">
           {label}
@@ -424,9 +1241,14 @@ function IOPanel({
         ) : viewMode === "json" ? (
           <CodeBlock code={jsonStr} language="json" />
         ) : (
-          <PrettyContent data={data} />
+          <PrettyContent data={data} onOpenDocument={handleOpenDocument} />
         )}
-        <AttachmentStrip attachments={attachments} />
+        {attachments.length > 0 && (
+          <>
+            <div className="io-attachments-header">Files in this message</div>
+            <AttachmentStrip attachments={attachments} />
+          </>
+        )}
       </div>
     </div>
   );
@@ -502,7 +1324,11 @@ export function RunTraceFlow({
               if (element) nodeRefs.current.set(node.id, element);
             }}
             className={`trace-node-card${node.id === focusedNodeId ? " focused" : ""}${hasEdit ? " trace-node-edited" : ""}`}
-            onClick={() => onCardClick(node.id)}
+            onClick={() => {
+              if (node.id !== focusedNodeId) {
+                onCardClick(node.id);
+              }
+            }}
           >
             <NodeHeader node={node} />
             <IOPanel

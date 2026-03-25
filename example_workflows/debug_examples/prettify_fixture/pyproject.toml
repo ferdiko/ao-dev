@@ -1,0 +1,11 @@
+[project]
+name = "sovara-examples-prettify-fixture"
+version = "0.1.0"
+description = "Synthetic Sovara run for prettified-view UI testing"
+requires-python = ">=3.10"
+dependencies = [
+    "sovara",
+]
+
+[tool.uv.sources]
+sovara = { path = "../../..", editable = true }

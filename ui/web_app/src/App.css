@@ -3518,6 +3518,16 @@
   color: var(--color-primary);
 }
 
+.io-attachments-header {
+  margin-top: 14px;
+  margin-bottom: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
 .io-role-label {
   font-weight: 700;
   font-size: 13px;

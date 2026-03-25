@@ -4,7 +4,7 @@
  */
 
 export interface DetectedDocument {
-  type: "pdf" | "png" | "jpeg" | "gif" | "webp" | "docx" | "xlsx" | "zip" | "unknown";
+  type: "pdf" | "png" | "jpeg" | "gif" | "webp" | "docx" | "xlsx" | "pptx" | "zip" | "unknown";
   mimeType: string;
   size: number;      // base64 string length
   data: string;      // the base64 string itself
@@ -31,7 +31,7 @@ const MIME_TYPE_MAP: Record<string, DetectedDocument["type"]> = {
   "application/zip": "zip",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "unknown",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
 };
 
 /**
@@ -65,6 +65,13 @@ function fromMimeType(mime: string, data: string): DetectedDocument {
   };
 }
 
+function looksLikeBase64Payload(value: string): boolean {
+  const normalized = value.trim().replace(/\s+/g, "");
+  if (normalized.length < 50) return false;
+  if (!/^[A-Za-z0-9+/=]+$/.test(normalized)) return false;
+  return normalized.length % 4 === 0;
+}
+
 /**
  * Detect if a string value is a base64-encoded document.
  *
@@ -83,17 +90,17 @@ export function detectDocument(
 ): DetectedDocument | null {
   if (typeof value !== "string" || value.length < 50) return null;
 
-  // 1. Check MIME type from sibling keys
-  const mimeHint = extractMimeFromSiblings(siblingData);
-  if (mimeHint && MIME_TYPE_MAP[mimeHint]) {
-    return fromMimeType(mimeHint, value);
-  }
-
-  // 2. Check data URL prefix: "data:image/png;base64,..."
+  // 1. Check data URL prefix: "data:image/png;base64,..."
   const dataUrlMatch = value.match(/^data:([^;]+);base64,(.+)$/);
   if (dataUrlMatch) {
     const [, mime, data] = dataUrlMatch;
     return fromMimeType(mime, data);
+  }
+
+  // 2. Check MIME type from sibling keys, but only when the value looks like base64 payload.
+  const mimeHint = extractMimeFromSiblings(siblingData);
+  if (mimeHint && MIME_TYPE_MAP[mimeHint] && looksLikeBase64Payload(value)) {
+    return fromMimeType(mimeHint, value);
   }
 
   // 3. Fall back to magic number detection
@@ -129,6 +136,7 @@ export function getFileExtension(type: DetectedDocument["type"]): string {
     webp: "webp",
     docx: "docx",
     xlsx: "xlsx",
+    pptx: "pptx",
     zip: "zip",
     unknown: "bin",
   };

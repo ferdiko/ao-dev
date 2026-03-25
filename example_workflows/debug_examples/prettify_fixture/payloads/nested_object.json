@@ -1,0 +1,9 @@
+{
+  "title": "Embedded JSON object",
+  "summary_markdown": "# Embedded Summary\n\n- mentions `example.docx`\n- mentions `example.xlsx`",
+  "snippet": "```python\nprint('nested object')\n```",
+  "meta": {
+    "status": "ok",
+    "count": 2
+  }
+}
