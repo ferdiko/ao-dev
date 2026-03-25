@@ -7,7 +7,6 @@ import {
   ExternalLink as ExternalLinkIcon,
   EyeOff,
   Filter as FilterIcon,
-  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -15,13 +14,11 @@ import {
 export function RunActionsMenu({
   className = "actions-dropdown-menu",
   style,
-  onAskSovara,
   onDeleteSelected,
   onOpenSelectedRuns,
 }: {
   className?: string;
   style?: CSSProperties;
-  onAskSovara: () => void;
   onDeleteSelected: () => void;
   onOpenSelectedRuns: () => void;
 }) {
@@ -30,10 +27,6 @@ export function RunActionsMenu({
       <button className="actions-dropdown-item" onClick={onOpenSelectedRuns}>
         <ExternalLinkIcon size={13} />
         Open runs
-      </button>
-      <button className="actions-dropdown-item" onClick={onAskSovara}>
-        <Sparkles size={13} />
-        Ask Sovara
       </button>
       <button className="actions-dropdown-item actions-dropdown-item-danger" onClick={onDeleteSelected}>
         <Trash2 size={13} />
@@ -54,7 +47,6 @@ export function CompletedRunsToolbar({
   filtersActive,
   filtersOpen,
   hiddenSelectedCount,
-  onAskSovara,
   onClearSelection,
   onDeleteSelected,
   onOpenSelectedRuns,
@@ -76,7 +68,6 @@ export function CompletedRunsToolbar({
   filtersActive: boolean;
   filtersOpen: boolean;
   hiddenSelectedCount: number;
-  onAskSovara: () => void;
   onClearSelection: () => void;
   onDeleteSelected: () => void;
   onOpenSelectedRuns: () => void;
@@ -154,7 +145,6 @@ export function CompletedRunsToolbar({
         </button>
         {actionsOpen && selectedCount > 0 && (
           <RunActionsMenu
-            onAskSovara={onAskSovara}
             onDeleteSelected={onDeleteSelected}
             onOpenSelectedRuns={onOpenSelectedRuns}
           />

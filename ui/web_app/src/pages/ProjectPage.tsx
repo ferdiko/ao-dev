@@ -281,12 +281,6 @@ export function ProjectPage() {
     navigate(`/project/${projectId}/run/${sessionIds.join(",")}`);
   }, [actionsContextKey, closeContextMenu, navigate, projectId]);
 
-  const handleAskSovara = useCallback(() => {
-    closeContextMenu();
-    setActionsState({ contextKey: actionsContextKey, open: false });
-    navigate(`/project/${projectId}/sovara`);
-  }, [actionsContextKey, closeContextMenu, navigate, projectId]);
-
   const handleCompletedRowContextMenu = useCallback((event: React.MouseEvent<HTMLTableRowElement>, sessionId: string) => {
     event.preventDefault();
     setColumnsOpen(false);
@@ -363,7 +357,6 @@ export function ProjectPage() {
             filtersActive={filtersActive}
             filtersOpen={filtersOpen}
             hiddenSelectedCount={hiddenSelectedCount}
-            onAskSovara={handleAskSovara}
             onClearSelection={() => {
               closeContextMenu();
               setActionsState({ contextKey: actionsContextKey, open: false });
@@ -439,7 +432,6 @@ export function ProjectPage() {
           <RunActionsMenu
             className="actions-dropdown-menu actions-context-menu"
             style={{ top: contextMenu.y, left: contextMenu.x }}
-            onAskSovara={handleAskSovara}
             onDeleteSelected={() => {
               void handleDeleteRuns(activeActionIds);
             }}

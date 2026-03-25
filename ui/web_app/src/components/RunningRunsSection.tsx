@@ -21,7 +21,7 @@ function LiveTimer({ anchorSeconds }: { anchorSeconds: number | null }) {
     return <span className="live-timer">—</span>;
   }
 
-  return <span className="live-timer">{elapsedSeconds}s</span>;
+  return <span className="live-timer">{Math.round(elapsedSeconds)}s</span>;
 }
 
 export function RunningRunsSection({
