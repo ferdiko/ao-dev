@@ -200,7 +200,7 @@ export function useRunSessionState(sessionId: string) {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [sessionId, rerunState]);
+  }, [refreshSessionDetail, rerunState, sessionId]);
 
     return {
       editedFields,

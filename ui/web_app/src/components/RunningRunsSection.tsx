@@ -5,34 +5,23 @@ import type { SortState } from "../hooks/useStoredSortState";
 import type { ProjectRun } from "../projectRuns";
 
 function LiveTimer({ anchorSeconds }: { anchorSeconds: number | null }) {
-  const [anchor, setAnchor] = useState<{ seconds: number; clientMs: number } | null>(
-    anchorSeconds === null ? null : { seconds: anchorSeconds, clientMs: Date.now() },
-  );
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [elapsedSeconds, setElapsedSeconds] = useState(anchorSeconds);
 
   useEffect(() => {
     if (anchorSeconds === null) {
-      setAnchor(null);
       return;
     }
-    setAnchor({ seconds: anchorSeconds, clientMs: Date.now() });
-  }, [anchorSeconds]);
-
-  useEffect(() => {
-    if (!anchor) return;
     const interval = window.setInterval(() => {
-      setNowMs(Date.now());
+      setElapsedSeconds((current) => (current === null ? anchorSeconds : current + 1));
     }, 1000);
     return () => window.clearInterval(interval);
-  }, [anchor]);
+  }, [anchorSeconds]);
 
-  if (!anchor) {
+  if (elapsedSeconds === null) {
     return <span className="live-timer">—</span>;
   }
 
-  const elapsed = Math.max(anchor.seconds, anchor.seconds + (nowMs - anchor.clientMs) / 1000);
-
-  return <span className="live-timer">{Math.floor(elapsed)}s</span>;
+  return <span className="live-timer">{elapsedSeconds}s</span>;
 }
 
 export function RunningRunsSection({
@@ -94,7 +83,12 @@ export function RunningRunsSection({
                 <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>
                 <td><span className="cell-id-link" title={run.sessionId}>{run.sessionId.slice(0, 8)}</span></td>
                 <td><span className="cell-id-link">{run.codeVersion}</span></td>
-                <td className="cell-metric"><LiveTimer anchorSeconds={run.activeRuntimeSeconds} /></td>
+                <td className="cell-metric">
+                  <LiveTimer
+                    key={`${run.sessionId}:${run.activeRuntimeSeconds ?? "null"}`}
+                    anchorSeconds={run.activeRuntimeSeconds}
+                  />
+                </td>
               </tr>
             ))}
           </tbody>
