@@ -3,6 +3,17 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 type SortDirection = "asc" | "desc";
 export type SortState = { key: string; direction: SortDirection } | null;
 
+export function toggleSortState(
+  previous: SortState,
+  key: string,
+  initialDirection: SortDirection = "asc",
+): SortState {
+  if (previous?.key === key) {
+    return { key, direction: previous.direction === "asc" ? "desc" : "asc" };
+  }
+  return { key, direction: initialDirection };
+}
+
 function isSortState(value: unknown): value is SortState {
   if (value === null) return true;
   if (typeof value !== "object" || value === null) return false;

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { CompletedRunsTable } from "./CompletedRunsTable";
@@ -69,5 +69,31 @@ describe("CompletedRunsTable", () => {
     );
 
     expect(screen.getByText("—")).toBeInTheDocument();
+  });
+
+  it("does not sort when the tags header is clicked", () => {
+    const onSort = vi.fn();
+
+    render(
+      <CompletedRunsTable
+        allVisibleSelected={false}
+        formatTimestamp={(value) => value}
+        metricColumns={[]}
+        onOpenRun={vi.fn()}
+        onRowKeyDown={vi.fn()}
+        onRowContextMenu={vi.fn()}
+        onSort={onSort}
+        onToggleSelect={vi.fn()}
+        onToggleSelectAll={vi.fn()}
+        runs={[baseRun]}
+        selectedIds={new Set()}
+        sort={null}
+        visibleColumnKeys={new Set(["name", "tags"])}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole("columnheader", { name: "Tags" }).at(-1)!);
+
+    expect(onSort).not.toHaveBeenCalled();
   });
 });

@@ -60,7 +60,7 @@ function ColorPicker({
           type="button"
           onClick={() => onChange(c)}
         >
-          {c === value && <Check size={10} color="#fff" />}
+          {c === value && <Check size={10} color={contrastTagText(c)} />}
         </button>
       ))}
     </div>

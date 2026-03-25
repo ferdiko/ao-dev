@@ -1,10 +1,13 @@
 import json
 import uuid
 
+from sovara.server.database_manager import DB
 from sovara.server.routes.ui import (
+    CreateProjectTagRequest,
     EditInputRequest,
     EditOutputRequest,
     RestartRequest,
+    create_project_tag,
     edit_input,
     edit_output,
     restart,
@@ -87,4 +90,27 @@ def test_edit_output_invalid_json_returns_400():
     assert response.status_code == 400
     assert _response_json(response) == {
         "error": f"Invalid output JSON for session_id={session_id}, node_id={node_id}: Expecting property name enclosed in double quotes.",
+    }
+
+
+def test_create_project_tag_accepts_github_palette_colors():
+    project_id = str(uuid.uuid4())
+    state = ServerState()
+    DB.upsert_project(project_id, "test-project", "")
+
+    try:
+        response = create_project_tag(
+            project_id,
+            CreateProjectTagRequest(name="Ship", color="#1a7f37"),
+            state,
+        )
+    finally:
+        DB.delete_project(project_id)
+
+    assert response == {
+        "tag": {
+            "tag_id": response["tag"]["tag_id"],
+            "name": "Ship",
+            "color": "#1a7f37",
+        },
     }

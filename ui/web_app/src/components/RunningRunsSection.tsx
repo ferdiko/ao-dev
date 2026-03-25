@@ -63,9 +63,8 @@ export function RunningRunsSection({
             <tr>
               <SortableHeader label="Run Name" sortKey="name" sort={sort} onSort={onSort} />
               <SortableHeader label="Start Time" sortKey="timestamp" sort={sort} onSort={onSort} />
-              <SortableHeader label="Session ID" sortKey="sessionId" sort={sort} onSort={onSort} />
-              <SortableHeader label="Version" sortKey="codeVersion" sort={sort} onSort={onSort} />
-              <SortableHeader label="Latency" sortKey="latency" sort={sort} onSort={onSort} />
+              <SortableHeader label="Code Version" sortKey="codeVersion" sort={sort} onSort={onSort} />
+              <SortableHeader label="Runtime" sortKey="latency" sort={sort} onSort={onSort} />
             </tr>
           </thead>
           <tbody>
@@ -81,7 +80,6 @@ export function RunningRunsSection({
               >
                 <td>{run.name}</td>
                 <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>
-                <td><span className="cell-id-link" title={run.sessionId}>{run.sessionId.slice(0, 8)}</span></td>
                 <td><span className="cell-id-link">{run.codeVersion}</span></td>
                 <td className="cell-metric">
                   <LiveTimer

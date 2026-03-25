@@ -45,7 +45,7 @@ export function CompletedRunsTable({
   const show = (key: string) => visibleColumnKeys.has(key);
   const visibleMetricColumns = metricColumns.filter((column) => show(`metric:${column.key}`));
   const leadingColumnCount = 1
-    + ["timestamp", "sessionId", "name", "codeVersion", "tags", "latency", "thumbLabel"].filter(show).length;
+    + ["timestamp", "name", "codeVersion", "tags", "latency", "thumbLabel"].filter(show).length;
 
   return (
     <table className="runs-table">
@@ -66,10 +66,9 @@ export function CompletedRunsTable({
           </th>
           {show("name") && <SortableHeader label="Run Name" sortKey="name" sort={sort} onSort={onSort} />}
           {show("timestamp") && <SortableHeader label="Start Time" sortKey="timestamp" sort={sort} onSort={onSort} />}
-          {show("sessionId") && <SortableHeader label="Session ID" sortKey="sessionId" sort={sort} onSort={onSort} />}
-          {show("codeVersion") && <SortableHeader label="Version" sortKey="codeVersion" sort={sort} onSort={onSort} />}
-          {show("tags") && <SortableHeader label="Tags" sortKey="tags" sort={sort} onSort={onSort} />}
-          {show("latency") && <SortableHeader label="Latency" sortKey="latency" sort={sort} onSort={onSort} />}
+          {show("codeVersion") && <SortableHeader label="Code Version" sortKey="codeVersion" sort={sort} onSort={onSort} />}
+          {show("tags") && <th>Tags</th>}
+          {show("latency") && <SortableHeader label="Runtime" sortKey="latency" sort={sort} onSort={onSort} />}
           {show("thumbLabel") && <SortableHeader label="Label" sortKey="label" sort={sort} onSort={onSort} />}
           {visibleMetricColumns.map((column) => (
             <SortableHeader
@@ -103,11 +102,6 @@ export function CompletedRunsTable({
             </td>
             {show("name") && <td>{run.name}</td>}
             {show("timestamp") && <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>}
-            {show("sessionId") && (
-              <td>
-                <span className="cell-id-link" title={run.sessionId}>{run.sessionId.slice(0, 8)}</span>
-              </td>
-            )}
             {show("codeVersion") && <td><span className="cell-id-link">{run.codeVersion}</span></td>}
             {show("tags") && (
               <td className="cell-tags">

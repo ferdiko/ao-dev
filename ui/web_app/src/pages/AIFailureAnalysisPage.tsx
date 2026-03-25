@@ -24,6 +24,7 @@ import { mockProjects } from "../data/mock";
 import { mockFailureAnalyses, type FailureAnalysis } from "../data/failure-analysis-mock";
 import { createMockFilesystem, type FSNode } from "../data/priors-mock";
 import { Breadcrumb } from "../components/Breadcrumb";
+import { toggleSortState } from "../hooks/useStoredSortState";
 
 // ── Sorting ──────────────────────────────────────────────
 
@@ -463,12 +464,7 @@ export function AIFailureAnalysisPage() {
   }, [selectedId, feedbacks]);
 
   const toggleSort = useCallback((key: string) => {
-    setSort((prev) => {
-      if (prev?.key === key) {
-        return prev.direction === "asc" ? { key, direction: "desc" } : null;
-      }
-      return { key, direction: "asc" };
-    });
+    setSort((prev) => toggleSortState(prev, key));
   }, []);
 
   const sorted = useMemo(() => sortAnalyses(mockFailureAnalyses, sort), [sort]);

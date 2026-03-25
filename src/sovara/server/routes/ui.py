@@ -28,16 +28,16 @@ from sovara.server.handlers.ui_handlers import (
 router = APIRouter(prefix="/ui")
 
 TAG_COLORS = {
-    "#6F7C8B",
-    "#7E8F6A",
-    "#6E8B7B",
-    "#7F6A8A",
-    "#8A6F66",
-    "#6A8C93",
-    "#9A865F",
-    "#7A7F97",
-    "#8C7474",
-    "#637A72",
+    "#0969da",
+    "#1a7f37",
+    "#cf222e",
+    "#bf8700",
+    "#8250df",
+    "#e85aad",
+    "#0598d5",
+    "#d1570a",
+    "#5e60ce",
+    "#1b8a72",
 }
 
 

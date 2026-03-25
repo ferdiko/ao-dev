@@ -12,7 +12,7 @@ import { RunningRunsSection } from "../components/RunningRunsSection";
 import { useCompletedSelection } from "../hooks/useCompletedSelection";
 import { useProjectExperimentsData } from "../hooks/useProjectExperimentsData";
 import { computeDataBounds, emptyFilters, isMetricFilterActive, serializeFilters, type Filters } from "../projectFilters";
-import { useStoredSortState, type SortState } from "../hooks/useStoredSortState";
+import { toggleSortState, useStoredSortState, type SortState } from "../hooks/useStoredSortState";
 import { experimentToProjectRun, formatProjectRunTimestamp, sortProjectRuns } from "../projectRuns";
 
 // ── Sorting ──────────────────────────────────────────────
@@ -21,10 +21,9 @@ const DEFAULT_SORT: SortState = { key: "timestamp", direction: "desc" };
 const COMPLETED_BUILTIN_COLUMNS = [
   { key: "name", label: "Run Name" },
   { key: "timestamp", label: "Start Time" },
-  { key: "sessionId", label: "Session ID" },
-  { key: "codeVersion", label: "Version" },
+  { key: "codeVersion", label: "Code Version" },
   { key: "tags", label: "Tags" },
-  { key: "latency", label: "Latency" },
+  { key: "latency", label: "Runtime" },
   { key: "thumbLabel", label: "Label" },
 ] as const;
 
@@ -86,6 +85,7 @@ export function ProjectPage() {
     fallbackState: DEFAULT_SORT,
     storageKey: `web_app:project_sort:${projectId ?? "unknown"}:completed`,
   });
+  const effectiveCompletedSort = completedSort?.key === "tags" ? DEFAULT_SORT : completedSort;
   const {
     completedExperiments,
     completedTotal,
@@ -98,7 +98,7 @@ export function ProjectPage() {
   } = useProjectExperimentsData({
     completedPage,
     completedRowsPerPage,
-    completedSort,
+    completedSort: effectiveCompletedSort,
     filters,
     projectId,
   });
@@ -120,6 +120,11 @@ export function ProjectPage() {
       // Ignore storage failures; in-memory visibility still works.
     }
   }, [columnStorageKey, hiddenColumnKeys]);
+  useEffect(() => {
+    if (completedSort?.key === "tags") {
+      setCompletedSort(DEFAULT_SORT);
+    }
+  }, [completedSort, setCompletedSort]);
 
   const columnOptions = useMemo(() => {
     const metricOptions = customMetricColumns.map((column: CustomMetricColumn) => ({
@@ -155,10 +160,7 @@ export function ProjectPage() {
   }, []);
 
   const handleRunningSort = useCallback((key: string) => {
-    setRunningSort((prev: SortState) => {
-      if (prev?.key === key) return prev.direction === "asc" ? { key, direction: "desc" } : null;
-      return { key, direction: "asc" };
-    });
+    setRunningSort((prev: SortState) => toggleSortState(prev, key));
   }, [setRunningSort]);
 
   const handleRowKeyDown = useCallback((event: React.KeyboardEvent<HTMLTableRowElement>, sessionId: string) => {
@@ -169,10 +171,7 @@ export function ProjectPage() {
   }, [navigate, projectId]);
 
   const handleCompletedSort = useCallback((key: string) => {
-    setCompletedSort((prev: SortState) => {
-      if (prev?.key === key) return prev.direction === "asc" ? { key, direction: "desc" } : null;
-      return { key, direction: "asc" };
-    });
+    setCompletedSort((prev: SortState) => toggleSortState(prev, key));
     setCompletedPage(1);
   }, [setCompletedSort]);
 
@@ -413,7 +412,7 @@ export function ProjectPage() {
               onToggleSelectAll={toggleCompletedSelectAll}
               runs={completed}
               selectedIds={selectedCompleted}
-              sort={completedSort}
+              sort={effectiveCompletedSort}
               visibleColumnKeys={selectedColumnKeys}
             />
           </div>
