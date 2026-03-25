@@ -68,12 +68,12 @@ def handle_update_run_name(state, msg: dict) -> None:
         state.notify_experiment_list_changed()
 
 
-def handle_update_result(state, msg: dict) -> None:
-    """Handle experiment result update from UI."""
+def handle_update_thumb_label(state, msg: dict) -> None:
+    """Handle experiment thumb label update from UI."""
     session_id = msg.get("session_id")
-    result = msg.get("result")
-    if session_id and result is not None:
-        DB.update_result(session_id, result)
+    thumb_label = msg.get("thumb_label")
+    if session_id:
+        DB.update_thumb_label(session_id, thumb_label)
         state.notify_experiment_list_changed()
 
 
@@ -90,3 +90,22 @@ def handle_erase(state, msg: dict) -> None:
     session_id = msg.get("session_id")
     DB.erase(session_id)
     DB.update_color_preview(session_id, [])
+
+
+def handle_delete_runs(state, msg: dict) -> int:
+    """Handle deleting one or more finished runs from UI."""
+    session_ids = list(dict.fromkeys(msg.get("session_ids") or []))
+    if not session_ids:
+        return 0
+
+    deleted = DB.delete_runs(session_ids)
+
+    for session_id in session_ids:
+        state.sessions.pop(session_id, None)
+        state.session_graphs.pop(session_id, None)
+        state.runner_event_queues.pop(session_id, None)
+        state.rerun_sessions.discard(session_id)
+
+    state.notify_experiment_list_changed()
+    state.notify_project_list_changed()
+    return deleted

@@ -51,6 +51,7 @@ async def runner_events(session_id: str, request: Request):
             state.runner_event_queues.pop(session_id, None)
             session = state.sessions.get(session_id)
             if session and session.status == "running":
+                state.checkpoint_interrupted_session_runtime(session_id)
                 session.status = "finished"
                 state.notify_experiment_list_changed()
 

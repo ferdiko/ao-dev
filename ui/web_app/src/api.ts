@@ -5,6 +5,8 @@
  * Types use the same field names as the backend JSON responses.
  */
 
+import type { Tag } from "./tags";
+
 // ============================================================
 // Types (match backend response shapes)
 // ============================================================
@@ -30,10 +32,14 @@ export interface Experiment {
   session_id: string;
   status: "running" | "finished";
   timestamp: string;
+  runtime_seconds: number | null;
+  active_runtime_seconds: number | null;
   color_preview: string[];
   version_date: string | null;
   run_name: string;
-  result: string;
+  custom_metrics: Record<string, boolean | number>;
+  thumb_label: boolean | null;
+  tags: Tag[];
   project_id?: string | null;
 }
 
@@ -170,6 +176,12 @@ export async function deleteProject(
   });
 }
 
+export async function deleteRuns(sessionIds: string[]): Promise<{ deleted: number }> {
+  return post("/ui/delete-runs", {
+    session_ids: sessionIds,
+  });
+}
+
 // ============================================================
 // Project endpoints
 // ============================================================
@@ -196,10 +208,25 @@ export interface ExperimentQueryParams {
   dir?: string;
   name?: string;
   session_id?: string;
-  success?: string[];
+  label?: string[];
+  tag_id?: string[];
   version?: string[];
+  metric_filters?: Record<string, MetricFilter>;
   time_from?: string;
   time_to?: string;
+}
+
+export type MetricKind = "bool" | "int" | "float";
+export type MetricFilter =
+  | { kind: "bool"; values: boolean[] }
+  | { kind: "int" | "float"; min?: number; max?: number };
+
+export interface CustomMetricColumn {
+  key: string;
+  kind: MetricKind;
+  min?: number;
+  max?: number;
+  values?: boolean[];
 }
 
 interface ProjectExperimentsResponse {
@@ -208,6 +235,11 @@ interface ProjectExperimentsResponse {
   finished: Experiment[];
   finished_total: number;
   distinct_versions: string[];
+  custom_metric_columns: CustomMetricColumn[];
+}
+
+interface ProjectTagsResponse {
+  tags: Tag[];
 }
 
 export async function fetchProjectExperiments(
@@ -225,14 +257,32 @@ export async function fetchProjectExperiments(
     if (params.session_id) qs.set("session_id", params.session_id);
     if (params.time_from) qs.set("time_from", params.time_from);
     if (params.time_to) qs.set("time_to", params.time_to);
-    if (params.success) for (const v of params.success) qs.append("success", v);
+    if (params.label) for (const v of params.label) qs.append("label", v);
+    if (params.tag_id) for (const v of params.tag_id) qs.append("tag_id", v);
     if (params.version) for (const v of params.version) qs.append("version", v);
+    if (params.metric_filters && Object.keys(params.metric_filters).length > 0) {
+      qs.set("metric_filters", JSON.stringify(params.metric_filters));
+    }
   }
   const query = qs.toString();
   const url = `/ui/projects/${projectId}/experiments${query ? `?${query}` : ""}`;
   const resp = await fetch(url, { signal });
   if (!resp.ok) throw new Error(`GET ${url} failed: ${resp.status}`);
   return resp.json();
+}
+
+export async function fetchProjectTags(projectId: string): Promise<Tag[]> {
+  const data = await get<ProjectTagsResponse>(`/ui/projects/${projectId}/tags`);
+  return data.tags;
+}
+
+export async function createProjectTag(projectId: string, name: string, color: string): Promise<Tag> {
+  const data = await post<{ tag: Tag }>(`/ui/projects/${projectId}/tags`, { name, color });
+  return data.tag;
+}
+
+export async function deleteProjectTag(projectId: string, tagId: string): Promise<void> {
+  await post(`/ui/projects/${projectId}/tags/delete`, { tag_id: tagId });
 }
 
 // ============================================================
@@ -243,7 +293,11 @@ export interface ExperimentDetail {
   session_id: string;
   run_name: string;
   timestamp: string;
-  result: string;
+  runtime_seconds: number | null;
+  active_runtime_seconds: number | null;
+  custom_metrics: Record<string, boolean | number>;
+  thumb_label: boolean | null;
+  tags: Tag[];
   notes: string;
   log: string;
   version_date: string | null;
@@ -280,8 +334,15 @@ export interface GraphPayload {
   edges: BackendGraphEdge[];
 }
 
+export interface GraphResponse {
+  type: string;
+  session_id: string;
+  payload: GraphPayload;
+  active_runtime_seconds?: number | null;
+}
+
 export async function fetchGraph(sessionId: string) {
-  return get<{ type: string; session_id: string; payload: GraphPayload }>(
+  return get<GraphResponse>(
     `/ui/graph/${sessionId}`
   );
 }
@@ -306,10 +367,15 @@ export async function eraseRun(sessionId: string): Promise<void> {
   await post("/ui/erase", { session_id: sessionId });
 }
 
-export async function updateResult(sessionId: string, result: string): Promise<void> {
-  await post("/ui/update-result", { session_id: sessionId, result });
+export async function updateThumbLabel(sessionId: string, thumbLabel: boolean | null): Promise<void> {
+  await post("/ui/update-thumb-label", { session_id: sessionId, thumb_label: thumbLabel });
 }
 
 export async function updateRunName(sessionId: string, runName: string): Promise<void> {
   await post("/ui/update-run-name", { session_id: sessionId, run_name: runName });
+}
+
+export async function updateRunTags(sessionId: string, tagIds: string[]): Promise<Tag[]> {
+  const data = await post<{ tags: Tag[] }>("/ui/update-run-tags", { session_id: sessionId, tag_ids: tagIds });
+  return data.tags;
 }

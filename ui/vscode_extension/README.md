@@ -56,4 +56,4 @@ so-server start
 
 - Repository: https://github.com/SovaraLabs/sovara
 - Issues: https://github.com/SovaraLabs/sovara/issues
-- Email: hello@sovara-labs.com
+- Email: support@sovara-labs.com

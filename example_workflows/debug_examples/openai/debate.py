@@ -1,7 +1,7 @@
 import time
 start = time.time()
 from openai import OpenAI
-
+from sovara.runner.context_manager import log
 
 def main():
     client = OpenAI()
@@ -35,6 +35,9 @@ def main():
     print(f"Question: {question}")
     print(f"\nJudge's verdict: {judge_response.output_text}")
     print(time.time() - start)
+
+    from random import random
+    log(runtime=time.time() - start, success=random() > 0.5)
 
 if __name__ == "__main__":
     main()

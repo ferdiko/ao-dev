@@ -43,6 +43,8 @@ def _add_node_to_session(state, sid: str, node: dict, incoming_edges: list) -> N
         else:
             logger.debug(f"Skipping edge from non-existent node {source} to {node['id']}")
 
+    state.checkpoint_session_runtime(sid)
+
     # Update color preview in database
     node_colors = [n["border_color"] for n in graph["nodes"]]
     color_preview = node_colors[-6:]
@@ -84,6 +86,7 @@ def handle_deregister_message(state, msg: dict) -> None:
     session_id = msg["session_id"]
     session = state.sessions.get(session_id)
     if session:
+        state.finalize_session_runtime(session_id)
         session.status = "finished"
         clear_matching_data(session_id)
         state.notify_experiment_list_changed()
@@ -103,7 +106,7 @@ def handle_update_command(state, msg: dict) -> None:
 def handle_log(state, msg: dict) -> None:
     """Handle log message from runner."""
     session_id = msg["session_id"]
-    success = msg["success"]
-    entry = msg["entry"]
-    DB.add_log(session_id, success, entry)
+    metrics = msg["metrics"]
+    state.checkpoint_session_runtime(session_id)
+    DB.add_metrics(session_id, metrics)
     state.notify_experiment_list_changed()

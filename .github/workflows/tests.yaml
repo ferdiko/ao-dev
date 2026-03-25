@@ -23,25 +23,9 @@ jobs:
     - name: Setup test environment
       uses: ./.github/actions/setup-test-environment
 
-    - name: Setup isolated test database
-      run: mkdir -p ~/.cache/sovara/tests/non-billable
-
-    - name: Launch main server
-      run: |
-        export SOVARA_DB_PATH="$HOME/.cache/sovara/tests/non-billable"
-        export PYTHON_PORT=5959
-        uv run so-server start
-
     - name: Run tests
-      env:
-        SOVARA_DB_PATH: ~/.cache/sovara/tests/non-billable
-        PYTHON_PORT: 5959
       run: |
         uv run pytest -v -s tests/non_billable/
-
-    - name: Clean up
-      if: always()
-      run: rm -rf ~/.cache/sovara/tests/non-billable
 
   web-app:
     name: Web App

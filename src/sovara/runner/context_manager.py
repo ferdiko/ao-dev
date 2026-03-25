@@ -1,10 +1,12 @@
 import contextvars
 import threading
+import time
 from contextlib import contextmanager
 import json
 from sovara.server.database_manager import DB
-from sovara.common.utils import http_post
 from sovara.common.logger import logger
+from sovara.common.utils import http_post
+from sovara.common.custom_metrics import MetricsPayload
 
 
 # Process's session id stored as parent_session_id. Subruns have their own
@@ -15,6 +17,8 @@ parent_session_id = None
 # Names of all subruns in the process. Used to ensure they are unique.
 run_names = None
 _run_names_lock = threading.Lock()
+_session_timer_starts: dict[str, float] = {}
+_session_timer_lock = threading.Lock()
 
 
 def get_run_name(run_name):
@@ -31,6 +35,35 @@ def get_run_name(run_name):
         run_name = f"{run_name} ({i})"
         run_names.add(run_name)
         return run_name
+
+
+def start_session_timer(session_id):
+    if not session_id:
+        return
+    with _session_timer_lock:
+        _session_timer_starts[session_id] = time.perf_counter()
+
+
+def clear_session_timer(session_id):
+    if not session_id:
+        return
+    with _session_timer_lock:
+        _session_timer_starts.pop(session_id, None)
+
+
+def reset_current_session_timer():
+    start_session_timer(get_session_id())
+
+
+def get_session_runtime_seconds(session_id=None):
+    resolved_session_id = session_id or get_session_id()
+    if not resolved_session_id:
+        return None
+    with _session_timer_lock:
+        started_at = _session_timer_starts.get(resolved_session_id)
+    if started_at is None:
+        return None
+    return max(0.0, time.perf_counter() - started_at)
 
 
 @contextmanager
@@ -60,6 +93,7 @@ def sovara_launch(run_name="Workflow run"):
     })
     session_id = response["session_id"]
     current_session_id.set(session_id)
+    start_session_timer(session_id)
 
     try:
         # Run user code
@@ -67,22 +101,19 @@ def sovara_launch(run_name="Workflow run"):
     finally:
         # Deregister (best-effort -- don't crash user code if server is down)
         try:
-            http_post("/runner/deregister", {"session_id": session_id})
+            http_post("/runner/deregister", {"session_id": session_id}, timeout=0.5)
         except Exception as e:
             logger.warning(f"Failed to deregister subrun {session_id}: {e}")
+        finally:
+            clear_session_timer(session_id)
 
 
-def log(entry=None, success=None):
-    # Validate input types
-    if entry is not None and not isinstance(entry, str):
-        raise TypeError(f"`entry` must be a string, got {type(entry).__name__}")
-    if success is not None and not isinstance(success, bool):
-        raise TypeError(f"`success` must be a boolean or None, got {type(success).__name__}")
-
+def log(**metrics):
+    payload = MetricsPayload(metrics=metrics)
     try:
-        http_post("/runner/log", {"session_id": get_session_id(), "success": success, "entry": entry})
+        http_post("/runner/log", {"session_id": get_session_id(), "metrics": payload.metrics})
     except Exception as e:
-        logger.warning(f"Failed to send log: {e}")
+        logger.warning(f"Failed to send metrics: {e}")
 
 
 def get_session_id():
@@ -99,4 +130,5 @@ def set_parent_session_id(session_id):
     global parent_session_id, current_session_id, run_names
     parent_session_id = session_id
     current_session_id.set(session_id)
+    start_session_timer(session_id)
     run_names = set(DB.get_session_name(parent_session_id))

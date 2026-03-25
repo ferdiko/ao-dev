@@ -56,6 +56,16 @@ def setup_user_interactive(existing: dict = None) -> dict:
     return {"user_id": user_id, "full_name": full_name, "email": email}
 
 
+def _notify_running_server_about_user_change() -> None:
+    """Best-effort nudge so an already-open UI refreshes local user state."""
+    try:
+        from sovara.cli.so_server import _server_http_request
+
+        _server_http_request("POST", "/ui/refresh-user", timeout=0.25)
+    except Exception:
+        pass
+
+
 def ensure_user_configured() -> dict:
     """Return user dict, prompting interactively if not yet configured.
 
@@ -80,4 +90,5 @@ def ensure_user_configured() -> dict:
         user = setup_user_interactive()
 
     DB.upsert_user(user["user_id"], user["full_name"], user["email"])
+    _notify_running_server_about_user_change()
     return user

@@ -36,6 +36,7 @@ type SelectionState = {
 
 type SelectionAction =
   | { type: "clear"; scopeKey: string }
+  | { type: "remove"; ids: string[]; scopeKey: string; storedSelection: Set<string> }
   | { type: "sync"; ids: Set<string>; scopeKey: string }
   | { type: "toggle"; id: string; scopeKey: string; storedSelection: Set<string> }
   | { type: "toggleVisible"; scopeKey: string; storedSelection: Set<string>; visibleIds: string[] };
@@ -44,6 +45,12 @@ function completedSelectionReducer(state: SelectionState, action: SelectionActio
   switch (action.type) {
     case "clear":
       return { ids: new Set(), scopeKey: action.scopeKey };
+    case "remove": {
+      const baseSelection = state.scopeKey === action.scopeKey ? state.ids : action.storedSelection;
+      const next = new Set(baseSelection);
+      for (const id of action.ids) next.delete(id);
+      return { ids: next, scopeKey: action.scopeKey };
+    }
     case "sync":
       return { ids: action.ids, scopeKey: action.scopeKey };
     case "toggle": {
@@ -134,10 +141,15 @@ export function useCompletedSelection({
     dispatchSelection({ type: "clear", scopeKey });
   }, [scopeKey]);
 
+  const removeSelection = useCallback((ids: string[]) => {
+    dispatchSelection({ type: "remove", ids, scopeKey, storedSelection });
+  }, [scopeKey, storedSelection]);
+
   return {
     allVisibleSelected,
     clearSelection,
     hiddenSelectedCount,
+    removeSelection,
     selectedCount: selectedIds.size,
     selectedIds,
     selectedVisibleCount,

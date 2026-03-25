@@ -20,14 +20,21 @@ import { RunTabsHeader } from "../components/RunTabsHeader";
 import {
   fetchProject,
   fetchExperimentDetail,
+  fetchProjectTags,
+  createProjectTag,
+  deleteProjectTag,
+  updateRunTags,
 } from "../api";
 import { layoutGraph, type Point } from "../graphLayout";
-import { Sparkles, RotateCcw, Loader2, Undo2, ThumbsUp, ThumbsDown, ChevronRight, PanelRight } from "lucide-react";
+import { Sparkles, RotateCcw, Loader2, Undo2, ThumbsUp, ThumbsDown, ChevronRight, PanelRight, X } from "lucide-react";
 import { TraceChat } from "../components/TraceChat";
 import { useRunGraphFocus, type GraphFocusApiHandle } from "../hooks/useRunGraphFocus";
 import { useResize } from "../hooks/useResize";
 import { useRunSessionState } from "../hooks/useRunSessionState";
 import { useRunViewLayout, type RunViewLayoutState } from "../hooks/useRunViewLayout";
+import { TagDropdown } from "../components/TagDropdown";
+import type { Tag } from "../tags";
+import { sortTagsByName } from "../tags";
 
 // ── Custom LLM Node ────────────────────────────────────
 
@@ -160,6 +167,7 @@ export function RunView() {
         ]} />
         <RunViewContent
           key={activeSessionId}
+          projectId={projectId}
           sessionId={activeSessionId}
           layoutState={layoutState}
           setLayoutState={setLayoutState}
@@ -183,6 +191,7 @@ export function RunView() {
         />
         <RunViewContent
           key={activeSessionId}
+          projectId={projectId}
           sessionId={activeSessionId}
           layoutState={layoutState}
           setLayoutState={setLayoutState}
@@ -195,10 +204,12 @@ export function RunView() {
 // ── RunViewContent (single-run body) ──────────────────
 
 function RunViewContent({
+  projectId,
   sessionId,
   layoutState,
   setLayoutState,
 }: {
+  projectId?: string;
   sessionId: string;
   layoutState: RunViewLayoutState;
   setLayoutState: React.Dispatch<React.SetStateAction<RunViewLayoutState>>;
@@ -213,18 +224,109 @@ function RunViewContent({
     handleCancelEdit,
     handleErase,
     handleRerun,
-    handleResultToggle,
+    handleThumbLabelToggle,
     handleSaveAndRerun,
     handleSaveEdit,
     handleStartEdit,
     loading,
+    refreshSessionDetail,
     rerunning,
-    runResult,
+    selectedTags,
+    setSelectedTags,
+    thumbLabel,
   } = useRunSessionState(sessionId);
+  const [projectTags, setProjectTags] = useState<Tag[]>([]);
+  const [tagPendingDelete, setTagPendingDelete] = useState<Tag | null>(null);
+  const [deletingTag, setDeletingTag] = useState(false);
+  const [deleteTagError, setDeleteTagError] = useState<string | null>(null);
 
   const GRAPH_MIN = 180; const GRAPH_MAX = 600;
   const CHAT_MIN = 200; const CHAT_MAX = 700;
   const { graphWidth, chatWidth, chatCollapsed } = layoutState;
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    fetchProjectTags(projectId)
+      .then((tags) => {
+        if (!cancelled) setProjectTags(sortTagsByName(tags));
+      })
+      .catch((error) => {
+        if (!cancelled) console.error("Failed to load project tags:", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const reloadTags = useCallback(async () => {
+    if (!projectId) return;
+    const [tags] = await Promise.all([
+      fetchProjectTags(projectId).then(sortTagsByName),
+      refreshSessionDetail(),
+    ]);
+    setProjectTags(tags);
+  }, [projectId, refreshSessionDetail]);
+
+  const handleToggleTag = useCallback((tag: Tag) => {
+    const alreadySelected = selectedTags.some((item) => item.tag_id === tag.tag_id);
+    const nextTags = sortTagsByName(
+      alreadySelected
+        ? selectedTags.filter((item) => item.tag_id !== tag.tag_id)
+        : [...selectedTags, tag],
+    );
+    setSelectedTags(nextTags);
+    updateRunTags(sessionId, nextTags.map((item) => item.tag_id))
+      .catch(async (error) => {
+        console.error("Failed to update run tags:", error);
+        await reloadTags().catch(console.error);
+      });
+  }, [reloadTags, selectedTags, sessionId, setSelectedTags]);
+
+  const handleCreateTag = useCallback((name: string, color: string) => {
+    if (!projectId) return;
+    createProjectTag(projectId, name, color)
+      .then(async (tag) => {
+        const nextProjectTags = sortTagsByName([...projectTags, tag]);
+        const nextSelectedTags = sortTagsByName([...selectedTags, tag]);
+        setProjectTags(nextProjectTags);
+        setSelectedTags(nextSelectedTags);
+        await updateRunTags(sessionId, nextSelectedTags.map((item) => item.tag_id));
+      })
+      .catch(async (error) => {
+        console.error("Failed to create tag:", error);
+        await reloadTags().catch(console.error);
+      });
+  }, [projectId, projectTags, reloadTags, selectedTags, sessionId, setSelectedTags]);
+
+  const handleDeleteTag = useCallback((tag: Tag) => {
+    setDeleteTagError(null);
+    setTagPendingDelete(tag);
+  }, []);
+
+  const closeDeleteTagModal = useCallback(() => {
+    if (deletingTag) return;
+    setTagPendingDelete(null);
+    setDeleteTagError(null);
+  }, [deletingTag]);
+
+  const confirmDeleteTag = useCallback(async () => {
+    if (!projectId || !tagPendingDelete) return;
+    setDeleteTagError(null);
+    setDeletingTag(true);
+    try {
+      await deleteProjectTag(projectId, tagPendingDelete.tag_id);
+      setProjectTags((previous) => previous.filter((item) => item.tag_id !== tagPendingDelete.tag_id));
+      setSelectedTags((previous) => previous.filter((item) => item.tag_id !== tagPendingDelete.tag_id));
+      setTagPendingDelete(null);
+    } catch (error) {
+      console.error("Failed to delete tag:", error);
+      setDeleteTagError(error instanceof Error ? error.message : "Failed to delete tag.");
+      await reloadTags().catch(console.error);
+    } finally {
+      setDeletingTag(false);
+    }
+  }, [projectId, reloadTags, setSelectedTags, tagPendingDelete]);
 
   const onGraphResize = useCallback((delta: number) => {
     setLayoutState((prev) => ({
@@ -283,7 +385,7 @@ function RunViewContent({
       type: "routed",
       sourceHandle: e.sourceHandle,
       targetHandle: e.targetHandle,
-      data: { points: e.points, highlighted: e.target === focusedNodeId },
+      data: { points: e.points, highlighted: e.source === focusedNodeId || e.target === focusedNodeId },
     }));
   }, [graphLayout, focusedNodeId]);
 
@@ -316,6 +418,7 @@ function RunViewContent({
   }
 
   return (
+    <>
       <div className="run-view-columns">
       <div className="run-view-left">
 
@@ -359,6 +462,17 @@ function RunViewContent({
         </div>
       </div>
 
+      <div className="run-tag-bar">
+        <div className="run-tag-bar-label">Tags</div>
+        <TagDropdown
+          selectedTags={selectedTags}
+          allTags={projectTags}
+          onToggle={handleToggleTag}
+          onCreate={handleCreateTag}
+          onDelete={handleDeleteTag}
+        />
+      </div>
+
       <div className="run-view-body">
         {/* Left: Graph */}
         <div className="run-graph-panel" style={{ width: graphWidth, flex: "none" }}>
@@ -394,18 +508,18 @@ function RunViewContent({
             {/* Controls (bottom-right) */}
             <div className="graph-controls-panel">
               <button
-                className={`graph-controls-btn${runResult === "Satisfactory" ? " active-pass" : ""}`}
-                title={runResult === "Satisfactory" ? "Clear result" : "Mark as Satisfactory"}
-                onClick={() => handleResultToggle("satisfactory")}
+                className={`graph-controls-btn${thumbLabel === true ? " active-pass" : ""}`}
+                title={thumbLabel === true ? "Clear label" : "Mark thumbs up"}
+                onClick={() => handleThumbLabelToggle(true)}
               >
-                <ThumbsUp size={12} color={runResult === "Satisfactory" ? "#fff" : "#4caf50"} />
+                <ThumbsUp size={12} color={thumbLabel === true ? "#fff" : "#4caf50"} />
               </button>
               <button
-                className={`graph-controls-btn${runResult === "Failed" ? " active-fail" : ""}`}
-                title={runResult === "Failed" ? "Clear result" : "Mark as Failed"}
-                onClick={() => handleResultToggle("failed")}
+                className={`graph-controls-btn${thumbLabel === false ? " active-fail" : ""}`}
+                title={thumbLabel === false ? "Clear label" : "Mark thumbs down"}
+                onClick={() => handleThumbLabelToggle(false)}
               >
-                <ThumbsDown size={12} color={runResult === "Failed" ? "#fff" : "#e05252"} />
+                <ThumbsDown size={12} color={thumbLabel === false ? "#fff" : "#e05252"} />
               </button>
             </div>
           </div>
@@ -460,5 +574,31 @@ function RunViewContent({
         )}
       </div>
       </div>
+      {tagPendingDelete && (
+        <div className="modal-overlay" onClick={closeDeleteTagModal}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">Delete Tag</h2>
+              <button className="modal-close" onClick={closeDeleteTagModal}>
+                <X size={18} />
+              </button>
+            </div>
+            <p className="modal-danger-warning">
+              This will permanently delete <strong>{tagPendingDelete.name}</strong> from this project and remove it from all runs.
+              This action cannot be undone.
+            </p>
+            {deleteTagError && <div className="modal-error">{deleteTagError}</div>}
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={closeDeleteTagModal} disabled={deletingTag}>
+                Cancel
+              </button>
+              <button className="btn btn-danger" onClick={() => void confirmDeleteTag()} disabled={deletingTag}>
+                {deletingTag ? "Deleting..." : "Delete tag"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

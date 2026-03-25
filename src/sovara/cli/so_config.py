@@ -40,6 +40,16 @@ def get_playbook_input() -> Config:
 from sovara.common.constants import WELCOME_ART
 
 
+def _notify_running_server_about_user_change() -> None:
+    """Best-effort nudge so an already-open UI refreshes local user state."""
+    try:
+        from sovara.cli.so_server import _server_http_request
+
+        _server_http_request("POST", "/ui/refresh-user")
+    except Exception:
+        pass
+
+
 def config_command():
     print("Press Ctrl+C to exit at any time.\n")
 
@@ -60,6 +70,7 @@ def config_command():
 
     user = setup_user_interactive(existing_user)
     DB.upsert_user(user["user_id"], user["full_name"], user["email"])
+    _notify_running_server_about_user_change()
 
     # --- Project (reconfigure only, no creation) ---
     cwd = os.getcwd()

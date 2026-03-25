@@ -90,19 +90,18 @@ jobs:
     - name: Setup test environment
       uses: ./.github/actions/setup-test-environment
 
-    - name: Setup isolated test database
-      run: mkdir -p ~/.cache/sovara/tests/caching-edit
-
-    - name: Launch sovara server
+    - name: Configure isolated Sovara home
       run: |
-        export SOVARA_DB_PATH="$HOME/.cache/sovara/tests/caching-edit"
-        export PYTHON_PORT=5962
-        uv run so-server start
+        echo "TEST_SOVARA_HOME=$RUNNER_TEMP/sovara-tests/caching-edit" >> "$GITHUB_ENV"
+        echo "PYTHON_PORT=5962" >> "$GITHUB_ENV"
+
+    - name: Setup isolated Sovara home
+      run: mkdir -p "$TEST_SOVARA_HOME"
 
     - name: Run tests
       env:
-        SOVARA_DB_PATH: ~/.cache/sovara/tests/caching-edit
-        PYTHON_PORT: 5962
+        SOVARA_HOME: ${{ env.TEST_SOVARA_HOME }}
+        PYTHON_PORT: ${{ env.PYTHON_PORT }}
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -116,7 +115,7 @@ jobs:
 
     - name: Clean up
       if: always()
-      run: rm -rf ~/.cache/sovara/tests/caching-edit
+      run: rm -rf "$TEST_SOVARA_HOME"
 
   caching:
     name: Caching
@@ -139,19 +138,18 @@ jobs:
     - name: Setup test environment
       uses: ./.github/actions/setup-test-environment
 
-    - name: Setup isolated test database
-      run: mkdir -p ~/.cache/sovara/tests/caching
-
-    - name: Launch sovara server
+    - name: Configure isolated Sovara home
       run: |
-        export SOVARA_DB_PATH="$HOME/.cache/sovara/tests/caching"
-        export PYTHON_PORT=5963
-        uv run so-server start
+        echo "TEST_SOVARA_HOME=$RUNNER_TEMP/sovara-tests/caching" >> "$GITHUB_ENV"
+        echo "PYTHON_PORT=5963" >> "$GITHUB_ENV"
+
+    - name: Setup isolated Sovara home
+      run: mkdir -p "$TEST_SOVARA_HOME"
 
     - name: Run tests
       env:
-        SOVARA_DB_PATH: ~/.cache/sovara/tests/caching
-        PYTHON_PORT: 5963
+        SOVARA_HOME: ${{ env.TEST_SOVARA_HOME }}
+        PYTHON_PORT: ${{ env.PYTHON_PORT }}
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -167,11 +165,11 @@ jobs:
       if: always()
       run: |
         echo "=== main_server.log ==="
-        cat ~/.cache/sovara/logs/main_server.log 2>/dev/null || echo "No server log found"
+        cat "$TEST_SOVARA_HOME/logs/main_server.log" 2>/dev/null || echo "No server log found"
 
     - name: Clean up
       if: always()
-      run: rm -rf ~/.cache/sovara/tests/caching
+      run: rm -rf "$TEST_SOVARA_HOME"
 
   status:
     name: Status

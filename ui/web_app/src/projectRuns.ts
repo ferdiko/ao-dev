@@ -1,5 +1,6 @@
 import type { Experiment } from "./api";
 import type { SortState } from "./hooks/useStoredSortState";
+import type { Tag } from "./tags";
 
 export interface ProjectRun {
   id: string;
@@ -7,18 +8,31 @@ export interface ProjectRun {
   name: string;
   status: "running" | "finished";
   timestamp: string;
-  input: string;
-  output: string;
   latency: string;
-  cost: string;
+  latencySeconds: number | null;
+  activeRuntimeSeconds: number | null;
   codeVersion: string;
-  success: boolean | null;
-  confidence: number | null;
-  tags: string[];
-  comment: string;
+  thumbLabel: boolean | null;
+  customMetrics: Record<string, boolean | number>;
+  tags: Tag[];
+}
+
+function normalizeRuntimeSeconds(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.max(0, value);
+}
+
+export function formatRuntimeSeconds(value: number | null | undefined): string {
+  const normalized = normalizeRuntimeSeconds(value);
+  if (normalized === null) return "—";
+  return `${normalized.toFixed(1)}s`;
 }
 
 export function experimentToProjectRun(experiment: Experiment): ProjectRun {
+  const activeRuntimeSeconds = normalizeRuntimeSeconds(experiment.active_runtime_seconds);
+  const latencySeconds = experiment.status === "running"
+    ? activeRuntimeSeconds
+    : normalizeRuntimeSeconds(experiment.runtime_seconds) ?? activeRuntimeSeconds;
   return {
     id: experiment.session_id,
     sessionId: experiment.session_id,
@@ -26,14 +40,12 @@ export function experimentToProjectRun(experiment: Experiment): ProjectRun {
     status: experiment.status === "running" ? "running" : "finished",
     timestamp: experiment.timestamp,
     codeVersion: experiment.version_date ?? "—",
-    success: experiment.result === "Satisfactory" ? true : experiment.result === "Failed" ? false : null,
-    input: "—",
-    output: "—",
-    latency: "—",
-    cost: "—",
-    confidence: null,
-    tags: [],
-    comment: "—",
+    thumbLabel: experiment.thumb_label,
+    customMetrics: experiment.custom_metrics ?? {},
+    latency: formatRuntimeSeconds(latencySeconds),
+    latencySeconds,
+    activeRuntimeSeconds,
+    tags: experiment.tags ?? [],
   };
 }
 
@@ -52,17 +64,9 @@ export function formatProjectRunTimestamp(raw: string): string {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
+    hour12: false,
+    hourCycle: "h23",
   });
-}
-
-function parseLatency(value: string): number {
-  const parsed = parseFloat(value);
-  return isNaN(parsed) ? Infinity : parsed;
-}
-
-function parseCost(value: string): number {
-  const parsed = parseFloat(value.replace(/[^0-9.]/g, ""));
-  return isNaN(parsed) ? Infinity : parsed;
 }
 
 function compareProjectRuns(a: ProjectRun, b: ProjectRun, key: string): number {
@@ -77,27 +81,17 @@ function compareProjectRuns(a: ProjectRun, b: ProjectRun, key: string): number {
       if (!isNaN(numberA) && !isNaN(numberB)) return numberA - numberB;
       return a.name.localeCompare(b.name);
     }
-    case "input":
-      return a.input.localeCompare(b.input);
-    case "output":
-      return (a.output || "").localeCompare(b.output || "");
     case "codeVersion":
       return a.codeVersion.localeCompare(b.codeVersion);
     case "latency":
-      return parseLatency(a.latency) - parseLatency(b.latency);
-    case "success": {
-      const valueA = a.success === null ? -1 : a.success ? 1 : 0;
-      const valueB = b.success === null ? -1 : b.success ? 1 : 0;
+      return (a.latencySeconds ?? Infinity) - (b.latencySeconds ?? Infinity);
+    case "thumbLabel": {
+      const valueA = a.thumbLabel === null ? -1 : a.thumbLabel ? 1 : 0;
+      const valueB = b.thumbLabel === null ? -1 : b.thumbLabel ? 1 : 0;
       return valueA - valueB;
     }
-    case "confidence":
-      return (a.confidence ?? -1) - (b.confidence ?? -1);
-    case "cost":
-      return parseCost(a.cost) - parseCost(b.cost);
     case "tags":
-      return a.tags.join(",").localeCompare(b.tags.join(","));
-    case "comment":
-      return a.comment.localeCompare(b.comment);
+      return a.tags.map((tag) => tag.name).join(",").localeCompare(b.tags.map((tag) => tag.name).join(","));
     default:
       return 0;
   }

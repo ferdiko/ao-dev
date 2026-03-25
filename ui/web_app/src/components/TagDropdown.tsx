@@ -1,17 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { X, Plus, Check } from "lucide-react";
-import type { Tag } from "../data/mock";
-import { TAG_COLORS } from "../data/mock";
-
-// ── Tag badge (reusable) ──────────────────────────────
-
-function contrastText(hex: string): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return lum > 0.55 ? "#1a1a1a" : "#ffffff";
-}
+import { contrastTagText, TAG_COLORS, type Tag } from "../tags";
 
 export function TagBadge({
   tag,
@@ -22,7 +11,7 @@ export function TagBadge({
   onRemove?: () => void;
   size?: "small" | "default";
 }) {
-  const fg = contrastText(tag.color);
+  const fg = contrastTagText(tag.color);
   const small = size === "small";
   return (
     <span
@@ -68,6 +57,7 @@ function ColorPicker({
           key={c}
           className={`tag-color-swatch${c === value ? " selected" : ""}`}
           style={{ background: c }}
+          type="button"
           onClick={() => onChange(c)}
         >
           {c === value && <Check size={10} color="#fff" />}
@@ -118,7 +108,7 @@ export function TagDropdown({
     if (open && inputRef.current) inputRef.current.focus();
   }, [open]);
 
-  const selectedIds = new Set(selectedTags.map((t) => t.id));
+  const selectedIds = new Set(selectedTags.map((t) => t.tag_id));
   const filtered = allTags.filter((t) =>
     t.name.toLowerCase().includes(search.toLowerCase()),
   );
@@ -129,7 +119,7 @@ export function TagDropdown({
 
   const handleCreate = useCallback(() => {
     if (!search.trim()) return;
-    onCreate(search.trim().toLowerCase(), newColor);
+    onCreate(search.trim(), newColor);
     setSearch("");
     setCreating(false);
   }, [search, newColor, onCreate]);
@@ -141,7 +131,7 @@ export function TagDropdown({
         {selectedTags.length > 0 ? (
           selectedTags.map((t) => (
             <TagBadge
-              key={t.id}
+              key={t.tag_id}
               tag={t}
               onRemove={() => onToggle(t)}
             />
@@ -151,6 +141,7 @@ export function TagDropdown({
         )}
         <button
           className="tag-add-btn"
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             setOpen(!open);
@@ -184,8 +175,8 @@ export function TagDropdown({
           <div className="tag-dropdown-list">
             {filtered.map((tag) => (
               <div
-                key={tag.id}
-                className={`tag-dropdown-item${selectedIds.has(tag.id) ? " selected" : ""}`}
+                key={tag.tag_id}
+                className={`tag-dropdown-item${selectedIds.has(tag.tag_id) ? " selected" : ""}`}
                 onClick={() => onToggle(tag)}
               >
                 <span
@@ -193,15 +184,19 @@ export function TagDropdown({
                   style={{ background: tag.color }}
                 />
                 <span className="tag-dropdown-item-name">{tag.name}</span>
-                {selectedIds.has(tag.id) && (
+                {selectedIds.has(tag.tag_id) && (
                   <Check size={14} className="tag-check" />
                 )}
                 {onDelete && (
                   <button
                     className="tag-delete-btn"
+                    type="button"
                     title={`Delete "${tag.name}"`}
                     onClick={(e) => {
                       e.stopPropagation();
+                      setOpen(false);
+                      setCreating(false);
+                      setSearch("");
                       onDelete(tag);
                     }}
                   >
@@ -218,6 +213,7 @@ export function TagDropdown({
             {showCreate && !creating && (
               <button
                 className="tag-dropdown-item tag-dropdown-create"
+                type="button"
                 onClick={() => setCreating(true)}
               >
                 <Plus size={14} />
@@ -234,11 +230,12 @@ export function TagDropdown({
               <div className="tag-create-label">Pick a color for "{search}"</div>
               <ColorPicker value={newColor} onChange={setNewColor} />
               <div className="tag-create-actions">
-                <button className="tag-create-confirm" onClick={handleCreate}>
+                <button className="tag-create-confirm" type="button" onClick={handleCreate}>
                   Create tag
                 </button>
                 <button
                   className="tag-create-cancel"
+                  type="button"
                   onClick={() => {
                     setCreating(false);
                     setSearch("");

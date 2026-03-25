@@ -13,7 +13,7 @@ import subprocess
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sovara.common.logger import create_file_logger
@@ -39,6 +39,7 @@ class Session:
         self.command: Optional[str] = None
         self.sse_connected = False
         self.registered_at = time.time()
+        self.runtime_started_at: Optional[float] = None
 
 
 class ServerState:
@@ -52,7 +53,9 @@ class ServerState:
         self.sessions: dict[str, Session] = {}
         self.session_graphs: dict[str, dict] = {}
         self.rerun_sessions: set[str] = set()
-        self.lock = threading.Lock()
+        # Runtime checkpointing can happen inside add-node handling, which
+        # already holds this lock while mutating session_graphs.
+        self.lock = threading.RLock()
 
         # WebSocket connections
         self.ui_websockets: set = set()  # set of WebSocket connections
@@ -117,11 +120,16 @@ class ServerState:
                 "type": "graph_update",
                 "session_id": session_id,
                 "payload": graph,
+                "active_runtime_seconds": self.get_persisted_active_runtime_seconds(session_id),
             })
 
     def notify_project_list_changed(self) -> None:
         """Broadcast a signal so UIs refetch their project list."""
         self.schedule_broadcast({"type": "project_list_changed"})
+
+    def notify_user_changed(self) -> None:
+        """Broadcast a signal so UIs refetch the local user profile."""
+        self.schedule_broadcast({"type": "user_changed"})
 
     def notify_experiment_list_changed(self) -> None:
         """Schedule a debounced broadcast of the experiment list."""
@@ -144,9 +152,7 @@ class ServerState:
 
     async def broadcast_experiment_list_to_uis(self) -> None:
         """Broadcast running + first page of finished experiments to all UIs."""
-        self._sweep_dead_sessions()
-        session_map = {s.session_id: s for s in self.sessions.values()}
-        running_ids = {sid for sid, s in self.sessions.items() if s.status == "running"}
+        session_map, running_ids = self.get_session_snapshot()
 
         running_rows = DB.get_experiments_by_ids(running_ids)
         finished_rows = DB.get_experiments_excluding_ids(
@@ -165,11 +171,12 @@ class ServerState:
 
     def _format_experiment_row(self, row, session_map) -> dict:
         """Convert a DB experiment row to a dict for the frontend."""
-        session_id = row["session_id"]
+        row_dict = dict(row)
+        session_id = row_dict["session_id"]
         session = session_map.get(session_id)
         status = session.status if session else "finished"
 
-        timestamp = row["timestamp"]
+        timestamp = row_dict["timestamp"]
         if hasattr(timestamp, "isoformat"):
             timestamp = timestamp.isoformat()
         elif hasattr(timestamp, "strftime"):
@@ -182,9 +189,12 @@ class ServerState:
                 pass
 
         color_preview = []
-        if row["color_preview"]:
+        raw_color_preview = row_dict.get("color_preview")
+        if isinstance(raw_color_preview, list):
+            color_preview = raw_color_preview
+        elif raw_color_preview:
             try:
-                color_preview = json.loads(row["color_preview"])
+                color_preview = json.loads(raw_color_preview)
             except Exception:
                 color_preview = []
 
@@ -192,11 +202,15 @@ class ServerState:
             "session_id": session_id,
             "status": status,
             "timestamp": timestamp,
+            "runtime_seconds": DB._normalize_runtime_seconds(row_dict["runtime_seconds"]),
+            "active_runtime_seconds": DB._normalize_runtime_seconds(row_dict["active_runtime_seconds"]),
             "color_preview": color_preview,
-            "version_date": row["version_date"],
-            "run_name": row["name"],
-            "result": row["success"],
-            "project_id": session.project_id if session else None,
+            "version_date": row_dict["version_date"],
+            "run_name": row_dict["name"],
+            "custom_metrics": DB._parse_custom_metrics(row_dict["custom_metrics"]),
+            "thumb_label": DB._normalize_thumb_label(row_dict["thumb_label"]),
+            "tags": row_dict.get("tags", []),
+            "project_id": row_dict.get("project_id") or (session.project_id if session else None),
         }
 
     # ============================================================
@@ -220,11 +234,88 @@ class ServerState:
             "type": "graph_update",
             "session_id": session_id,
             "payload": {"nodes": [], "edges": []},
+            "active_runtime_seconds": self.get_persisted_active_runtime_seconds(session_id),
         })
 
-    def _sweep_dead_sessions(self) -> None:
+    def start_session_attempt(
+        self,
+        session_id: str,
+        project_id: str | None = None,
+        project_root: str | None = None,
+        clear_active_runtime: bool = True,
+        reset_runner_connection: bool = False,
+    ) -> Session:
+        """Mark a session as actively running and reset its in-memory timer."""
+        with self.lock:
+            session = self.sessions.get(session_id)
+            if session is None:
+                session = Session(session_id, project_id=project_id, project_root=project_root)
+                self.sessions[session_id] = session
+            if project_id is not None:
+                session.project_id = project_id
+            if project_root is not None:
+                session.project_root = project_root
+            session.status = "running"
+            session.runtime_started_at = time.perf_counter()
+            if reset_runner_connection:
+                session.sse_connected = False
+                session.registered_at = time.time()
+        if clear_active_runtime:
+            DB.clear_active_runtime_seconds(session_id)
+        return session
+
+    def get_live_runtime_seconds(self, session_id: str) -> float | None:
+        """Return the current elapsed runtime for a running session."""
+        with self.lock:
+            session = self.sessions.get(session_id)
+            started_at = session.runtime_started_at if session else None
+        if started_at is None:
+            return None
+        return max(0.0, time.perf_counter() - started_at)
+
+    def get_persisted_active_runtime_seconds(self, session_id: str) -> float | None:
+        """Return the last persisted active runtime checkpoint for a session."""
+        row = DB.get_experiment_detail(session_id)
+        if row is None:
+            return None
+        return DB._normalize_runtime_seconds(row["active_runtime_seconds"])
+
+    def checkpoint_session_runtime(self, session_id: str) -> float | None:
+        """Persist the current runtime checkpoint for a live session."""
+        elapsed = self.get_live_runtime_seconds(session_id)
+        if elapsed is None:
+            return None
+        DB.update_active_runtime_seconds(session_id, elapsed)
+        return elapsed
+
+    def finalize_session_runtime(self, session_id: str) -> float | None:
+        """Finalize the current run attempt and preserve the first canonical runtime."""
+        elapsed = self.get_live_runtime_seconds(session_id)
+        if elapsed is None:
+            return None
+        DB.finalize_runtime(session_id, elapsed)
+        with self.lock:
+            session = self.sessions.get(session_id)
+            if session:
+                session.runtime_started_at = None
+        return elapsed
+
+    def checkpoint_interrupted_session_runtime(self, session_id: str) -> float | None:
+        """Persist the best-known runtime for an interrupted attempt without finalizing it."""
+        elapsed = self.get_live_runtime_seconds(session_id)
+        if elapsed is None:
+            return None
+        DB.update_active_runtime_seconds(session_id, elapsed)
+        with self.lock:
+            session = self.sessions.get(session_id)
+            if session:
+                session.runtime_started_at = None
+        return elapsed
+
+    def sweep_dead_sessions(self) -> list[str]:
         """Mark sessions whose runner died before SSE connected as finished."""
         now = time.time()
+        swept_session_ids: list[str] = []
         for session in list(self.sessions.values()):
             if (
                 session.status == "running"
@@ -233,7 +324,23 @@ class ServerState:
                 and now - session.registered_at > SESSION_ORPHAN_TIMEOUT
             ):
                 logger.info(f"Sweeping orphaned session {session.session_id}")
+                self.checkpoint_interrupted_session_runtime(session.session_id)
                 session.status = "finished"
+                self.runner_event_queues.pop(session.session_id, None)
+                swept_session_ids.append(session.session_id)
+        return swept_session_ids
+
+    def _sweep_dead_sessions(self) -> list[str]:
+        """Backward-compatible alias for the public orphan-session sweep."""
+        return self.sweep_dead_sessions()
+
+    def get_session_snapshot(self) -> tuple[dict[str, Session], set[str]]:
+        """Return a fresh snapshot of sessions after reconciling orphaned runners."""
+        self.sweep_dead_sessions()
+        with self.lock:
+            session_map = dict(self.sessions)
+        running_ids = {sid for sid, session in session_map.items() if session.status == "running"}
+        return session_map, running_ids
 
     def load_finished_runs(self) -> None:
         """Load finished runs from database into sessions dict."""
@@ -315,7 +422,7 @@ class ServerState:
                 except subprocess.SubprocessError:
                     return None
 
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             self._run_git(project_id, project_root, "commit", "-m", now.isoformat(timespec="seconds"))
             return f"Version {now.strftime('%b')} {now.day}, {now.hour}:{now.strftime('%M')}"
         except (subprocess.SubprocessError, subprocess.TimeoutExpired) as e:
@@ -356,7 +463,7 @@ class ServerState:
             session = self.sessions.get(child_session_id)
             if session:
                 session.status = "running"
-                DB.update_timestamp(child_session_id, datetime.utcnow())
+                DB.update_timestamp(child_session_id, datetime.now(timezone.utc))
                 self.notify_experiment_list_changed()
 
         except Exception as e:

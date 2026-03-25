@@ -69,7 +69,7 @@ def _get_http_client():
     return _local.client
 
 
-def http_post(endpoint: str, data: dict) -> dict:
+def http_post(endpoint: str, data: dict, timeout: float | None = None) -> dict:
     """POST JSON to the server and return the response dict.
 
     Raises on failure -- callers that are best-effort should catch exceptions.
@@ -77,7 +77,7 @@ def http_post(endpoint: str, data: dict) -> dict:
     if not _server_base_url:
         raise RuntimeError("Server URL not set")
     client = _get_http_client()
-    resp = client.post(f"{_server_base_url}{endpoint}", json=data)
+    resp = client.post(f"{_server_base_url}{endpoint}", json=data, timeout=timeout)
     resp.raise_for_status()
     return resp.json()
 

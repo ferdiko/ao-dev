@@ -2,23 +2,37 @@ import { useEffect, useState } from "react";
 import { SortableHeader } from "./SortableHeader";
 import { PaginationBar } from "./PaginationBar";
 import type { SortState } from "../hooks/useStoredSortState";
-import { parseProjectRunTimestamp, type ProjectRun } from "../projectRuns";
+import type { ProjectRun } from "../projectRuns";
 
-function LiveTimer({ startTimestamp }: { startTimestamp: string }) {
-  const [elapsed, setElapsed] = useState(() => {
-    const start = parseProjectRunTimestamp(startTimestamp);
-    return Math.max(0, Math.floor((Date.now() - start) / 1000));
-  });
+function LiveTimer({ anchorSeconds }: { anchorSeconds: number | null }) {
+  const [anchor, setAnchor] = useState<{ seconds: number; clientMs: number } | null>(
+    anchorSeconds === null ? null : { seconds: anchorSeconds, clientMs: Date.now() },
+  );
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
+    if (anchorSeconds === null) {
+      setAnchor(null);
+      return;
+    }
+    setAnchor({ seconds: anchorSeconds, clientMs: Date.now() });
+  }, [anchorSeconds]);
+
+  useEffect(() => {
+    if (!anchor) return;
     const interval = window.setInterval(() => {
-      const start = parseProjectRunTimestamp(startTimestamp);
-      setElapsed(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+      setNowMs(Date.now());
     }, 1000);
     return () => window.clearInterval(interval);
-  }, [startTimestamp]);
+  }, [anchor]);
 
-  return <span className="live-timer">{elapsed}s</span>;
+  if (!anchor) {
+    return <span className="live-timer">—</span>;
+  }
+
+  const elapsed = Math.max(anchor.seconds, anchor.seconds + (nowMs - anchor.clientMs) / 1000);
+
+  return <span className="live-timer">{Math.floor(elapsed)}s</span>;
 }
 
 export function RunningRunsSection({
@@ -58,10 +72,9 @@ export function RunningRunsSection({
         <table className="runs-table">
           <thead>
             <tr>
+              <SortableHeader label="Run Name" sortKey="name" sort={sort} onSort={onSort} />
               <SortableHeader label="Start Time" sortKey="timestamp" sort={sort} onSort={onSort} />
               <SortableHeader label="Session ID" sortKey="sessionId" sort={sort} onSort={onSort} />
-              <SortableHeader label="Name" sortKey="name" sort={sort} onSort={onSort} />
-              <SortableHeader label="Input" sortKey="input" sort={sort} onSort={onSort} />
               <SortableHeader label="Version" sortKey="codeVersion" sort={sort} onSort={onSort} />
               <SortableHeader label="Latency" sortKey="latency" sort={sort} onSort={onSort} />
             </tr>
@@ -77,12 +90,11 @@ export function RunningRunsSection({
                 role="link"
                 aria-label={`Open run ${run.name}`}
               >
-                <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>
-                <td><span className="cell-id-link">{run.sessionId}</span></td>
                 <td>{run.name}</td>
-                <td className="cell-content">{run.input}</td>
+                <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>
+                <td><span className="cell-id-link" title={run.sessionId}>{run.sessionId.slice(0, 8)}</span></td>
                 <td><span className="cell-id-link">{run.codeVersion}</span></td>
-                <td className="cell-metric"><LiveTimer startTimestamp={run.timestamp} /></td>
+                <td className="cell-metric"><LiveTimer anchorSeconds={run.activeRuntimeSeconds} /></td>
               </tr>
             ))}
           </tbody>

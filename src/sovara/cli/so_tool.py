@@ -26,7 +26,7 @@ def format_timestamp(ts) -> str | None:
     """Format a timestamp to ISO 8601 without microseconds."""
     if ts is None:
         return None
-    from datetime import datetime
+    from datetime import datetime, timezone
     if isinstance(ts, str):
         ts = datetime.fromisoformat(ts)
     return ts.strftime("%Y-%m-%d %H:%M:%S")
@@ -446,7 +446,8 @@ def probe_command(args) -> None:
         "name": experiment["name"],
         "status": "finished",  # TODO: track running status
         "timestamp": format_timestamp(experiment["timestamp"]),
-        "result": experiment["success"] if experiment["success"] else None,
+        "custom_metrics": DB._parse_custom_metrics(experiment["custom_metrics"]),
+        "thumb_label": DB._normalize_thumb_label(experiment["thumb_label"]),
         "version_date": experiment["version_date"],
         "node_count": len(graph_topology.get("nodes", [])),
         "nodes": [
@@ -506,7 +507,8 @@ def experiments_command(args) -> None:
             "session_id": exp["session_id"],
             "name": exp["name"],
             "timestamp": format_timestamp(timestamp),
-            "result": exp["success"],
+            "custom_metrics": DB._parse_custom_metrics(exp["custom_metrics"]),
+            "thumb_label": DB._normalize_thumb_label(exp["thumb_label"]),
             "version_date": exp["version_date"],
         })
 
@@ -547,7 +549,7 @@ def _copy_experiment(session_id: str, run_name: str | None = None) -> str | dict
     DB.add_experiment(
         session_id=new_session_id,
         name=run_name,
-        timestamp=datetime.now(),
+        timestamp=datetime.now(timezone.utc),
         cwd=cwd,
         command=command,
         environment=environment,

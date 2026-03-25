@@ -3,11 +3,9 @@ import { useNavigate } from "react-router-dom";
 import {
   Settings,
   HelpCircle,
-  Users,
   ChevronDown,
   BarChart3,
-  Sparkles,
-  Lightbulb,
+  Database,
   Play,
   UserPlus,
   PanelLeft,
@@ -27,12 +25,7 @@ const observabilityItems: NavItem[] = [
 ];
 
 const optimizationItems: NavItem[] = [
-  {
-    label: "Sovara",
-    icon: <Sparkles size={16} />,
-    id: "sovara",
-  },
-  { label: "Manage Priors", icon: <Lightbulb size={16} />, id: "db-priors" },
+  { label: "SovaraDB", icon: <Database size={16} />, id: "db-priors" },
 ];
 
 const settingsItems: NavItem[] = [
@@ -42,14 +35,9 @@ const settingsItems: NavItem[] = [
     id: "project-settings",
   },
   { label: "Support", icon: <HelpCircle size={16} />, id: "support" },
-  {
-    label: "Collaboration",
-    icon: <Users size={16} />,
-    id: "collaboration",
-  },
 ];
 
-export function Sidebar({ projectId, style, children, user, collapsed, onToggleCollapse, onSetupProfile, onUserSettings, onProjectSettings }: {
+export function Sidebar({ projectId, style, children, user, collapsed, onToggleCollapse, onSetupProfile, onUserSettings, onProjectSettings, onSupport }: {
   projectId?: string;
   style?: React.CSSProperties;
   children?: React.ReactNode;
@@ -59,6 +47,7 @@ export function Sidebar({ projectId, style, children, user, collapsed, onToggleC
   onSetupProfile?: () => void;
   onUserSettings?: () => void;
   onProjectSettings?: () => void;
+  onSupport?: () => void;
 }) {
   const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -96,11 +85,11 @@ export function Sidebar({ projectId, style, children, user, collapsed, onToggleC
   const navRoutes: Record<string, string> = {
     runs: `/project/${projectId}`,
     "db-priors": `/project/${projectId}/priors`,
-    "sovara": `/project/${projectId}/sovara`,
   };
 
   const callbackItems: Record<string, (() => void) | undefined> = {
     "project-settings": onProjectSettings,
+    support: onSupport,
   };
 
   function renderNavItem(item: NavItem) {

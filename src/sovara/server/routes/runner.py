@@ -2,15 +2,16 @@
 
 import asyncio
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from typing import Optional
 
 from sovara.server.app import get_state
-from sovara.server.state import ServerState, Session, logger
+from sovara.server.state import ServerState, logger
 from sovara.server.database_manager import DB
+from sovara.common.custom_metrics import MetricsPayload
 from sovara.server.handlers.runner_handlers import (
     handle_add_node,
     handle_deregister_message,
@@ -64,10 +65,8 @@ class UpdateCommandRequest(BaseModel):
     command: str
 
 
-class LogRequest(BaseModel):
+class LogRequest(MetricsPayload):
     session_id: str
-    success: Optional[bool] = None
-    entry: Optional[str] = None
 
 
 # ============================================================
@@ -81,6 +80,7 @@ def register(req: RegisterRequest, state: ServerState = Depends(get_state)):
     # Upsert user
     if req.user_id:
         DB.upsert_user(req.user_id, req.user_full_name, req.user_email)
+        state.notify_user_changed()
 
     # Upsert project
     if req.project_id:
@@ -93,7 +93,7 @@ def register(req: RegisterRequest, state: ServerState = Depends(get_state)):
         session_id = req.prev_session_id
     else:
         session_id = str(uuid.uuid4())
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
         name = req.name
         if not name:
             run_index = DB.get_next_run_index(project_id=req.project_id)
@@ -106,16 +106,12 @@ def register(req: RegisterRequest, state: ServerState = Depends(get_state)):
         if req.project_id and req.project_root:
             state.request_git_version(session_id, req.project_id, req.project_root)
 
-    # Create/update session
-    with state.lock:
-        if session_id not in state.sessions:
-            session = Session(
-                session_id, project_id=req.project_id, project_root=req.project_root,
-            )
-            state.sessions[session_id] = session
-        else:
-            session = state.sessions[session_id]
-    session.status = "running"
+    state.start_session_attempt(
+        session_id,
+        project_id=req.project_id,
+        project_root=req.project_root,
+        reset_runner_connection=True,
+    )
 
     # Create SSE queue for this runner
     state.runner_event_queues[session_id] = asyncio.Queue()
@@ -154,7 +150,7 @@ def subrun(req: SubrunRequest, state: ServerState = Depends(get_state)):
         session_id = req.prev_session_id
     else:
         session_id = str(uuid.uuid4())
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
         name = req.name
         if not name:
             run_index = DB.get_next_run_index(project_id=project_id)
@@ -168,14 +164,12 @@ def subrun(req: SubrunRequest, state: ServerState = Depends(get_state)):
         if project_id and project_root:
             state.request_git_version(session_id, project_id, project_root)
 
-    # Create session
-    with state.lock:
-        if session_id not in state.sessions:
-            state.sessions[session_id] = Session(
-                session_id, project_id=project_id, project_root=project_root,
-            )
-        session = state.sessions[session_id]
-    session.status = "running"
+    state.start_session_attempt(
+        session_id,
+        project_id=project_id,
+        project_root=project_root,
+        reset_runner_connection=True,
+    )
     state.notify_experiment_list_changed()
 
     return {"session_id": session_id}
@@ -200,5 +194,5 @@ def update_command(req: UpdateCommandRequest, state: ServerState = Depends(get_s
 @router.post("/log")
 def log_message(req: LogRequest, state: ServerState = Depends(get_state)):
     state.touch_activity()
-    handle_log(state, {"session_id": req.session_id, "success": req.success, "entry": req.entry})
+    handle_log(state, {"session_id": req.session_id, "metrics": req.metrics})
     return {"ok": True}

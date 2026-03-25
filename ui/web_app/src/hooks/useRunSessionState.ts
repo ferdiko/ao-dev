@@ -6,12 +6,13 @@ import {
   editOutput,
   restartRun,
   eraseRun,
-  updateResult,
+  updateThumbLabel,
   type BackendGraphNode,
   type BackendGraphEdge,
   type GraphPayload,
 } from "../api";
 import { subscribe } from "../serverEvents";
+import type { Tag } from "../tags";
 
 export interface GraphNode {
   id: string;
@@ -70,7 +71,8 @@ function parseGraphPayload(payload: GraphPayload): { nodes: GraphNode[]; edges: 
 }
 
 export function useRunSessionState(sessionId: string) {
-  const [runResult, setRunResult] = useState("");
+  const [thumbLabel, setThumbLabel] = useState<boolean | null>(null);
+  const [selectedTags, setSelectedTags] = useState<Tag[]>([]);
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,18 +81,24 @@ export function useRunSessionState(sessionId: string) {
   const [editedFields, setEditedFields] = useState<Set<EditKey>>(new Set());
   const rerunning = rerunState !== "idle";
 
+  const refreshSessionDetail = useCallback(async () => {
+    const detail = await fetchExperimentDetail(sessionId);
+    setThumbLabel(detail.thumb_label);
+    setSelectedTags(detail.tags);
+    return detail;
+  }, [sessionId]);
+
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
 
     async function load() {
       try {
-        const [detail, graphResp] = await Promise.all([
-          fetchExperimentDetail(sessionId),
+        const [, graphResp] = await Promise.all([
+          refreshSessionDetail(),
           fetchGraph(sessionId),
         ]);
         if (cancelled) return;
-        setRunResult(detail.result);
         const parsed = parseGraphPayload(graphResp.payload);
         setGraphNodes(parsed.nodes);
         setGraphEdges(parsed.edges);
@@ -105,7 +113,7 @@ export function useRunSessionState(sessionId: string) {
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [refreshSessionDetail, sessionId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -155,15 +163,11 @@ export function useRunSessionState(sessionId: string) {
     trackRerun(restartRun(sessionId));
   }, [sessionId, trackRerun]);
 
-  const handleResultToggle = useCallback((result: "satisfactory" | "failed") => {
-    const nextResult = runResult === (result === "satisfactory" ? "Satisfactory" : "Failed")
-      ? ""
-      : result === "satisfactory"
-        ? "Satisfactory"
-        : "Failed";
-    setRunResult(nextResult);
-    updateResult(sessionId, nextResult).catch(console.error);
-  }, [sessionId, runResult]);
+  const handleThumbLabelToggle = useCallback((nextValue: boolean) => {
+    const resolvedValue = thumbLabel === nextValue ? null : nextValue;
+    setThumbLabel(resolvedValue);
+    updateThumbLabel(sessionId, resolvedValue).catch(console.error);
+  }, [sessionId, thumbLabel]);
 
   const handleErase = useCallback(() => {
     setEditedFields(new Set());
@@ -177,9 +181,8 @@ export function useRunSessionState(sessionId: string) {
 
     async function pollRunStatus() {
       try {
-        const detail = await fetchExperimentDetail(sessionId);
+        const detail = await refreshSessionDetail();
         if (cancelled) return;
-        setRunResult(detail.result);
         if (rerunState === "running" && detail.status === "finished") {
           setRerunState("idle");
         }
@@ -199,20 +202,23 @@ export function useRunSessionState(sessionId: string) {
     };
   }, [sessionId, rerunState]);
 
-  return {
-    editedFields,
-    editLock,
-    graphEdges,
-    graphNodes,
-    handleCancelEdit,
-    handleErase,
-    handleRerun,
-    handleResultToggle,
-    handleSaveAndRerun,
-    handleSaveEdit,
-    handleStartEdit,
-    loading,
-    rerunning,
-    runResult,
-  };
+    return {
+      editedFields,
+      editLock,
+      graphEdges,
+      graphNodes,
+      handleCancelEdit,
+      handleErase,
+      handleRerun,
+      handleThumbLabelToggle,
+      handleSaveAndRerun,
+      handleSaveEdit,
+      handleStartEdit,
+      loading,
+      refreshSessionDetail,
+      rerunning,
+      selectedTags,
+      setSelectedTags,
+      thumbLabel,
+    };
 }

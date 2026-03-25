@@ -7,7 +7,7 @@ from sovara.server.handlers.ui_handlers import (
     handle_edit_output,
     handle_update_node,
     handle_update_run_name,
-    handle_update_result,
+    handle_update_thumb_label,
     handle_update_notes,
     handle_erase,
 )
@@ -26,7 +26,7 @@ __all__ = [
     "handle_edit_output",
     "handle_update_node",
     "handle_update_run_name",
-    "handle_update_result",
+    "handle_update_thumb_label",
     "handle_update_notes",
     "handle_erase",
     # Runner handlers

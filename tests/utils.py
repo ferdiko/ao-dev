@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from sovara.server.database_manager import DB
 
 
@@ -34,7 +34,7 @@ def setup_test_session(session_id, name="Test Session", parent_session_id=None):
     DB.add_experiment(
         session_id=session_id,
         name=name,
-        timestamp=datetime.now(),
+        timestamp=datetime.now(timezone.utc),
         cwd=os.getcwd(),
         command="test",
         environment={"TEST": "true"},

@@ -9,7 +9,9 @@ import { SovaraPage } from "./pages/SovaraPage";
 import { SetupProfileModal } from "./components/SetupProfileModal";
 import { UserSettingsModal } from "./components/UserSettingsModal";
 import { ProjectSettingsModal } from "./components/ProjectSettingsModal";
+import { SupportModal } from "./components/SupportModal";
 import { useResize } from "./hooks/useResize";
+import { useUserRefresh } from "./hooks/useUserRefresh";
 import { fetchUser, fetchProject, type User } from "./api";
 import { UserContext, useUser } from "./userContext";
 import arrowImg from "./assets/arrow_spiral_tr_bl.png";
@@ -32,6 +34,7 @@ function AppLayout({ projectId, defaultCollapsed, children }: { projectId?: stri
   const [showSetupProfile, setShowSetupProfile] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
   const [showProjectSettings, setShowProjectSettings] = useState(false);
+  const [showSupport, setShowSupport] = useState(false);
   const [project, setProject] = useState<{ project_id: string; name: string; description: string } | null>(null);
 
   useEffect(() => {
@@ -59,6 +62,7 @@ function AppLayout({ projectId, defaultCollapsed, children }: { projectId?: stri
         onSetupProfile={() => setShowSetupProfile(true)}
         onUserSettings={() => setShowUserSettings(true)}
         onProjectSettings={() => setShowProjectSettings(true)}
+        onSupport={() => setShowSupport(true)}
       >
         {!sidebarCollapsed && (
           <div className="sidebar-resize-handle" onMouseDown={onSidebarHandleDown} />
@@ -117,6 +121,9 @@ function AppLayout({ projectId, defaultCollapsed, children }: { projectId?: stri
             navigate("/");
           }}
         />
+      )}
+      {showSupport && (
+        <SupportModal onClose={() => setShowSupport(false)} />
       )}
     </div>
   );
@@ -180,6 +187,8 @@ function App() {
   useEffect(() => {
     refreshUser();
   }, [refreshUser]);
+
+  useUserRefresh(refreshUser);
 
   return (
     <UserContext.Provider value={{ user, refreshUser }}>

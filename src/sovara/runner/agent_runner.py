@@ -24,7 +24,11 @@ from sovara.common.constants import (
 from sovara.cli.so_server import launch_daemon_server
 from sovara.common.project import ensure_project_configured
 from sovara.server.database_manager import DB
-from sovara.runner.context_manager import set_parent_session_id
+from sovara.runner.context_manager import (
+    clear_session_timer,
+    reset_current_session_timer,
+    set_parent_session_id,
+)
 from sovara.common.utils import set_server_url, http_post
 from sovara.runner.monkey_patching.apply_monkey_patches import apply_all_monkey_patches
 
@@ -137,6 +141,8 @@ class AgentRunner:
         self.shutdown_flag = False
         self.restart_event = threading.Event()
         self.process_id = os.getpid()
+        self._signal_count = 0
+        self._deregister_sent = False
 
         # Session
         self.session_id: Optional[str] = None
@@ -156,15 +162,21 @@ class AgentRunner:
 
     def _signal_handler(self, signum, frame) -> None:
         """Handle termination signals gracefully."""
+        self._signal_count += 1
+        if self._signal_count > 1:
+            os._exit(130)
         logger.info(f"Received signal {signum}, shutting down...")
-        self._send_deregister()
-        sys.exit(0)
+        self.shutdown_flag = True
+        self._send_deregister(timeout=0.5)
+        clear_session_timer(self.session_id)
+        raise SystemExit(130)
 
-    def _send_deregister(self) -> None:
+    def _send_deregister(self, timeout: float | None = None) -> None:
         """Send deregistration message to the server."""
-        if self.session_id:
+        if self.session_id and not self._deregister_sent:
             try:
-                http_post("/runner/deregister", {"session_id": self.session_id})
+                http_post("/runner/deregister", {"session_id": self.session_id}, timeout=timeout)
+                self._deregister_sent = True
             except Exception as e:
                 _log_error("Failed to send deregister", e)
 
@@ -368,6 +380,7 @@ class AgentRunner:
                 logger.info("[AgentRunner] Restart requested, rerunning script...")
                 self.restart_event.clear()
                 DB._occurrence_counters.clear()
+                reset_current_session_timer()
 
         return exit_code
 
@@ -413,7 +426,8 @@ class AgentRunner:
                 exit_code = self._run_normal_mode()
 
         finally:
-            self._send_deregister()
+            self._send_deregister(timeout=0.5 if self.shutdown_flag else None)
+            clear_session_timer(self.session_id)
             self.shutdown_flag = True
             if self.listener_thread:
                 self.listener_thread.join(timeout=2)

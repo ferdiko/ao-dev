@@ -37,7 +37,6 @@ def get_conn():
     conn = sqlite3.connect(
         db_path,
         timeout=30.0,
-        detect_types=sqlite3.PARSE_DECLTYPES,
     )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -95,18 +94,59 @@ def _init_db(conn):
             graph_topology TEXT,
             color_preview TEXT,
             timestamp TIMESTAMP DEFAULT (datetime('now')),
+            runtime_seconds REAL,
+            active_runtime_seconds REAL,
             cwd TEXT,
             command TEXT,
             environment TEXT,
             version_date TEXT,
             name TEXT,
             success TEXT CHECK (success IN ('', 'Satisfactory', 'Failed')),
+            custom_metrics TEXT NOT NULL DEFAULT '{}',
+            thumb_label INTEGER CHECK (thumb_label IN (0, 1)),
             notes TEXT,
             log TEXT,
             FOREIGN KEY (parent_session_id) REFERENCES experiments (session_id),
             FOREIGN KEY (project_id) REFERENCES projects (project_id),
             FOREIGN KEY (user_id) REFERENCES users (user_id),
             UNIQUE (parent_session_id, name)
+        )
+    """
+    )
+
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_metric_kinds (
+            project_id TEXT NOT NULL,
+            metric_key TEXT NOT NULL,
+            metric_kind TEXT NOT NULL CHECK (metric_kind IN ('bool', 'int', 'float')),
+            PRIMARY KEY (project_id, metric_key),
+            FOREIGN KEY (project_id) REFERENCES projects (project_id)
+        )
+    """
+    )
+
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_tags (
+            tag_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            name TEXT NOT NULL COLLATE NOCASE,
+            color TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT (datetime('now')),
+            FOREIGN KEY (project_id) REFERENCES projects (project_id),
+            UNIQUE (project_id, name)
+        )
+    """
+    )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS experiment_tags (
+            session_id TEXT NOT NULL,
+            tag_id TEXT NOT NULL,
+            PRIMARY KEY (session_id, tag_id),
+            FOREIGN KEY (session_id) REFERENCES experiments (session_id),
+            FOREIGN KEY (tag_id) REFERENCES project_tags (tag_id)
         )
     """
     )
@@ -160,6 +200,21 @@ def _init_db(conn):
         CREATE INDEX IF NOT EXISTS experiments_project_idx ON experiments(project_id, timestamp DESC)
     """
     )
+    c.execute(
+        """
+        CREATE INDEX IF NOT EXISTS project_tags_project_idx ON project_tags(project_id, name)
+    """
+    )
+    c.execute(
+        """
+        CREATE INDEX IF NOT EXISTS experiment_tags_session_idx ON experiment_tags(session_id)
+    """
+    )
+    c.execute(
+        """
+        CREATE INDEX IF NOT EXISTS experiment_tags_tag_idx ON experiment_tags(tag_id)
+    """
+    )
 
     # Create user_project_locations table (links users to project locations on disk)
     c.execute(
@@ -195,6 +250,74 @@ def _init_db(conn):
     """
     )
 
+    conn.commit()
+    _ensure_experiment_schema(conn)
+
+
+def _ensure_experiment_schema(conn):
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(experiments)").fetchall()
+    }
+    if "custom_metrics" not in columns:
+        conn.execute("ALTER TABLE experiments ADD COLUMN custom_metrics TEXT NOT NULL DEFAULT '{}'")
+    if "thumb_label" not in columns:
+        conn.execute("ALTER TABLE experiments ADD COLUMN thumb_label INTEGER CHECK (thumb_label IN (0, 1))")
+    if "runtime_seconds" not in columns:
+        conn.execute("ALTER TABLE experiments ADD COLUMN runtime_seconds REAL")
+    if "active_runtime_seconds" not in columns:
+        conn.execute("ALTER TABLE experiments ADD COLUMN active_runtime_seconds REAL")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_metric_kinds (
+            project_id TEXT NOT NULL,
+            metric_key TEXT NOT NULL,
+            metric_kind TEXT NOT NULL CHECK (metric_kind IN ('bool', 'int', 'float')),
+            PRIMARY KEY (project_id, metric_key),
+            FOREIGN KEY (project_id) REFERENCES projects (project_id)
+        )
+    """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_tags (
+            tag_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            name TEXT NOT NULL COLLATE NOCASE,
+            color TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT (datetime('now')),
+            FOREIGN KEY (project_id) REFERENCES projects (project_id),
+            UNIQUE (project_id, name)
+        )
+    """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS experiment_tags (
+            session_id TEXT NOT NULL,
+            tag_id TEXT NOT NULL,
+            PRIMARY KEY (session_id, tag_id),
+            FOREIGN KEY (session_id) REFERENCES experiments (session_id),
+            FOREIGN KEY (tag_id) REFERENCES project_tags (tag_id)
+        )
+    """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS project_tags_project_idx ON project_tags(project_id, name)
+    """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS experiment_tags_session_idx ON experiment_tags(session_id)
+    """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS experiment_tags_tag_idx ON experiment_tags(tag_id)
+    """
+    )
     conn.commit()
 
 
@@ -260,7 +383,6 @@ def add_experiment_query(
     cwd,
     command,
     env_json,
-    default_success,
     default_note,
     default_log,
     version_date,
@@ -269,7 +391,7 @@ def add_experiment_query(
 ):
     """Execute SQLite-specific INSERT for experiments table"""
     execute(
-        "INSERT OR REPLACE INTO experiments (session_id, parent_session_id, project_id, user_id, name, graph_topology, timestamp, cwd, command, environment, version_date, success, notes, log) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO experiments (session_id, parent_session_id, project_id, user_id, name, graph_topology, timestamp, runtime_seconds, active_runtime_seconds, cwd, command, environment, version_date, custom_metrics, thumb_label, notes, log) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_id,
             parent_session_id,
@@ -278,11 +400,14 @@ def add_experiment_query(
             name,
             default_graph,
             timestamp,
+            None,
+            None,
             cwd,
             command,
             env_json,
             version_date,
-            default_success,
+            "{}",
+            None,
             default_note,
             default_log,
         ),
@@ -320,19 +445,48 @@ def update_experiment_timestamp_query(timestamp, session_id):
     execute("UPDATE experiments SET timestamp=? WHERE session_id=?", (timestamp, session_id))
 
 
+def update_experiment_runtime_seconds_query(runtime_seconds, session_id):
+    """Persist the canonical completed runtime for an experiment."""
+    execute(
+        "UPDATE experiments SET runtime_seconds=? WHERE session_id=?",
+        (runtime_seconds, session_id),
+    )
+
+
+def update_experiment_active_runtime_seconds_query(active_runtime_seconds, session_id):
+    """Persist the latest runtime checkpoint for an experiment."""
+    execute(
+        "UPDATE experiments SET active_runtime_seconds=? WHERE session_id=?",
+        (active_runtime_seconds, session_id),
+    )
+
+
+def finalize_experiment_runtime_query(runtime_seconds, session_id):
+    """Finalize a run attempt without overwriting an existing canonical runtime."""
+    execute(
+        """
+        UPDATE experiments
+        SET runtime_seconds=COALESCE(runtime_seconds, ?),
+            active_runtime_seconds=NULL
+        WHERE session_id=?
+        """,
+        (runtime_seconds, session_id),
+    )
+
+
+def clear_experiment_active_runtime_seconds_query(session_id):
+    """Clear the active runtime checkpoint for an experiment."""
+    execute(
+        "UPDATE experiments SET active_runtime_seconds=NULL WHERE session_id=?",
+        (session_id,),
+    )
+
+
 def update_experiment_name_query(run_name, session_id):
     """Execute SQLite-specific UPDATE for experiments name"""
     execute(
         "UPDATE experiments SET name=? WHERE session_id=?",
         (run_name, session_id),
-    )
-
-
-def update_experiment_result_query(result, session_id):
-    """Execute SQLite-specific UPDATE for experiments success"""
-    execute(
-        "UPDATE experiments SET success=? WHERE session_id=?",
-        (result, session_id),
     )
 
 
@@ -360,13 +514,164 @@ def update_experiment_version_date_query(version_date, session_id):
     )
 
 
-def update_experiment_log_query(
-    updated_log, updated_success, color_preview_json, graph_json, session_id
-):
-    """Execute SQLite-specific UPDATE for experiments log, success, color_preview, and graph_topology"""
+def update_experiment_log_query(updated_log, graph_json, session_id):
+    """Execute SQLite-specific UPDATE for experiments log and graph_topology"""
     execute(
-        "UPDATE experiments SET log=?, success=?, color_preview=?, graph_topology=? WHERE session_id=?",
-        (updated_log, updated_success, color_preview_json, graph_json, session_id),
+        "UPDATE experiments SET log=?, graph_topology=? WHERE session_id=?",
+        (updated_log, graph_json, session_id),
+    )
+
+
+def update_experiment_custom_metrics_query(custom_metrics_json, session_id):
+    """Execute SQLite-specific UPDATE for experiments custom_metrics."""
+    execute(
+        "UPDATE experiments SET custom_metrics=? WHERE session_id=?",
+        (custom_metrics_json, session_id),
+    )
+
+
+def update_experiment_thumb_label_query(thumb_label, session_id):
+    """Execute SQLite-specific UPDATE for experiments thumb_label."""
+    db_value = None if thumb_label is None else int(thumb_label)
+    execute(
+        "UPDATE experiments SET thumb_label=? WHERE session_id=?",
+        (db_value, session_id),
+    )
+
+
+def get_experiment_metrics_context_query(session_id):
+    """Get project_id and custom_metrics for an experiment."""
+    return query_one(
+        "SELECT project_id, custom_metrics FROM experiments WHERE session_id=?",
+        (session_id,),
+    )
+
+
+def get_experiment_tag_context_query(session_id):
+    """Get project_id and user_id for an experiment."""
+    return query_one(
+        "SELECT project_id, user_id FROM experiments WHERE session_id=?",
+        (session_id,),
+    )
+
+
+def get_project_tags_query(project_id):
+    """Get all tag definitions for a project."""
+    return query_all(
+        """
+        SELECT tag_id, project_id, name, color, created_at
+        FROM project_tags
+        WHERE project_id=?
+        ORDER BY LOWER(name) ASC, tag_id ASC
+        """,
+        (project_id,),
+    )
+
+
+def get_project_tag_query(tag_id):
+    """Get a single project tag by ID."""
+    return query_one(
+        """
+        SELECT tag_id, project_id, name, color, created_at
+        FROM project_tags
+        WHERE tag_id=?
+        """,
+        (tag_id,),
+    )
+
+
+def get_project_tag_by_name_query(project_id, name):
+    """Get a project tag by name within one project."""
+    return query_one(
+        """
+        SELECT tag_id, project_id, name, color, created_at
+        FROM project_tags
+        WHERE project_id=? AND name=?
+        """,
+        (project_id, name),
+    )
+
+
+def get_project_tags_by_ids_query(project_id, tag_ids):
+    """Get a project's tags restricted to the provided IDs."""
+    if not tag_ids:
+        return []
+    placeholders = ",".join("?" * len(tag_ids))
+    return query_all(
+        f"""
+        SELECT tag_id, project_id, name, color, created_at
+        FROM project_tags
+        WHERE project_id=? AND tag_id IN ({placeholders})
+        ORDER BY LOWER(name) ASC, tag_id ASC
+        """,
+        (project_id, *tag_ids),
+    )
+
+
+def insert_project_tag_query(tag_id, project_id, name, color):
+    """Insert a new project tag."""
+    execute(
+        """
+        INSERT INTO project_tags (tag_id, project_id, name, color)
+        VALUES (?, ?, ?, ?)
+        """,
+        (tag_id, project_id, name, color),
+    )
+
+
+def delete_project_tag_query(project_id, tag_id):
+    """Delete a project tag and all run assignments for it."""
+    execute("DELETE FROM experiment_tags WHERE tag_id=?", (tag_id,))
+    execute("DELETE FROM project_tags WHERE project_id=? AND tag_id=?", (project_id, tag_id))
+
+
+def get_tags_for_sessions_query(session_ids):
+    """Get assigned tags for one or more sessions."""
+    if not session_ids:
+        return []
+    placeholders = ",".join("?" * len(session_ids))
+    return query_all(
+        f"""
+        SELECT et.session_id, pt.tag_id, pt.project_id, pt.name, pt.color, pt.created_at
+        FROM experiment_tags et
+        JOIN project_tags pt ON pt.tag_id = et.tag_id
+        WHERE et.session_id IN ({placeholders})
+        ORDER BY LOWER(pt.name) ASC, pt.tag_id ASC
+        """,
+        tuple(session_ids),
+    )
+
+
+def replace_experiment_tags_query(session_id, tag_ids):
+    """Replace the complete tag assignment set for a run."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM experiment_tags WHERE session_id=?", (session_id,))
+    if tag_ids:
+        cursor.executemany(
+            "INSERT INTO experiment_tags (session_id, tag_id) VALUES (?, ?)",
+            [(session_id, tag_id) for tag_id in tag_ids],
+        )
+    conn.commit()
+
+
+def get_project_metric_kinds_query(project_id):
+    """Get all registered metric kinds for a project."""
+    return query_all(
+        "SELECT metric_key, metric_kind FROM project_metric_kinds WHERE project_id=? ORDER BY metric_key ASC",
+        (project_id,),
+    )
+
+
+def upsert_project_metric_kind_query(project_id, metric_key, metric_kind):
+    """Insert or update the registered kind for a project metric."""
+    execute(
+        """
+        INSERT INTO project_metric_kinds (project_id, metric_key, metric_kind)
+        VALUES (?, ?, ?)
+        ON CONFLICT(project_id, metric_key) DO UPDATE SET metric_kind=excluded.metric_kind
+        """,
+        (project_id, metric_key, metric_kind),
     )
 
 
@@ -456,7 +761,7 @@ def get_all_experiments_sorted_query(limit=None, offset=0, project_id=None, user
         conditions.append("user_id=?")
         params.append(user_id)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    sql = f"SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments{where} ORDER BY timestamp DESC"
+    sql = f"SELECT session_id, project_id, timestamp, runtime_seconds, active_runtime_seconds, color_preview, name, version_date, custom_metrics, thumb_label FROM experiments{where} ORDER BY timestamp DESC"
     if limit is not None:
         sql += " LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -469,7 +774,7 @@ def get_experiments_by_ids_query(session_ids, project_id=None, user_id=None):
         return []
     placeholders = ",".join("?" * len(session_ids))
     params = list(session_ids)
-    sql = f"SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments WHERE session_id IN ({placeholders})"
+    sql = f"SELECT session_id, project_id, timestamp, runtime_seconds, active_runtime_seconds, color_preview, name, version_date, custom_metrics, thumb_label FROM experiments WHERE session_id IN ({placeholders})"
     if project_id:
         sql += " AND project_id=?"
         params.append(project_id)
@@ -493,7 +798,7 @@ def get_experiments_excluding_ids_query(session_ids, limit=None, offset=0, proje
     if user_id:
         conditions.append("user_id=?")
         params.append(user_id)
-    sql = f"SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments WHERE {' AND '.join(conditions)} ORDER BY timestamp DESC"
+    sql = f"SELECT session_id, project_id, timestamp, runtime_seconds, active_runtime_seconds, color_preview, name, version_date, custom_metrics, thumb_label FROM experiments WHERE {' AND '.join(conditions)} ORDER BY timestamp DESC"
     if limit is not None:
         sql += " LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -535,7 +840,25 @@ def get_experiment_count_query(project_id=None, user_id=None):
 
 
 # Filtered experiment queries for server-side pagination/sorting/filtering
-_EXPERIMENT_SORT_COLUMNS = {"timestamp", "session_id", "name", "version_date", "success"}
+_EXPERIMENT_SORT_COLUMNS = {
+    "timestamp",
+    "session_id",
+    "name",
+    "version_date",
+    "thumb_label",
+    "runtime_seconds",
+    "active_runtime_seconds",
+}
+
+
+def _normalize_timestamp_filter_value(value, end_of_range=False):
+    """Normalize date/date-time filter values into SQLite timestamp strings."""
+    normalized = str(value).strip().replace("T", " ")
+    if len(normalized) == 10:
+        return normalized + (" 23:59:59" if end_of_range else " 00:00:00")
+    if len(normalized) == 16:
+        return normalized + (":59" if end_of_range else ":00")
+    return normalized
 
 
 def _build_experiment_filters(filters):
@@ -548,11 +871,6 @@ def _build_experiment_filters(filters):
     if filters.get("session_id"):
         conditions.append("LOWER(session_id) LIKE ?")
         params.append(f"%{filters['session_id'].lower()}%")
-    if filters.get("success"):
-        values = filters["success"]
-        placeholders = ",".join("?" * len(values))
-        conditions.append(f"success IN ({placeholders})")
-        params.extend(values)
     if filters.get("version_date"):
         values = filters["version_date"]
         placeholders = ",".join("?" * len(values))
@@ -560,10 +878,10 @@ def _build_experiment_filters(filters):
         params.extend(values)
     if filters.get("timestamp_from"):
         conditions.append("timestamp >= ?")
-        params.append(filters["timestamp_from"])
+        params.append(_normalize_timestamp_filter_value(filters["timestamp_from"], end_of_range=False))
     if filters.get("timestamp_to"):
         conditions.append("timestamp <= ?")
-        params.append(filters["timestamp_to"] + " 23:59:59")
+        params.append(_normalize_timestamp_filter_value(filters["timestamp_to"], end_of_range=True))
     return conditions, params
 
 
@@ -590,7 +908,7 @@ def query_experiments_filtered(project_id, exclude_ids, filters, sort_col, sort_
     sort_dir = "DESC" if sort_dir.upper() != "ASC" else "ASC"
     count_row = query_one(f"SELECT COUNT(*) as count FROM experiments{where}", tuple(params))
     total = count_row["count"] if count_row else 0
-    sql = f"SELECT session_id, timestamp, color_preview, name, version_date, success FROM experiments{where} ORDER BY {sort_col} {sort_dir}"
+    sql = f"SELECT session_id, project_id, timestamp, runtime_seconds, active_runtime_seconds, color_preview, name, version_date, custom_metrics, thumb_label FROM experiments{where} ORDER BY {sort_col} {sort_dir}"
     data_params = list(params)
     if limit is not None:
         sql += " LIMIT ? OFFSET ?"
@@ -618,7 +936,7 @@ def get_distinct_versions_query(project_id=None, user_id=None):
 def get_experiment_detail_query(session_id):
     """Get detail fields for a single experiment."""
     return query_one(
-        "SELECT name, timestamp, success, notes, log, version_date FROM experiments WHERE session_id=?",
+        "SELECT session_id, project_id, name, timestamp, runtime_seconds, active_runtime_seconds, custom_metrics, thumb_label, notes, log, version_date FROM experiments WHERE session_id=?",
         (session_id,),
     )
 
@@ -671,6 +989,7 @@ def copy_llm_calls_query(old_session_id, new_session_id):
 # Database cleanup queries
 def delete_all_experiments_query():
     """Delete all records from experiments table."""
+    execute("DELETE FROM experiment_tags")
     execute("DELETE FROM experiments")
 
 
@@ -685,15 +1004,56 @@ def _delete_sessions_data(session_ids):
         return
     placeholders = ",".join("?" * len(session_ids))
     ids = tuple(session_ids)
+    execute(f"DELETE FROM experiment_tags WHERE session_id IN ({placeholders})", ids)
     execute(f"DELETE FROM llm_calls WHERE session_id IN ({placeholders})", ids)
     execute(f"DELETE FROM lessons_applied WHERE session_id IN ({placeholders})", ids)
     execute(f"DELETE FROM experiments WHERE session_id IN ({placeholders})", ids)
+
+
+def delete_experiments_by_ids_query(session_ids, user_id=None):
+    """Delete experiments by session ID, optionally scoped to a user. Returns deleted count."""
+    if not session_ids:
+        return 0
+
+    unique_ids = list(dict.fromkeys(session_ids))
+    if user_id:
+        placeholders = ",".join("?" * len(unique_ids))
+        rows = query_all(
+            f"SELECT session_id FROM experiments WHERE user_id=? AND session_id IN ({placeholders})",
+            (user_id, *unique_ids),
+        )
+        unique_ids = [row["session_id"] for row in rows]
+
+    if not unique_ids:
+        return 0
+
+    placeholders = ",".join("?" * len(unique_ids))
+    project_rows = query_all(
+        f"SELECT DISTINCT project_id FROM experiments WHERE session_id IN ({placeholders}) AND project_id IS NOT NULL",
+        tuple(unique_ids),
+    )
+    project_ids = [row["project_id"] for row in project_rows]
+
+    _delete_sessions_data(unique_ids)
+
+    for project_id in project_ids:
+        row = query_one(
+            "SELECT MAX(timestamp) AS last_run_at FROM experiments WHERE project_id=?",
+            (project_id,),
+        )
+        execute(
+            "UPDATE projects SET last_run_at=? WHERE project_id=?",
+            ((row["last_run_at"] if row else None), project_id),
+        )
+
+    return len(unique_ids)
 
 
 def delete_project_query(project_id):
     """Delete a project and all associated experiments, llm_calls, lessons_applied, and locations."""
     sessions = query_all("SELECT session_id FROM experiments WHERE project_id=?", (project_id,))
     _delete_sessions_data([s["session_id"] for s in sessions])
+    execute("DELETE FROM project_tags WHERE project_id=?", (project_id,))
     execute("DELETE FROM user_project_locations WHERE project_id=?", (project_id,))
     execute("DELETE FROM projects WHERE project_id=?", (project_id,))
 
@@ -746,9 +1106,9 @@ def get_llm_call_output_api_type_query(session_id, node_id):
 
 
 def get_experiment_log_success_graph_query(session_id):
-    """Get log, success, and graph_topology from experiments by session_id."""
+    """Get log and graph_topology from experiments by session_id."""
     return query_one(
-        "SELECT log, success, graph_topology FROM experiments WHERE session_id=?",
+        "SELECT log, graph_topology FROM experiments WHERE session_id=?",
         (session_id,),
     )
 
@@ -773,7 +1133,7 @@ def get_next_run_index_query(project_id=None, user_id=None):
 def get_experiment_metadata_query(session_id):
     """Get experiment metadata for probe command."""
     return query_one(
-        """SELECT session_id, parent_session_id, name, timestamp, success, notes, log,
+        """SELECT session_id, parent_session_id, name, timestamp, custom_metrics, thumb_label, notes, log,
                   graph_topology, version_date
            FROM experiments WHERE session_id=?""",
         (session_id,),

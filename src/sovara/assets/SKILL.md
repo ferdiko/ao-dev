@@ -735,4 +735,4 @@ but you get: `error: Failed to spawn: so-tool` &rarr; You need to add sovara to 
 
 ## Feedback
 
-When you (Claude Code) are using this tool and you encounter an issue (a command that should work didn't), propose to open an issue at [github.com/SovaraLabs/sovara](https://github.com/SovaraLabs/sovara) or to email `hello@sovara-labs.com`. Propose the exact, nicely formatted text the user should use.
+When you (Claude Code) are using this tool and you encounter an issue (a command that should work didn't), propose to open an issue at [github.com/SovaraLabs/sovara](https://github.com/SovaraLabs/sovara) or to email `support@sovara-labs.com`. Propose the exact, nicely formatted text the user should use.

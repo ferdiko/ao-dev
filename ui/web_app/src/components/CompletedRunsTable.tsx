@@ -1,39 +1,61 @@
-import type { KeyboardEvent } from "react";
-import { SortableHeader } from "./SortableHeader";
+import type { KeyboardEvent, MouseEvent } from "react";
+import { ThumbsDown, ThumbsUp } from "lucide-react";
+
+import type { CustomMetricColumn } from "../api";
 import type { SortState } from "../hooks/useStoredSortState";
 import type { ProjectRun } from "../projectRuns";
+import { SortableHeader } from "./SortableHeader";
+import { TagBadge } from "./TagDropdown";
+
+function formatCustomMetricValue(value: boolean | number | undefined) {
+  if (value === undefined) return "—";
+  if (typeof value === "boolean") return value ? "True" : "False";
+  return Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/\.?0+$/, "");
+}
 
 export function CompletedRunsTable({
   allVisibleSelected,
+  formatTimestamp,
+  metricColumns,
   onOpenRun,
   onRowKeyDown,
+  onRowContextMenu,
   onSort,
   onToggleSelect,
   onToggleSelectAll,
   runs,
   selectedIds,
   sort,
-  formatTimestamp,
+  visibleColumnKeys,
 }: {
   allVisibleSelected: boolean;
+  formatTimestamp: (raw: string) => string;
+  metricColumns: CustomMetricColumn[];
   onOpenRun: (sessionId: string) => void;
   onRowKeyDown: (event: KeyboardEvent<HTMLTableRowElement>, sessionId: string) => void;
+  onRowContextMenu: (event: MouseEvent<HTMLTableRowElement>, sessionId: string) => void;
   onSort: (key: string) => void;
   onToggleSelect: (id: string) => void;
   onToggleSelectAll: () => void;
   runs: ProjectRun[];
   selectedIds: Set<string>;
   sort: SortState;
-  formatTimestamp: (raw: string) => string;
+  visibleColumnKeys: Set<string>;
 }) {
+  const show = (key: string) => visibleColumnKeys.has(key);
+  const visibleMetricColumns = metricColumns.filter((column) => show(`metric:${column.key}`));
+  const leadingColumnCount = 1
+    + ["timestamp", "sessionId", "name", "codeVersion", "tags", "latency", "thumbLabel"].filter(show).length;
+
   return (
     <table className="runs-table">
       <thead>
-        <tr className="header-group-row">
-          <th className="cell-checkbox" />
-          <th colSpan={10} />
-          <th colSpan={2} className="header-group-label">Custom Metrics</th>
-        </tr>
+        {visibleMetricColumns.length > 0 && (
+          <tr className="header-group-row">
+            <th colSpan={leadingColumnCount} />
+            <th className="header-group-label" colSpan={visibleMetricColumns.length}>CUSTOM METRICS</th>
+          </tr>
+        )}
         <tr>
           <th className="cell-checkbox">
             <input
@@ -42,18 +64,22 @@ export function CompletedRunsTable({
               onChange={onToggleSelectAll}
             />
           </th>
-          <SortableHeader label="Start Time" sortKey="timestamp" sort={sort} onSort={onSort} />
-          <SortableHeader label="Session ID" sortKey="sessionId" sort={sort} onSort={onSort} />
-          <SortableHeader label="Name" sortKey="name" sort={sort} onSort={onSort} />
-          <SortableHeader label="Input" sortKey="input" sort={sort} onSort={onSort} />
-          <SortableHeader label="Output" sortKey="output" sort={sort} onSort={onSort} />
-          <SortableHeader label="Version" sortKey="codeVersion" sort={sort} onSort={onSort} />
-          <SortableHeader label="Tags" sortKey="tags" sort={sort} onSort={onSort} />
-          <SortableHeader label="Comment" sortKey="comment" sort={sort} onSort={onSort} />
-          <SortableHeader label="Latency" sortKey="latency" sort={sort} onSort={onSort} />
-          <SortableHeader label="Cost" sortKey="cost" sort={sort} onSort={onSort} />
-          <SortableHeader label="Success" sortKey="success" sort={sort} onSort={onSort} />
-          <SortableHeader label="Confidence" sortKey="confidence" sort={sort} onSort={onSort} />
+          {show("name") && <SortableHeader label="Run Name" sortKey="name" sort={sort} onSort={onSort} />}
+          {show("timestamp") && <SortableHeader label="Start Time" sortKey="timestamp" sort={sort} onSort={onSort} />}
+          {show("sessionId") && <SortableHeader label="Session ID" sortKey="sessionId" sort={sort} onSort={onSort} />}
+          {show("codeVersion") && <SortableHeader label="Version" sortKey="codeVersion" sort={sort} onSort={onSort} />}
+          {show("tags") && <SortableHeader label="Tags" sortKey="tags" sort={sort} onSort={onSort} />}
+          {show("latency") && <SortableHeader label="Latency" sortKey="latency" sort={sort} onSort={onSort} />}
+          {show("thumbLabel") && <SortableHeader label="Label" sortKey="label" sort={sort} onSort={onSort} />}
+          {visibleMetricColumns.map((column) => (
+            <SortableHeader
+              key={column.key}
+              label={column.key}
+              sortKey={`metric:${column.key}`}
+              sort={sort}
+              onSort={onSort}
+            />
+          ))}
         </tr>
       </thead>
       <tbody>
@@ -62,6 +88,7 @@ export function CompletedRunsTable({
             key={run.id}
             className="clickable-row"
             onClick={() => onOpenRun(run.sessionId)}
+            onContextMenu={(event) => onRowContextMenu(event, run.sessionId)}
             onKeyDown={(event) => onRowKeyDown(event, run.sessionId)}
             tabIndex={0}
             role="link"
@@ -74,26 +101,38 @@ export function CompletedRunsTable({
                 onChange={() => onToggleSelect(run.id)}
               />
             </td>
-            <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>
-            <td><span className="cell-id-link">{run.sessionId}</span></td>
-            <td>{run.name}</td>
-            <td className="cell-content">{run.input}</td>
-            <td className="cell-content">{run.output || "—"}</td>
-            <td><span className="cell-id-link">{run.codeVersion}</span></td>
-            <td className="cell-tags">{"—"}</td>
-            <td className="cell-comment">{run.comment || "—"}</td>
-            <td className="cell-metric">{run.latency}</td>
-            <td className="cell-metric">{run.cost}</td>
-            <td className="cell-metric">
-              {run.success === null ? "—" : run.success ? (
-                <span className="metric-badge success">Pass</span>
-              ) : (
-                <span className="metric-badge fail">Fail</span>
-              )}
-            </td>
-            <td className="cell-metric">
-              {run.confidence === null ? "—" : `${run.confidence}%`}
-            </td>
+            {show("name") && <td>{run.name}</td>}
+            {show("timestamp") && <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>}
+            {show("sessionId") && (
+              <td>
+                <span className="cell-id-link" title={run.sessionId}>{run.sessionId.slice(0, 8)}</span>
+              </td>
+            )}
+            {show("codeVersion") && <td><span className="cell-id-link">{run.codeVersion}</span></td>}
+            {show("tags") && (
+              <td className="cell-tags">
+                {run.tags.length > 0 ? run.tags.map((tag) => (
+                  <TagBadge key={tag.tag_id} tag={tag} size="small" />
+                )) : "—"}
+              </td>
+            )}
+            {show("latency") && <td className="cell-metric">{run.latency}</td>}
+            {show("thumbLabel") && (
+              <td className="cell-metric">
+                {run.thumbLabel === null ? (
+                  "—"
+                ) : run.thumbLabel ? (
+                  <span className="metric-badge success"><ThumbsUp size={12} /></span>
+                ) : (
+                  <span className="metric-badge fail"><ThumbsDown size={12} /></span>
+                )}
+              </td>
+            )}
+            {visibleMetricColumns.map((column) => (
+              <td key={column.key} className="cell-metric">
+                {formatCustomMetricValue(run.customMetrics[column.key])}
+              </td>
+            ))}
           </tr>
         ))}
       </tbody>

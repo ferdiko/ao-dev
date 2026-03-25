@@ -11,8 +11,10 @@ import random
 import threading
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional, Any
 
+from sovara.common.custom_metrics import MetricColumn, get_metric_kind
 from sovara.common.logger import logger
 
 from sovara.runner.monkey_patching.api_parser import (
@@ -23,6 +25,14 @@ from sovara.runner.monkey_patching.api_parser import (
     api_obj_to_response_ok,
     merge_filtered_into_raw,
 )
+
+
+class ResourceNotFoundError(LookupError):
+    """Raised when a request references a missing DB-backed resource."""
+
+
+class BadRequestError(ValueError):
+    """Raised when a request payload cannot be applied safely."""
 
 
 @dataclass
@@ -98,12 +108,39 @@ class DatabaseManager:
     def execute(self, query, params=None):
         return self.backend.execute(query, params or ())
 
+    def clear_connections(self) -> None:
+        """Release any backend-managed connections/resources for the current process."""
+        clear = getattr(self.backend, "clear_connections", None)
+        if callable(clear):
+            clear()
+
     def set_input_overwrite(self, session_id, node_id, new_input):
         """UI sends to_show data; merge into original raw to build full format for the runner.
         Returns the full-format overwrite string, or None if unchanged."""
-        new_to_show = json.loads(new_input)
+        try:
+            new_to_show = json.loads(new_input)
+        except json.JSONDecodeError as exc:
+            raise BadRequestError(
+                f"Invalid input JSON for session_id={session_id}, node_id={node_id}: {exc.msg}."
+            ) from exc
+
         row = self.backend.get_llm_call_input_api_type_query(session_id, node_id)
-        original = json.loads(row["input"])
+        if not row:
+            raise ResourceNotFoundError(
+                f"Input node not found for session_id={session_id}, node_id={node_id}."
+            )
+
+        try:
+            original = json.loads(row["input"])
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise BadRequestError(
+                f"Stored input payload is invalid for session_id={session_id}, node_id={node_id}."
+            ) from exc
+
+        if not isinstance(original, dict) or "raw" not in original or "to_show" not in original:
+            raise BadRequestError(
+                f"Stored input payload is incomplete for session_id={session_id}, node_id={node_id}."
+            )
 
         if json.dumps(new_to_show, sort_keys=True) == json.dumps(original["to_show"], sort_keys=True):
             return None
@@ -116,18 +153,38 @@ class DatabaseManager:
     def set_output_overwrite(self, session_id, node_id, new_output: str):
         """UI sends to_show data; merge into original raw to build full format for the runner.
         Returns the full-format overwrite string, or None if unchanged or error."""
+        try:
+            new_to_show = json.loads(new_output)
+        except json.JSONDecodeError as exc:
+            raise BadRequestError(
+                f"Invalid output JSON for session_id={session_id}, node_id={node_id}: {exc.msg}."
+            ) from exc
+
         row = self.backend.get_llm_call_output_api_type_query(session_id, node_id)
 
         if not row:
-            logger.error(
-                f"No llm_calls record found for session_id={session_id}, node_id={node_id}"
+            raise ResourceNotFoundError(
+                f"Output node not found for session_id={session_id}, node_id={node_id}."
             )
-            return None
+
+        if row["output"] is None:
+            raise BadRequestError(
+                f"No stored output is available for session_id={session_id}, node_id={node_id}."
+            )
 
         try:
-            new_to_show = json.loads(new_output)
             original = json.loads(row["output"])
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise BadRequestError(
+                f"Stored output payload is invalid for session_id={session_id}, node_id={node_id}."
+            ) from exc
 
+        if not isinstance(original, dict) or "raw" not in original or "to_show" not in original:
+            raise BadRequestError(
+                f"Stored output payload is incomplete for session_id={session_id}, node_id={node_id}."
+            )
+
+        try:
             merged_raw = merge_filtered_into_raw(original["raw"], new_to_show)
             overwrite = json.dumps({"raw": merged_raw, "to_show": new_to_show}, sort_keys=True)
 
@@ -135,8 +192,9 @@ class DatabaseManager:
             self.backend.set_output_overwrite_query(overwrite, session_id, node_id)
             return overwrite
         except Exception as e:
-            logger.error(f"Failed to parse output edit into API object: {e}")
-            return None
+            raise BadRequestError(
+                f"Invalid output edit for session_id={session_id}, node_id={node_id}: {e}"
+            ) from e
 
     def erase(self, session_id):
         """Erase experiment data."""
@@ -164,22 +222,22 @@ class DatabaseManager:
         user_id=None,
     ):
         """Add experiment to database."""
-        from sovara.common.constants import DEFAULT_LOG, DEFAULT_NOTE, DEFAULT_SUCCESS
+        from sovara.common.constants import DEFAULT_LOG, DEFAULT_NOTE
 
         default_graph = json.dumps({"nodes": [], "edges": []})
         parent_session_id = parent_session_id if parent_session_id else session_id
         env_json = json.dumps(environment)
+        serialized_timestamp = self._serialize_timestamp(timestamp)
 
         self.backend.add_experiment_query(
             session_id,
             parent_session_id,
             name,
             default_graph,
-            timestamp,
+            serialized_timestamp,
             cwd,
             command,
             env_json,
-            DEFAULT_SUCCESS,
             DEFAULT_NOTE,
             DEFAULT_LOG,
             version_date,
@@ -192,13 +250,92 @@ class DatabaseManager:
         self.backend.update_experiment_graph_topology_query(graph_json, session_id)
 
     def update_timestamp(self, session_id, timestamp):
-        self.backend.update_experiment_timestamp_query(timestamp, session_id)
+        self.backend.update_experiment_timestamp_query(self._serialize_timestamp(timestamp), session_id)
+
+    def update_runtime_seconds(self, session_id, runtime_seconds):
+        normalized = self._normalize_runtime_seconds(runtime_seconds)
+        self.backend.update_experiment_runtime_seconds_query(normalized, session_id)
+
+    def update_active_runtime_seconds(self, session_id, active_runtime_seconds):
+        normalized = self._normalize_runtime_seconds(active_runtime_seconds)
+        self.backend.update_experiment_active_runtime_seconds_query(normalized, session_id)
+
+    def clear_active_runtime_seconds(self, session_id):
+        self.backend.clear_experiment_active_runtime_seconds_query(session_id)
+
+    def checkpoint_active_runtime(self, session_id, active_runtime_seconds=None):
+        if active_runtime_seconds is None:
+            from sovara.runner.context_manager import get_session_runtime_seconds
+
+            active_runtime_seconds = get_session_runtime_seconds(session_id)
+        if active_runtime_seconds is None:
+            return None
+        normalized = self._normalize_runtime_seconds(active_runtime_seconds)
+        self.backend.update_experiment_active_runtime_seconds_query(normalized, session_id)
+        return normalized
+
+    def finalize_runtime(self, session_id, runtime_seconds):
+        normalized = self._normalize_runtime_seconds(runtime_seconds)
+        self.backend.finalize_experiment_runtime_query(normalized, session_id)
+        return normalized
 
     def update_run_name(self, session_id, run_name):
         self.backend.update_experiment_name_query(run_name, session_id)
 
-    def update_result(self, session_id, result):
-        self.backend.update_experiment_result_query(result, session_id)
+    def update_thumb_label(self, session_id, thumb_label):
+        self.backend.update_experiment_thumb_label_query(thumb_label, session_id)
+
+    @staticmethod
+    def _normalize_tag_row(row):
+        return {
+            "tag_id": row["tag_id"],
+            "name": row["name"],
+            "color": row["color"],
+        }
+
+    def get_project_tags(self, project_id):
+        rows = self.backend.get_project_tags_query(project_id)
+        return [self._normalize_tag_row(row) for row in rows]
+
+    def create_project_tag(self, project_id, name, color):
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("Project not found.")
+
+        normalized_name = str(name).strip()
+        if not normalized_name:
+            raise ValueError("Tag name is required.")
+
+        if self.backend.get_project_tag_by_name_query(project_id, normalized_name):
+            raise ValueError("A tag with this name already exists in the project.")
+
+        tag_id = str(uuid.uuid4())
+        self.backend.insert_project_tag_query(tag_id, project_id, normalized_name, color)
+        return self._normalize_tag_row(self.backend.get_project_tag_query(tag_id))
+
+    def delete_project_tag(self, project_id, tag_id):
+        row = self.backend.get_project_tag_query(tag_id)
+        if row is None or row["project_id"] != project_id:
+            raise ValueError("Tag not found.")
+        self.backend.delete_project_tag_query(project_id, tag_id)
+
+    def replace_run_tags(self, session_id, tag_ids):
+        context = self.backend.get_experiment_tag_context_query(session_id)
+        if context is None:
+            raise ValueError("Run not found.")
+
+        project_id = context["project_id"]
+        if not project_id:
+            raise ValueError("Tags can only be assigned to project-scoped runs.")
+
+        unique_tag_ids = list(dict.fromkeys(tag_ids))
+        if unique_tag_ids:
+            project_tags = self.backend.get_project_tags_by_ids_query(project_id, unique_tag_ids)
+            if len(project_tags) != len(unique_tag_ids):
+                raise ValueError("All tags must belong to the run's project.")
+
+        self.backend.replace_experiment_tags_query(session_id, unique_tag_ids)
+        return self._get_tags_for_sessions_map([session_id]).get(session_id, [])
 
     def update_notes(self, session_id, notes):
         self.backend.update_experiment_notes_query(notes, session_id)
@@ -209,46 +346,236 @@ class DatabaseManager:
     def update_experiment_version_date(self, session_id, version_date):
         self.backend.update_experiment_version_date_query(version_date, session_id)
 
-    def _color_graph_nodes(self, graph, color):
-        """Update border_color for each node."""
-        for node in graph.get("nodes", []):
-            node["border_color"] = color
+    def add_metrics(self, session_id, metrics):
+        """Persist validated custom metrics for a run."""
+        row = self.backend.get_experiment_metrics_context_query(session_id)
+        if row is None:
+            raise ValueError(f"Unknown session_id: {session_id}")
 
-        color_preview = [color for _ in graph.get("nodes", [])]
-        return graph, color_preview
+        existing_metrics = self._parse_custom_metrics(row["custom_metrics"])
+        repeated_keys = sorted(set(existing_metrics) & set(metrics))
+        if repeated_keys:
+            repeated = ", ".join(repeated_keys)
+            raise ValueError(f"Metrics already logged for this run: {repeated}")
 
-    def add_log(self, session_id, success, new_entry):
-        """Write success and new_entry to DB under certain conditions."""
-        from sovara.common.constants import DEFAULT_LOG, SUCCESS_STRING, SUCCESS_COLORS
+        project_id = row["project_id"]
+        if project_id:
+            existing_kinds = {
+                item["metric_key"]: item["metric_kind"]
+                for item in self.backend.get_project_metric_kinds_query(project_id)
+            }
+            for key, value in metrics.items():
+                kind = get_metric_kind(value)
+                existing_kind = existing_kinds.get(key)
+                if existing_kind and existing_kind != kind:
+                    raise ValueError(
+                        f"Metric '{key}' is already registered as kind '{existing_kind}' for this project."
+                    )
+            for key, value in metrics.items():
+                if key not in existing_kinds:
+                    self.backend.upsert_project_metric_kind_query(project_id, key, get_metric_kind(value))
 
-        row = self.backend.get_experiment_log_success_graph_query(session_id)
+        updated_metrics = {**existing_metrics, **metrics}
+        self.backend.update_experiment_custom_metrics_query(
+            json.dumps(updated_metrics, sort_keys=True),
+            session_id,
+        )
+        return updated_metrics
 
-        existing_log = row["log"]
-        existing_success = row["success"]
-        graph = json.loads(row["graph_topology"])
+    @staticmethod
+    def _parse_custom_metrics(raw_metrics):
+        if isinstance(raw_metrics, dict):
+            return raw_metrics
+        if not raw_metrics:
+            return {}
+        try:
+            parsed = json.loads(raw_metrics)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
-        if new_entry is None:
-            updated_log = existing_log
-        elif existing_log == DEFAULT_LOG:
-            updated_log = new_entry
-        else:
-            updated_log = existing_log + "\n" + new_entry
+    @staticmethod
+    def _serialize_timestamp(timestamp):
+        if timestamp is None or isinstance(timestamp, str):
+            return timestamp
+        if isinstance(timestamp, datetime):
+            # Store timestamps as naive UTC strings so lexical ordering still
+            # works in SQLite and the UI can consistently parse them as UTC.
+            if timestamp.tzinfo is not None:
+                timestamp = timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+            return timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        raise TypeError(f"Unsupported timestamp type: {type(timestamp)!r}")
 
-        if success is None:
-            updated_success = existing_success
-        else:
-            updated_success = SUCCESS_STRING[success]
+    @staticmethod
+    def _normalize_thumb_label(raw_value):
+        if raw_value is None:
+            return None
+        return bool(raw_value)
 
-        node_color = SUCCESS_COLORS[updated_success]
-        updated_graph, updated_color_preview = self._color_graph_nodes(graph, node_color)
+    @staticmethod
+    def _normalize_runtime_seconds(raw_value):
+        if raw_value is None:
+            return None
+        return max(0.0, float(raw_value))
 
-        graph_json = json.dumps(updated_graph)
-        color_preview_json = json.dumps(updated_color_preview)
-        self.backend.update_experiment_log_query(
-            updated_log, updated_success, color_preview_json, graph_json, session_id
+    def _normalize_experiment_row(self, row):
+        normalized = dict(row)
+        normalized["custom_metrics"] = self._parse_custom_metrics(normalized.get("custom_metrics"))
+        normalized["thumb_label"] = self._normalize_thumb_label(normalized.get("thumb_label"))
+        normalized["runtime_seconds"] = self._normalize_runtime_seconds(normalized.get("runtime_seconds"))
+        normalized["active_runtime_seconds"] = self._normalize_runtime_seconds(normalized.get("active_runtime_seconds"))
+        normalized["tags"] = list(normalized.get("tags") or [])
+        return normalized
+
+    def _get_tags_for_sessions_map(self, session_ids):
+        rows = self.backend.get_tags_for_sessions_query(session_ids)
+        tags_by_session: dict[str, list[dict[str, str]]] = defaultdict(list)
+        for row in rows:
+            tags_by_session[row["session_id"]].append(self._normalize_tag_row(row))
+        return tags_by_session
+
+    def _attach_tags_to_rows(self, rows):
+        normalized_rows = [self._normalize_experiment_row(row) for row in rows]
+        session_ids = [row["session_id"] for row in normalized_rows]
+        tags_by_session = self._get_tags_for_sessions_map(session_ids)
+        for row in normalized_rows:
+            row["tags"] = tags_by_session.get(row["session_id"], [])
+        return normalized_rows
+
+    @staticmethod
+    def _get_runtime_sort_value(row):
+        return row["runtime_seconds"] if row["runtime_seconds"] is not None else row["active_runtime_seconds"]
+
+    def _matches_custom_metric_filters(self, row, metric_filters):
+        metrics = row["custom_metrics"]
+        for key, filter_def in metric_filters.items():
+            if key not in metrics:
+                return False
+            value = metrics[key]
+            if filter_def["kind"] == "bool":
+                if value not in filter_def["values"]:
+                    return False
+                continue
+            if isinstance(value, bool):
+                return False
+            min_value = filter_def.get("min")
+            max_value = filter_def.get("max")
+            if min_value is not None and value < min_value:
+                return False
+            if max_value is not None and value > max_value:
+                return False
+        return True
+
+    def _matches_label_filters(self, row, labels):
+        if not labels:
+            return True
+        thumb_label = row["thumb_label"]
+        token = "none" if thumb_label is None else "up" if thumb_label else "down"
+        return token in labels
+
+    def _matches_tag_filters(self, row, tag_ids):
+        if not tag_ids:
+            return True
+        assigned_ids = {tag["tag_id"] for tag in row["tags"]}
+        return set(tag_ids).issubset(assigned_ids)
+
+    def _build_custom_metric_columns(self, rows):
+        values_by_key: dict[str, list[bool | int | float]] = defaultdict(list)
+        for row in rows:
+            for key, value in row["custom_metrics"].items():
+                values_by_key[key].append(value)
+
+        columns = []
+        for key in sorted(values_by_key):
+            values = values_by_key[key]
+            kinds = {get_metric_kind(value) for value in values}
+            if len(kinds) != 1:
+                raise ValueError(f"Metric '{key}' has inconsistent kinds in the filtered result set.")
+            kind = kinds.pop()
+            if kind == "bool":
+                column = MetricColumn(key=key, kind=kind, values=sorted(set(values)))
+            elif kind == "int":
+                ints = [int(value) for value in values]
+                column = MetricColumn(key=key, kind=kind, min=min(ints), max=max(ints))
+            else:
+                floats = [float(value) for value in values]
+                column = MetricColumn(key=key, kind=kind, min=min(floats), max=max(floats))
+            columns.append(column.model_dump())
+        return columns
+
+    def _sort_experiment_rows(self, rows, sort_key, sort_dir):
+        reverse = sort_dir.lower() == "desc"
+
+        if sort_key.startswith("metric:"):
+            metric_key = sort_key.split(":", 1)[1]
+            present = [row for row in rows if metric_key in row["custom_metrics"]]
+            missing = [row for row in rows if metric_key not in row["custom_metrics"]]
+            present.sort(key=lambda row: row["custom_metrics"][metric_key], reverse=reverse)
+            return present + missing
+
+        if sort_key == "label":
+            rank = {None: -1, False: 0, True: 1}
+            return sorted(rows, key=lambda row: rank[row["thumb_label"]], reverse=reverse)
+
+        if sort_key == "latency":
+            present = [row for row in rows if self._get_runtime_sort_value(row) is not None]
+            missing = [row for row in rows if self._get_runtime_sort_value(row) is None]
+            present.sort(key=self._get_runtime_sort_value, reverse=reverse)
+            return present + missing
+
+        if sort_key == "tags":
+            return sorted(
+                rows,
+                key=lambda row: ",".join(tag["name"].lower() for tag in row["tags"]),
+                reverse=reverse,
+            )
+
+        sort_field = {
+            "timestamp": "timestamp",
+            "sessionId": "session_id",
+            "name": "name",
+            "codeVersion": "version_date",
+        }.get(sort_key, "timestamp")
+        return sorted(
+            rows,
+            key=lambda row: (
+                row.get(sort_field) is None,
+                row.get(sort_field) or "",
+            ),
+            reverse=reverse,
         )
 
-        return updated_graph
+    def get_experiment_table_view(self, project_id, exclude_ids, filters, sort_key, sort_dir, limit, offset):
+        base_filters = {
+            "name": filters.get("name"),
+            "session_id": filters.get("session_id"),
+            "version_date": filters.get("version_date"),
+            "timestamp_from": filters.get("timestamp_from"),
+            "timestamp_to": filters.get("timestamp_to"),
+        }
+        rows, _ = self.backend.query_experiments_filtered(
+            project_id,
+            exclude_ids,
+            base_filters,
+            "timestamp",
+            "DESC",
+            None,
+            0,
+            user_id=self.user_id,
+        )
+        normalized_rows = self._attach_tags_to_rows(rows)
+        filtered_rows = [
+            row
+            for row in normalized_rows
+            if self._matches_label_filters(row, filters.get("thumb_label", []))
+            and self._matches_tag_filters(row, filters.get("tag_ids", []))
+            and self._matches_custom_metric_filters(row, filters.get("custom_metrics", {}))
+        ]
+        custom_metric_columns = self._build_custom_metric_columns(filtered_rows)
+        sorted_rows = self._sort_experiment_rows(filtered_rows, sort_key, sort_dir)
+        total = len(sorted_rows)
+        page_rows = sorted_rows[offset:offset + limit] if limit is not None else sorted_rows
+        return page_rows, total, custom_metric_columns
 
     # Cache Management Operations
     def get_subrun_id(self, parent_session_id, name):
@@ -281,7 +608,7 @@ class DatabaseManager:
                 time.sleep(retry_delay)
 
         logger.error(f"Failed to find parent session for {session_id} after {max_retries} attempts")
-        raise ValueError(f"Parent session not found for session_id: {session_id}")
+        raise ResourceNotFoundError(f"Session not found: {session_id}")
 
     def cache_file(self, file_id, file_name, io_stream):
         """Cache file attachment."""
@@ -394,6 +721,7 @@ class DatabaseManager:
                 output_json_str,
                 cache_result.stack_trace,
             )
+            self.checkpoint_active_runtime(cache_result.session_id)
         else:
             logger.warning(f"Node {node_id} response not OK.")
         cache_result.node_id = node_id
@@ -407,10 +735,12 @@ class DatabaseManager:
         return self.backend.get_all_experiments_sorted_query(limit=limit, offset=offset, project_id=project_id, user_id=self.user_id)
 
     def get_experiments_by_ids(self, session_ids, project_id=None):
-        return self.backend.get_experiments_by_ids_query(session_ids, project_id=project_id, user_id=self.user_id)
+        rows = self.backend.get_experiments_by_ids_query(session_ids, project_id=project_id, user_id=self.user_id)
+        return self._attach_tags_to_rows(rows)
 
     def get_experiments_excluding_ids(self, session_ids, limit=None, offset=0, project_id=None):
-        return self.backend.get_experiments_excluding_ids_query(session_ids, limit=limit, offset=offset, project_id=project_id, user_id=self.user_id)
+        rows = self.backend.get_experiments_excluding_ids_query(session_ids, limit=limit, offset=offset, project_id=project_id, user_id=self.user_id)
+        return self._attach_tags_to_rows(rows)
 
     def get_experiment_count(self, project_id=None):
         return self.backend.get_experiment_count_query(project_id=project_id, user_id=self.user_id)
@@ -419,14 +749,27 @@ class DatabaseManager:
         return self.backend.get_experiment_count_excluding_ids_query(session_ids, project_id=project_id, user_id=self.user_id)
 
     def get_experiments_filtered(self, project_id, exclude_ids, filters, sort_col, sort_dir, limit, offset):
-        return self.backend.query_experiments_filtered(project_id, exclude_ids, filters, sort_col, sort_dir, limit, offset, user_id=self.user_id)
+        rows, total = self.backend.query_experiments_filtered(
+            project_id,
+            exclude_ids,
+            filters,
+            sort_col,
+            sort_dir,
+            limit,
+            offset,
+            user_id=self.user_id,
+        )
+        return self._attach_tags_to_rows(rows), total
 
     def get_distinct_versions(self, project_id=None):
         rows = self.backend.get_distinct_versions_query(project_id, user_id=self.user_id)
         return [row["version_date"] for row in rows]
 
     def get_experiment_detail(self, session_id):
-        return self.backend.get_experiment_detail_query(session_id)
+        row = self.backend.get_experiment_detail_query(session_id)
+        if row is None:
+            return None
+        return self._attach_tags_to_rows([row])[0]
 
     def get_graph(self, session_id):
         return self.backend.get_experiment_graph_topology_query(session_id)
@@ -462,6 +805,9 @@ class DatabaseManager:
 
     def delete_project(self, project_id):
         self.backend.delete_project_query(project_id)
+
+    def delete_runs(self, session_ids):
+        return self.backend.delete_experiments_by_ids_query(session_ids, user_id=self.user_id)
 
     def delete_user(self, user_id):
         self.backend.delete_user_query(user_id)
