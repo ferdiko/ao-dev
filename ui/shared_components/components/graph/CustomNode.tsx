@@ -269,7 +269,31 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
         }}
         title={data.label}
       >
-        {truncateLabel(data.label)}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: "2px",
+            width: "100%",
+          }}
+        >
+          {data.step_id && (
+            <div
+              style={{
+                fontSize: "10px",
+                fontWeight: 700,
+                opacity: 0.75,
+                textTransform: "uppercase",
+              }}
+            >
+              {data.step_id}
+            </div>
+          )}
+          <div style={{ width: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {truncateLabel(data.label)}
+          </div>
+        </div>
       </div>
     </div>
   );

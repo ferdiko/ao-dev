@@ -314,6 +314,8 @@ export async function fetchExperimentDetail(sessionId: string): Promise<Experime
 
 export interface BackendGraphNode {
   id: string;
+  step_id?: string;
+  step_index?: number;
   input: string;
   output: string;
   label: string;

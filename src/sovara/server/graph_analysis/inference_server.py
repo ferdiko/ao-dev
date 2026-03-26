@@ -21,6 +21,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from sovara.server.graph_payloads import enrich_graph_for_ui
 
 # ============================================================
 # Sub-server app
@@ -99,7 +100,11 @@ def _build_trace_from_graph(graph_data: dict):
     """
     from sovara.server.graph_analysis.trace_chat.utils.trace import Trace
 
-    nodes = graph_data.get("nodes", [])
+    enriched_graph = enrich_graph_for_ui(graph_data)
+    nodes = sorted(
+        enriched_graph.get("nodes", []),
+        key=lambda node: (node.get("step_index", 10**9), node.get("id", "")),
+    )
     if not nodes:
         return None
 

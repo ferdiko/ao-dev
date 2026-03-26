@@ -40,7 +40,14 @@ import { sortTagsByName } from "../tags";
 // ── Custom LLM Node ────────────────────────────────────
 
 function LLMNode({ data, selected }: NodeProps) {
-  const d = data as { label: string; model?: string; nodeId: string; focused?: boolean; borderColor?: string };
+  const d = data as {
+    label: string;
+    model?: string;
+    nodeId: string;
+    stepId?: string;
+    focused?: boolean;
+    borderColor?: string;
+  };
   return (
     <div
       className={`graph-llm-node${selected ? " selected" : ""}${d.focused ? " focused" : ""}`}
@@ -49,6 +56,7 @@ function LLMNode({ data, selected }: NodeProps) {
       <Handle type="target" position={Position.Top} id="top" className="graph-handle" />
       <Handle type="target" position={Position.Left} id="left" className="graph-handle graph-handle-side" />
       <Handle type="target" position={Position.Right} id="right" className="graph-handle graph-handle-side" />
+      {d.stepId && <div className="graph-node-model">{d.stepId}</div>}
       <div className="graph-node-label">{d.label}</div>
       {d.model && <div className="graph-node-model">{d.model}</div>}
       <Handle type="source" position={Position.Bottom} id="bottom" className="graph-handle" />
@@ -386,6 +394,15 @@ function RunViewContent({
 
   // ReactFlow data from layout engine
   const nodeById = useMemo(() => new Map(graphNodes.map((n) => [n.id, n])), [graphNodes]);
+  const nodeIdByStepId = useMemo(
+    () =>
+      new Map(
+        graphNodes
+          .filter((node) => node.step_id)
+          .map((node) => [node.step_id as string, node.id])
+      ),
+    [graphNodes]
+  );
 
   const rfNodes: Node[] = useMemo(() => {
     return sortedNodeIds.map((id) => {
@@ -396,7 +413,13 @@ function RunViewContent({
         id,
         type: "llmNode",
         position: { x: pos.x, y: pos.y },
-        data: { label: node.label, model: node.model, nodeId: id, borderColor: node.border_color },
+        data: {
+          label: node.label,
+          model: node.model,
+          nodeId: id,
+          stepId: node.step_id,
+          borderColor: node.border_color,
+        },
       };
     }).filter(Boolean) as Node[];
   }, [sortedNodeIds, graphLayout, nodeById]);
@@ -420,6 +443,10 @@ function RunViewContent({
   const onCardClick = useCallback((nodeId: string) => {
     focusNodeById(nodeId);
   }, [focusNodeById]);
+
+  const onStepLabelClick = useCallback((nodeRef: string) => {
+    focusNodeById(nodeIdByStepId.get(nodeRef) ?? nodeRef);
+  }, [focusNodeById, nodeIdByStepId]);
 
   const nodesWithSelection = useMemo(
     () => rfNodes.map((n) => ({
@@ -594,7 +621,11 @@ function RunViewContent({
             </div>
           </div>
         ) : (
-          <TraceChat sessionId={sessionId} onCollapse={() => setLayoutState((prev) => ({ ...prev, chatCollapsed: true }))} />
+          <TraceChat
+            sessionId={sessionId}
+            onCollapse={() => setLayoutState((prev) => ({ ...prev, chatCollapsed: true }))}
+            onStepLabelClick={onStepLabelClick}
+          />
         )}
       </div>
       </div>

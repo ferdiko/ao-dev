@@ -28,6 +28,10 @@ def func_kwargs_to_json_str_claude_sdk(input_dict: Dict[str, Any]) -> Tuple[str,
         to_show["tool"] = input_dict["tool_name"]
         if input_dict.get("tool_input"):
             to_show["input"] = input_dict["tool_input"]
+    elif input_dict.get("type") == "redacted_llm":
+        to_show["type"] = "Redacted LLM"
+        if input_dict.get("model"):
+            to_show["model"] = input_dict["model"]
     elif input_dict.get("type") == "assistant_response":
         to_show["type"] = "Assistant Response"
         if input_dict.get("model"):
@@ -61,8 +65,16 @@ def api_obj_to_json_str_claude_sdk(obj: Any) -> str:
         to_show["tool"] = obj["tool_name"]
         if obj.get("tool_input"):
             to_show["input"] = obj["tool_input"]
+        if obj.get("tool_result") is not None:
+            to_show["result"] = obj["tool_result"]
+    elif "tool_result" in obj:
+        to_show["result"] = obj["tool_result"]
     elif "text" in obj:
         to_show["response"] = obj["text"]
+    elif obj.get("type") == "redacted_llm":
+        to_show["type"] = "Redacted LLM"
+        if obj.get("note"):
+            to_show["note"] = obj["note"]
 
     result = {
         "raw": obj,

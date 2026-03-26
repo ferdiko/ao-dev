@@ -3955,6 +3955,14 @@
 .trace-chat-msg-assistant .trace-chat-msg-content > :first-child > :first-child { margin-top: 0; }
 .trace-chat-msg-assistant .trace-chat-msg-content > :first-child > :last-child { margin-bottom: 0; }
 .trace-chat-msg-assistant .trace-chat-msg-content p { margin: 0.4em 0; }
+.trace-chat-step-label {
+  color: #1d4ed8;
+  font-weight: 600;
+  text-decoration: underline;
+}
+.trace-chat-step-label.clickable {
+  cursor: pointer;
+}
 .trace-chat-msg-assistant .trace-chat-msg-content code {
   font-size: 11px;
   background: var(--color-surface);

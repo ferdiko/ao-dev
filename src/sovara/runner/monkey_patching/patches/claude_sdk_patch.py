@@ -7,13 +7,13 @@ see each tool use, tool result, and assistant response as they stream through.
 """
 
 from functools import wraps
-import uuid
 import json
 from typing import List, Dict, Any
 
 from sovara.runner.monkey_patching.patching_utils import send_graph_node_and_edges, capture_stack_trace
 from sovara.runner.string_matching import tokenize, split_html_content, is_content_match
 from sovara.runner.context_manager import get_session_id
+from sovara.server.database_manager import DB
 from sovara.common.logger import logger
 
 
@@ -143,8 +143,6 @@ def _handle_user_message(message, session_id: str):
 
 def _create_redacted_llm_node(session_id: str, api_type: str, stack_trace: str, model: str) -> str:
     """Create a 'Redacted LLM calls' node representing hidden Claude reasoning."""
-    node_id = str(uuid.uuid4())
-
     # Get the previous tool nodes as sources (the LLM saw their results)
     source_node_ids = _sdk_last_tool_nodes.get(session_id, [])
 
@@ -159,13 +157,18 @@ def _create_redacted_llm_node(session_id: str, api_type: str, stack_trace: str, 
         "note": 'Anthropic hides the reasoning steps between tool calls (their "magic").',
     }
 
+    cache_output = DB.get_in_out(input_dict, api_type)
+    if cache_output.output is None:
+        DB.cache_output(cache_result=cache_output, output_obj=output_obj, api_type=api_type)
+    node_id = cache_output.node_id
+
     send_graph_node_and_edges(
         node_id=node_id,
-        input_dict=input_dict,
-        output_obj=output_obj,
+        input_dict=cache_output.input_dict,
+        output_obj=cache_output.output,
         source_node_ids=source_node_ids,
         api_type=api_type,
-        stack_trace=stack_trace,
+        stack_trace=cache_output.stack_trace,
     )
 
     return node_id
@@ -175,8 +178,6 @@ def _process_tool_use(
     block, session_id: str, api_type: str, stack_trace: str, redacted_node_id: str = None
 ) -> str:
     """Create a node for a tool use block and detect edges."""
-    node_id = str(uuid.uuid4())
-
     # Build input representation
     tool_input_str = json.dumps(block.input, default=str) if block.input else "{}"
     input_dict = {
@@ -194,14 +195,19 @@ def _process_tool_use(
         "tool_input": block.input,
     }
 
+    cache_output = DB.get_in_out(input_dict, api_type)
+    if cache_output.output is None:
+        DB.cache_output(cache_result=cache_output, output_obj=output_obj, api_type=api_type)
+    node_id = cache_output.node_id
+
     # Send graph node
     send_graph_node_and_edges(
         node_id=node_id,
-        input_dict=input_dict,
-        output_obj=output_obj,
+        input_dict=cache_output.input_dict,
+        output_obj=cache_output.output,
         source_node_ids=source_node_ids,
         api_type=api_type,
-        stack_trace=stack_trace,
+        stack_trace=cache_output.stack_trace,
     )
 
     # Store tool input for future matching (content might appear in later calls)
@@ -217,8 +223,6 @@ def _process_tool_use(
 
 def _process_text_block(block, session_id: str, api_type: str, stack_trace: str, model: str):
     """Create a node for a substantial text response."""
-    node_id = str(uuid.uuid4())
-
     input_dict = {
         "type": "assistant_response",
         "model": model,
@@ -231,13 +235,18 @@ def _process_text_block(block, session_id: str, api_type: str, stack_trace: str,
         "text": block.text[:500] + "..." if len(block.text) > 500 else block.text,
     }
 
+    cache_output = DB.get_in_out(input_dict, api_type)
+    if cache_output.output is None:
+        DB.cache_output(cache_result=cache_output, output_obj=output_obj, api_type=api_type)
+    node_id = cache_output.node_id
+
     send_graph_node_and_edges(
         node_id=node_id,
-        input_dict=input_dict,
-        output_obj=output_obj,
+        input_dict=cache_output.input_dict,
+        output_obj=cache_output.output,
         source_node_ids=source_node_ids,
         api_type=api_type,
-        stack_trace=stack_trace,
+        stack_trace=cache_output.stack_trace,
     )
 
     # Store text for future matching

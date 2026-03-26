@@ -12,6 +12,7 @@ from sovara.common.custom_metrics import MetricFilter
 from sovara.server.app import get_state
 from sovara.server.state import ServerState, logger
 from sovara.server.database_manager import DB, BadRequestError, ResourceNotFoundError
+from sovara.server.graph_payloads import enrich_graph_for_ui
 from sovara.common.user import read_user_id, write_user_id
 from sovara.common.project import find_project_root, read_project_id, write_project_id, delete_project_configs
 from sovara.server.handlers.ui_handlers import (
@@ -559,7 +560,7 @@ def get_graph(session_id: str, state: ServerState = Depends(get_state)):
         return {
             "type": "graph_update",
             "session_id": session_id,
-            "payload": state.session_graphs[session_id],
+            "payload": enrich_graph_for_ui(state.session_graphs[session_id]),
             "active_runtime_seconds": state.get_persisted_active_runtime_seconds(session_id),
         }
 
@@ -571,7 +572,7 @@ def get_graph(session_id: str, state: ServerState = Depends(get_state)):
         return {
             "type": "graph_update",
             "session_id": session_id,
-            "payload": graph,
+            "payload": enrich_graph_for_ui(graph),
             "active_runtime_seconds": state.get_persisted_active_runtime_seconds(session_id),
         }
 

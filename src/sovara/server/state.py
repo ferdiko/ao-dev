@@ -24,6 +24,7 @@ from sovara.common.constants import (
     SOVARA_GIT_DIR,
 )
 from sovara.server.database_manager import DB
+from sovara.server.graph_payloads import enrich_graph_for_ui
 
 logger = create_file_logger(MAIN_SERVER_LOG)
 
@@ -115,7 +116,7 @@ class ServerState:
     async def broadcast_graph_update(self, session_id: str) -> None:
         """Broadcast current graph state for a session to all UIs."""
         if session_id in self.session_graphs:
-            graph = self.session_graphs[session_id]
+            graph = enrich_graph_for_ui(self.session_graphs[session_id])
             await self.broadcast_to_all_uis({
                 "type": "graph_update",
                 "session_id": session_id,

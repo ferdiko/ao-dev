@@ -2584,14 +2584,14 @@ function IOPanel({
 }
 
 function NodeHeader({ node }: { node: GraphNode }) {
-  const shortId = node.id.length > 8 ? node.id.slice(0, 8) : node.id;
+  const displayId = node.step_id || node.id;
   const [copied, setCopied] = useState(false);
 
   const handleCopyId = useCallback(() => {
-    navigator.clipboard.writeText(node.id);
+    navigator.clipboard.writeText(displayId);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
-  }, [node.id]);
+  }, [displayId]);
 
   return (
     <div className="node-card-header">
@@ -2600,9 +2600,9 @@ function NodeHeader({ node }: { node: GraphNode }) {
       </div>
       <div className="node-card-meta-row">
         {node.model && <span className="node-card-type llm">{node.model}</span>}
-        <span className="node-card-id" title={node.id}>
-          {shortId}
-          <button className="node-card-id-copy" onClick={handleCopyId} title="Copy full node ID">
+        <span className="node-card-id" title={displayId}>
+          {displayId}
+          <button className="node-card-id-copy" onClick={handleCopyId} title="Copy step ID">
             <Copy size={10} />
           </button>
           {copied && <span className="node-card-id-copied">Copied!</span>}

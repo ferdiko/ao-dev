@@ -1,5 +1,7 @@
 export interface GraphNode {
     id: string;
+    step_id?: string;
+    step_index?: number;
     input: string;
     output: string;
     stack_trace: string;
