@@ -13,6 +13,7 @@ from sovara.common.constants import (
     COMPILED_URL_PATTERN_TO_NODE_NAME,
     NO_LABEL,
     COMPILED_MODEL_NAME_PATTERNS,
+    COMPILED_MODEL_NAME_FORMATTERS,
     INVALID_LABEL_CHARS,
 )
 from sovara.common.utils import http_post
@@ -131,6 +132,11 @@ def _sanitize_for_display(name: str) -> str:
     for pattern, clean_name in COMPILED_MODEL_NAME_PATTERNS:
         if pattern.match(name):
             return clean_name
+
+    for pattern, formatter in COMPILED_MODEL_NAME_FORMATTERS:
+        match = pattern.match(name)
+        if match:
+            return formatter(match)
 
     parsed_url = urlparse(name)
     if parsed_url.scheme and parsed_url.netloc:

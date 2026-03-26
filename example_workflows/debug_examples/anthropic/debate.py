@@ -6,7 +6,7 @@ def main():
 
     # First LLM: Generate a yes/no question
     question_response = client.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=100,
         messages=[
             {

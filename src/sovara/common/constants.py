@@ -329,75 +329,197 @@ COMPILED_URL_PATTERN_TO_NODE_NAME = [
     (re.compile(pattern), name) for pattern, name in URL_PATTERN_TO_NODE_NAME
 ]
 
+# Shared helpers for graph node display names.
+MODEL_TOKEN_OVERRIDES = {
+    "aya": "Aya",
+    "awq": "AWQ",
+    "bf16": "BF16",
+    "chatglm": "ChatGLM",
+    "claude": "Claude",
+    "codestral": "Codestral",
+    "deepseek": "DeepSeek",
+    "devstral": "Devstral",
+    "exp": "Exp",
+    "fp8": "FP8",
+    "gemini": "Gemini",
+    "gemma": "Gemma",
+    "gguf": "GGUF",
+    "glm": "GLM",
+    "gpt": "GPT",
+    "grok": "Grok",
+    "it": "IT",
+    "kimi": "Kimi",
+    "llama": "Llama",
+    "magistral": "Magistral",
+    "medgemma": "MedGemma",
+    "mistral": "Mistral",
+    "mixtral": "Mixtral",
+    "ministral": "Ministral",
+    "moonlight": "Moonlight",
+    "ocr": "OCR",
+    "omni": "Omni",
+    "onnx": "ONNX",
+    "open": "Open",
+    "opus": "Opus",
+    "oss": "OSS",
+    "phi": "Phi",
+    "pixtral": "Pixtral",
+    "pt": "PT",
+    "qwen": "Qwen",
+    "qwq": "QwQ",
+    "sonnet": "Sonnet",
+    "tts": "TTS",
+    "vl": "VL",
+    "vlm": "VLM",
+    "voxtral": "Voxtral",
+}
+
+
+def _format_model_token(token: str) -> str:
+    if not token:
+        return token
+
+    lower = token.lower()
+    if lower in MODEL_TOKEN_OVERRIDES:
+        return MODEL_TOKEN_OVERRIDES[lower]
+
+    if re.fullmatch(r"\d+(?:\.\d+)?[a-z]+", lower):
+        return token.upper()
+    if re.fullmatch(r"[a-z]\d+(?:\.\d+)?[a-z]*", lower):
+        return token.upper()
+    if re.fullmatch(r"\d+x\d+[a-z]+", lower):
+        return token.upper()
+    if re.fullmatch(r"q\d+_[a-z0-9]+", lower):
+        return token.upper()
+    if token.isupper():
+        return token
+
+    return token[0].upper() + token[1:]
+
+
+def _format_joined_tokens(*tokens: str) -> str:
+    return " ".join(_format_model_token(token) for token in tokens if token)
+
+
+def _format_optional_variant(variant: str | None) -> str:
+    return f" {_format_model_token(variant)}" if variant else ""
+
+
+def _format_optional_minor(major: str, minor: str | None) -> str:
+    return f"{major}.{minor}" if minor else major
+
+
+def _format_tail(tail: str | None, *, strip_gemini_preview_date: bool = False) -> str:
+    if not tail:
+        return ""
+
+    cleaned_tail = tail
+    if strip_gemini_preview_date:
+        cleaned_tail = re.sub(r"-(preview|exp)-\d{2}-\d{4}$", r"-\1", cleaned_tail)
+
+    return f" {_format_joined_tokens(*cleaned_tail.split('-'))}"
+
+
+def _format_openai_gpt(match: re.Match[str]) -> str:
+    version, tail = match.groups()
+    return f"GPT-{version}{_format_tail(tail)}"
+
+
+def _format_openai_gpt_oss(match: re.Match[str]) -> str:
+    (size,) = match.groups()
+    return f"GPT-OSS {size.upper()}"
+
+
+def _format_openai_gpt_4o(match: re.Match[str]) -> str:
+    mini, tail = match.groups()
+    mini_suffix = " Mini" if mini else ""
+    return f"GPT-4o{mini_suffix}{_format_tail(tail)}"
+
+
+def _format_openai_o_series(match: re.Match[str]) -> str:
+    major, variant = match.groups()
+    return f"o{major}{_format_optional_variant(variant)}"
+
+
+def _format_claude_modern(match: re.Match[str]) -> str:
+    family, major, minor = match.groups()
+    version = _format_optional_minor(major, minor)
+    return f"Claude {_format_model_token(family)} {version}"
+
+
+def _format_claude_legacy(match: re.Match[str]) -> str:
+    major, minor, family = match.groups()
+    version = _format_optional_minor(major, minor)
+    return f"Claude {version} {_format_model_token(family)}"
+
+
+def _format_gemini(match: re.Match[str]) -> str:
+    version, tail = match.groups()
+    return f"Gemini {version}{_format_tail(tail, strip_gemini_preview_date=True)}"
+
+
+def _format_prefixed_family(match: re.Match[str], display_family: str) -> str:
+    tail = match.group(1)
+    return f"{display_family}{_format_tail(tail)}"
+
+
+def _format_captured_family(match: re.Match[str]) -> str:
+    prefix, tail = match.groups()
+    return f"{_format_model_token(prefix)}{_format_tail(tail)}"
+
+
+def _format_slug_family(match: re.Match[str]) -> str:
+    prefix, tail = match.groups()
+    family = _format_joined_tokens(*prefix.split("-"))
+    return f"{family}{_format_tail(tail)}"
+
+
 # Exact match patterns for known models -> clean display names
 # These are matched against the raw model name before cleanup rules are applied
-# Order matters: more specific patterns should come before general ones
-MODEL_NAME_PATTERNS = [
-    # OpenAI - GPT-5 series
-    (r"^(openai/)?gpt-5-mini", "GPT-5 Mini"),
-    (r"^(openai/)?gpt-5-nano", "GPT-5 Nano"),
-    (r"^(openai/)?gpt-5", "GPT-5"),
-    # OpenAI - GPT-4.1 series
-    (r"^(openai/)?gpt-4\.1-mini", "GPT-4.1 Mini"),
-    (r"^(openai/)?gpt-4\.1-nano", "GPT-4.1 Nano"),
-    (r"^(openai/)?gpt-4\.1", "GPT-4.1"),
-    # OpenAI - GPT-4o series
-    (r"^gpt-4o-mini-audio", "GPT-4o Mini Audio"),
-    (r"^gpt-4o-mini-search", "GPT-4o Mini Search"),
-    (r"^gpt-4o-mini-tts", "GPT-4o Mini TTS"),
-    (r"^gpt-4o-mini", "GPT-4o Mini"),
-    (r"^gpt-4o-audio", "GPT-4o Audio"),
-    (r"^gpt-4o-search", "GPT-4o Search"),
-    (r"^(chatgpt-)?gpt-4o", "GPT-4o"),
-    # OpenAI - GPT-4 series
-    (r"^gpt-4-turbo", "GPT-4 Turbo"),
-    (r"^gpt-4", "GPT-4"),
-    # OpenAI - GPT-3.5 series
-    (r"^gpt-3\.5-turbo", "GPT-3.5 Turbo"),
-    # OpenAI - O-series reasoning models
-    (r"^(openai/)?o4-mini", "o4 Mini"),
-    (r"^(openai/)?o3-pro", "o3 Pro"),
-    (r"^(openai/)?o3-mini", "o3 Mini"),
-    (r"^(openai/)?o3", "o3"),
-    (r"^o1-pro", "o1 Pro"),
-    (r"^o1-preview", "o1 Preview"),
-    (r"^o1-mini", "o1 Mini"),
-    (r"^o1", "o1"),
-    # Anthropic - Claude 4.5 series
-    (r"^claude-opus-4-5", "Claude Opus 4.5"),
-    (r"^claude-sonnet-4-5", "Claude Sonnet 4.5"),
-    (r"^claude-haiku-4-5", "Claude Haiku 4.5"),
-    # Anthropic - Claude 4.1 series
-    (r"^claude-opus-4-1", "Claude Opus 4.1"),
-    # Anthropic - Claude 4 series
-    (r"^claude-opus-4", "Claude Opus 4"),
-    (r"^claude-sonnet-4", "Claude Sonnet 4"),
-    # Anthropic - Claude 3.7 series
-    (r"^claude-3-7-sonnet", "Claude 3.7 Sonnet"),
-    # Anthropic - Claude 3.5 series
-    (r"^claude-3-5-sonnet", "Claude 3.5 Sonnet"),
-    (r"^claude-3-5-haiku", "Claude 3.5 Haiku"),
-    # Anthropic - Claude 3 series
-    (r"^claude-3-opus", "Claude 3 Opus"),
-    (r"^claude-3-sonnet", "Claude 3 Sonnet"),
-    (r"^claude-3-haiku", "Claude 3 Haiku"),
-    # Google - Gemini 3 series
-    (r"^gemini-3-pro-image", "Gemini 3 Pro Image"),
-    (r"^gemini-3-pro", "Gemini 3 Pro"),
-    (r"^gemini-3-flash", "Gemini 3 Flash"),
-    # Google - Gemini 2.5 series
-    (r"^gemini-2\.5-pro", "Gemini 2.5 Pro"),
-    (r"^gemini-2\.5-flash-lite", "Gemini 2.5 Flash Lite"),
-    (r"^gemini-2\.5-flash", "Gemini 2.5 Flash"),
-    # Google - Gemini 2.0 series
-    (r"^gemini-2\.0-flash-lite", "Gemini 2.0 Flash Lite"),
-    (r"^gemini-2\.0-flash", "Gemini 2.0 Flash"),
-    # Google - Gemini 1.5 series
-    (r"^gemini-1\.5-pro", "Gemini 1.5 Pro"),
-    (r"^gemini-1\.5-flash", "Gemini 1.5 Flash"),
-]
+# Order matters: more specific patterns should come before general ones.
+# Keep this list for truly irregular aliases that cannot be derived from family formatters.
+MODEL_NAME_PATTERNS: list[tuple[str, str]] = []
 COMPILED_MODEL_NAME_PATTERNS = [
     (re.compile(pattern), name) for pattern, name in MODEL_NAME_PATTERNS
+]
+
+# Regex formatters for model families with stable naming conventions.
+# These run after exact overrides and before generic fallback formatting.
+MODEL_NAME_FORMATTERS = [
+    # OpenAI
+    (r"^(?:chatgpt-)?gpt-4o(?:-(mini))?(?:-([a-z0-9]+(?:-[a-z0-9]+)*))?$", _format_openai_gpt_4o),
+    (r"^(?:openai/)?gpt-(\d+(?:\.\d+)?)(?:-([a-z0-9]+(?:-[a-z0-9]+)*))?$", _format_openai_gpt),
+    (r"^(?:openai/)?gpt-oss-(\d+[a-z])$", _format_openai_gpt_oss),
+    (r"^(?:openai/)?o(\d+)(?:-(mini|pro|preview))?$", _format_openai_o_series),
+    # Anthropic
+    (
+        r"^claude-(opus|sonnet|haiku)-(\d+)(?:-(\d{1,2}))?(?:-(?:\d{8}|latest))?$",
+        _format_claude_modern,
+    ),
+    (
+        r"^claude-(\d+)(?:-(\d{1,2}))?-(opus|sonnet|haiku)(?:-(?:\d{8}|latest|v\d))?$",
+        _format_claude_legacy,
+    ),
+    # Google
+    (r"^gemini-(\d+(?:\.\d+)?)(?:-([a-z0-9]+(?:-[a-z0-9]+)*))?$", _format_gemini),
+    # Hugging Face / open-weight families
+    (r"^(qwen[\w.]*|qwq)(?:-(.+))?$", _format_captured_family),
+    (r"^llama(?:-(.+))?$", lambda m: _format_prefixed_family(m, "Llama")),
+    (r"^(glm[\w.]*|chatglm[\w.]*)(?:-(.+))?$", _format_captured_family),
+    (r"^(kimi[\w.]*|moonlight[\w.]*)(?:-(.+))?$", _format_captured_family),
+    (r"^deepseek(?:-(.+))?$", lambda m: _format_prefixed_family(m, "DeepSeek")),
+    (r"^(gemma[\w.]*|medgemma[\w.]*|t5gemma[\w.]*)(?:-(.+))?$", _format_captured_family),
+    (r"^phi(?:-(.+))?$", lambda m: _format_prefixed_family(m, "Phi")),
+    (r"^(command|aya|tiny-aya)(?:-(.+))?$", _format_slug_family),
+    (r"^granite(?:-(.+))?$", lambda m: _format_prefixed_family(m, "Granite")),
+    (
+        r"^(open-mistral|open-mixtral|mistral|mixtral|ministral|magistral|devstral|codestral|pixtral|voxtral|leanstral)(?:-(.+))?$",
+        _format_slug_family,
+    ),
+]
+COMPILED_MODEL_NAME_FORMATTERS = [
+    (re.compile(pattern, re.IGNORECASE), formatter)
+    for pattern, formatter in MODEL_NAME_FORMATTERS
 ]
 
 INVALID_LABEL_CHARS = set("{[<>%$#@")
