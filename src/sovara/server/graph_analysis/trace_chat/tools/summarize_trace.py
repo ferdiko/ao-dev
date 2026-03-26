@@ -1,0 +1,64 @@
+"""summarize_trace tool — one-shot full trace summary, avoiding extra ReAct rounds."""
+
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+from .get_overview import get_overview
+from .get_summary import get_summary
+from ..utils.llm_backend import infer_text
+from ..utils.trace import Trace
+
+SYNTHESIZE_SYSTEM = (
+    "You summarize AI agent execution traces. You receive a structural overview "
+    "and per-turn summaries. Write a short summary that covers:\n"
+    "1. The task/goal and key inputs.\n"
+    "2. A structural walkthrough grouping turns into phases (e.g. 'Turns 0-2: "
+    "orchestrator delegated search. Turns 3-5: worker queried Google News, found "
+    "7 articles about X and Y.'). Include specific results, decisions, and errors "
+    "— not just which agent ran.\n"
+    "3. The outcome and why it succeeded or failed.\n"
+    "One line per phase. No headers, emoji, or filler."
+)
+
+
+logger = logging.getLogger("sovara_agent")
+
+
+def _generate_summary(trace: Trace, model: str) -> str:
+    """Do the actual work: overview + per-turn summaries + synthesis."""
+    t0 = time.monotonic()
+    overview = get_overview(trace)
+
+    def _get_one(tid):
+        return get_summary(trace, turn_id=tid, model=model)
+
+    with ThreadPoolExecutor() as pool:
+        summaries = list(pool.map(_get_one, range(len(trace))))
+    t_summaries = time.monotonic()
+
+    combined = f"## Overview\n{overview}\n\n## Turn Summaries\n"
+    combined += "\n".join(summaries)
+
+    result = infer_text(
+        [{"role": "system", "content": SYNTHESIZE_SYSTEM},
+         {"role": "user", "content": combined}],
+        model=model,
+        max_tokens=512,
+    )
+    t_synth = time.monotonic()
+
+    logger.info("Summary profiling: per-turn summaries %.1fs, synthesis %.1fs, total %.1fs",
+                t_summaries - t0, t_synth - t_summaries, t_synth - t0)
+    return result
+
+
+def summarize_trace(trace: Trace, **params) -> str:
+    # Return prefetched result if available
+    if hasattr(trace, "_prefetched_summary") and trace._prefetched_summary:
+        return trace._prefetched_summary
+
+    model = params.get("model", "anthropic/claude-sonnet-4-6")
+    result = _generate_summary(trace, model)
+    trace._prefetched_summary = result
+    return result

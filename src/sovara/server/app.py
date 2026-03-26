@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from sovara.common.logger import create_file_logger
 from sovara.common.constants import MAIN_SERVER_LOG
 from sovara.server.state import ServerState
+from sovara.server.graph_analysis import inference_server
 
 logger = create_file_logger(MAIN_SERVER_LOG)
 
@@ -28,6 +29,9 @@ async def lifespan(app: FastAPI):
 
     # Load finished runs from DB
     state.load_finished_runs()
+
+    # Start inference sub-server
+    inference_server.start()
 
     # Start inactivity monitor
     async def inactivity_monitor():
@@ -48,6 +52,8 @@ async def lifespan(app: FastAPI):
         await monitor_task
     except asyncio.CancelledError:
         pass
+
+    inference_server.stop()
 
 
 def create_app() -> FastAPI:

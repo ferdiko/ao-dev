@@ -379,3 +379,15 @@ export async function updateRunTags(sessionId: string, tagIds: string[]): Promis
   const data = await post<{ tags: Tag[] }>("/ui/update-run-tags", { session_id: sessionId, tag_ids: tagIds });
   return data.tags;
 }
+
+export function prefetchTrace(sessionId: string): void {
+  post(`/ui/prefetch/${sessionId}`, {}).catch(() => {});
+}
+
+export async function chatWithTrace(
+  sessionId: string,
+  message: string,
+  history: { role: string; content: string }[],
+): Promise<{ answer: string; edits_applied?: boolean }> {
+  return post(`/ui/chat/${sessionId}`, { message, history });
+}

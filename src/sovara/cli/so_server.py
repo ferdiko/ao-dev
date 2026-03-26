@@ -76,6 +76,7 @@ def server_command_parser():
             "restart",
             "clear",
             "logs",
+            "infer-logs",
             "clear-logs",
             "_serve",
         ],
@@ -122,6 +123,17 @@ def execute_server_command(args):
                 print(log_file.read(), end="")
         except FileNotFoundError:
             logger.error(f"Log file not found at {MAIN_SERVER_LOG}")
+        except Exception as e:
+            logger.error(f"Error reading log file: {e}")
+        return
+
+    elif args.command == "infer-logs":
+        from sovara.common.constants import INFERENCE_SERVER_LOG
+        try:
+            with open(INFERENCE_SERVER_LOG, "r") as log_file:
+                print(log_file.read(), end="")
+        except FileNotFoundError:
+            logger.error(f"Log file not found at {INFERENCE_SERVER_LOG}")
         except Exception as e:
             logger.error(f"Error reading log file: {e}")
         return

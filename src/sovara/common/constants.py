@@ -116,6 +116,10 @@ SOVARA_LOG_DIR = os.path.expandvars(
 )
 os.makedirs(SOVARA_LOG_DIR, exist_ok=True)
 MAIN_SERVER_LOG = os.path.join(SOVARA_LOG_DIR, "main_server.log")
+INFERENCE_SERVER_LOG = os.path.join(SOVARA_LOG_DIR, "inference_server.log")
+
+# Inference sub-server port (5959=main, 5960=playbook-local, 5961=inference)
+INFERENCE_PORT = PORT + 2
 
 
 default_attachment_cache = os.path.join(SOVARA_CACHE, "attachments")

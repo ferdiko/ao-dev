@@ -3975,6 +3975,21 @@
 }
 .trace-chat-send:hover { opacity: 0.9; }
 .trace-chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
+.trace-chat-rerun-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 6px;
+  border: none;
+  background: var(--color-primary);
+  color: white;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+.trace-chat-rerun-btn:hover { opacity: 0.85; }
 
 /* ========================================
    Attachment Preview

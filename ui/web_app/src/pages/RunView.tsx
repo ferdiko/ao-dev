@@ -24,6 +24,7 @@ import {
   createProjectTag,
   deleteProjectTag,
   updateRunTags,
+  prefetchTrace,
 } from "../api";
 import { layoutGraph, type Point } from "../graphLayout";
 import { Sparkles, RotateCcw, Loader2, Undo2, ThumbsUp, ThumbsDown, ChevronRight, PanelRight, X } from "lucide-react";
@@ -243,6 +244,10 @@ function RunViewContent({
   const GRAPH_MIN = 180; const GRAPH_MAX = 600;
   const CHAT_MIN = 200; const CHAT_MAX = 700;
   const { graphWidth, chatWidth, chatCollapsed } = layoutState;
+
+  useEffect(() => {
+    prefetchTrace(sessionId);
+  }, [sessionId]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -570,7 +575,7 @@ function RunViewContent({
             </div>
           </div>
         ) : (
-          <TraceChat onCollapse={() => setLayoutState((prev) => ({ ...prev, chatCollapsed: true }))} />
+          <TraceChat sessionId={sessionId} onCollapse={() => setLayoutState((prev) => ({ ...prev, chatCollapsed: true }))} />
         )}
       </div>
       </div>

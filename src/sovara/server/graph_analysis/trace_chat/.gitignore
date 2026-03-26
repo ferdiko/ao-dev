@@ -1,0 +1,52 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+*.whl
+*.mo
+*.pyc
+
+.DS_Store
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+ENV/
+bin/
+lib/
+include/
+
+# IDE and editor files
+.idea/  # For PyCharm
+.vscode/ # For VS Code (can be uncommented if desired)
+*.sublime-project
+*.sublime-workspace
+
+# Build artifacts
+dist/
+build/
+*.pyo
+
+# Installer logs
+pip-log.txt
+pip-delete-this-line.txt
+
+# Test and coverage reports
+.tox/
+.coverage
+htmlcov/
+
+# Django and other framework-specific files
+local_settings.py  # Django
+db.sqlite3         # Django
+media/uploads/     # User-uploaded files
+
+# Jupyter Notebook files
+.ipynb_checkpoints
+
+# Ruff cache
+.ruff_cache/

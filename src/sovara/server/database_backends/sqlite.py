@@ -1141,10 +1141,10 @@ def get_experiment_metadata_query(session_id):
 
 
 def get_llm_calls_for_session_query(session_id):
-    """Get all LLM calls for a session."""
+    """Get all LLM calls for a session, ordered by insertion time."""
     return query_all(
         """SELECT node_id, input, input_overwrite, output, api_type, label, timestamp
-           FROM llm_calls WHERE session_id=?""",
+           FROM llm_calls WHERE session_id=? ORDER BY rowid""",
         (session_id,),
     )
 

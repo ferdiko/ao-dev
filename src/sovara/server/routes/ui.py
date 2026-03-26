@@ -717,16 +717,19 @@ def restart(req: RestartRequest, state: ServerState = Depends(get_state)):
 
     session_map, _ = state.get_session_snapshot()
     parent_session = session_map.get(parent_session_id)
+    # Capture status before start_session_attempt mutates the shared Session object
+    # (session_id == parent_session_id for normal runs, so they share the same object)
+    parent_was_running = parent_session.status == "running" if parent_session else False
 
     state.start_session_attempt(session_id)
 
     # Clear UI state and schedule broadcasts
     state.clear_session_ui_and_schedule_broadcast(session_id)
 
-    if parent_session and parent_session.status == "running":
+    if parent_was_running:
         # Send restart to running runner via SSE
         state.schedule_runner_event(parent_session_id, {"type": "restart"})
-    elif parent_session and parent_session.status == "finished":
+    elif parent_session:
         # Spawn a new process directly
         state.spawn_session_process(parent_session_id, session_id)
 
@@ -758,3 +761,42 @@ def clear(state: ServerState = Depends(get_state)):
         {"type": "graph_update", "session_id": None, "payload": {"nodes": [], "edges": []}}
     )
     return {"ok": True}
+
+
+# ============================================================
+# Trace Chat proxy
+# ============================================================
+
+class ChatMessageRequest(BaseModel):
+    message: str
+    history: list = []
+    model: str = "anthropic/claude-sonnet-4-6"
+
+
+@router.post("/prefetch/{session_id}", status_code=202)
+async def prefetch_trace(session_id: str, model: str = "anthropic/claude-sonnet-4-6"):
+    import httpx
+    from sovara.common.constants import HOST, INFERENCE_PORT
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            f"http://{HOST}:{INFERENCE_PORT}/prefetch/{session_id}",
+            params={"model": model},
+            timeout=5.0,
+        )
+    return {"status": "prefetching"}
+
+
+@router.post("/chat/{session_id}")
+async def chat(session_id: str, req: ChatMessageRequest):
+    import httpx
+    from fastapi import HTTPException
+    from sovara.common.constants import HOST, INFERENCE_PORT
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"http://{HOST}:{INFERENCE_PORT}/chat/{session_id}",
+            json=req.model_dump(),
+            timeout=120.0,
+        )
+    if resp.status_code != 200:
+        raise HTTPException(resp.status_code, resp.json().get("detail", "Chat error"))
+    return resp.json()
