@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -57,6 +58,14 @@ EDIT_TOOLS = {"edit_section", "bulk_edit", "insert_section", "delete_section",
                "move_section", "undo", "edit_step_input"}
 
 
+def _log_preview(text: str, max_len: int = 240) -> str:
+    """Collapse whitespace so log previews stay searchable on one line."""
+    compact = re.sub(r"\s+", " ", text).strip()
+    if len(compact) <= max_len:
+        return compact
+    return compact[:max_len] + "..."
+
+
 def handle_question(question: str, trace: Trace, history: list, model: str,
                      prefetch_future=None) -> dict:
     """ReAct loop with native tool use via litellm.
@@ -67,13 +76,24 @@ def handle_question(question: str, trace: Trace, history: list, model: str,
     edits_applied = False
     logger.info("=" * 60)
     logger.info("NEW QUESTION: %s", question)
+    logger.info(
+        "TRACE CONTEXT: session_id=%s steps=%d history_messages=%d model=%s",
+        trace.session_id or "-",
+        len(trace),
+        len(history),
+        model,
+    )
     logger.info("=" * 60)
 
     # Wait for prefetched summary if still running, and stash on trace
     if prefetch_future is not None and not hasattr(trace, "_prefetched_summary"):
         try:
             trace._prefetched_summary = prefetch_future.result()
-            logger.info("Prefetched summary ready (%d chars)", len(trace._prefetched_summary))
+            logger.info(
+                "Prefetched summary ready (%d chars): %s",
+                len(trace._prefetched_summary),
+                _log_preview(trace._prefetched_summary),
+            )
         except Exception as e:
             logger.warning("Prefetch failed: %s", e)
 
@@ -128,7 +148,12 @@ def handle_question(question: str, trace: Trace, history: list, model: str,
 
         def _run_one(tc, params):
             result = execute_tool(tc.function.name, trace, params)
-            logger.info("TOOL RESULT [%s]: %d chars", tc.function.name, len(result))
+            logger.info(
+                "TOOL RESULT [%s]: %d chars | preview=%s",
+                tc.function.name,
+                len(result),
+                _log_preview(result),
+            )
             return tc, result
 
         with ThreadPoolExecutor() as pool:

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { fetchProjectExperiments, updateRunTags } from "./api";
+import { chatWithTrace, fetchProjectExperiments, updateRunTags } from "./api";
 
 describe("api", () => {
   const fetchMock = vi.fn();
@@ -48,5 +48,32 @@ describe("api", () => {
     expect(url).toBe("/ui/update-run-tags");
     expect(options.method).toBe("POST");
     expect(options.body).toBe(JSON.stringify({ session_id: "session-1", tag_ids: ["tag-a", "tag-b"] }));
+  });
+
+  it("retries trace chat after requesting backend startup", async () => {
+    fetchMock
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({ ok: false }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ answer: "ready" }),
+      });
+
+    const result = await chatWithTrace("session-1", "hello", []);
+
+    expect(result).toEqual({ answer: "ready" });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/ui/chat/session-1",
+      "/_sovara/health",
+      "/_sovara/start-server",
+      "/ui/chat/session-1",
+    ]);
   });
 });

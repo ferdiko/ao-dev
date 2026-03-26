@@ -70,6 +70,26 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 
 export { post };
 
+async function ensureBackendRunning(): Promise<void> {
+  try {
+    const resp = await fetch("/_sovara/health");
+    if (resp.ok) {
+      return;
+    }
+  } catch {
+    // Fall through to the dev-server startup hook.
+  }
+
+  const resp = await fetch("/_sovara/start-server", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!resp.ok) {
+    throw new Error(`POST /_sovara/start-server failed: ${resp.status}`);
+  }
+}
+
 // ============================================================
 // User endpoints
 // ============================================================
@@ -391,5 +411,10 @@ export async function chatWithTrace(
   message: string,
   history: { role: string; content: string }[],
 ): Promise<{ answer: string; edits_applied?: boolean }> {
-  return post(`/ui/chat/${sessionId}`, { message, history });
+  try {
+    return await post(`/ui/chat/${sessionId}`, { message, history });
+  } catch {
+    await ensureBackendRunning();
+    return post(`/ui/chat/${sessionId}`, { message, history });
+  }
 }
