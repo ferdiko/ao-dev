@@ -723,10 +723,22 @@ def restart(req: RestartRequest, state: ServerState = Depends(get_state)):
     # Clear UI state and schedule broadcasts
     state.clear_session_ui_and_schedule_broadcast(session_id)
 
-    if parent_session and parent_session.status == "running":
+    parent_has_live_runner = (
+        parent_session is not None
+        and parent_session.status == "running"
+        and parent_session_id in state.runner_event_queues
+    )
+
+    if parent_has_live_runner:
         # Send restart to running runner via SSE
         state.schedule_runner_event(parent_session_id, {"type": "restart"})
-    elif parent_session and parent_session.status == "finished":
+    else:
+        # If the parent was still marked running but no runner queue exists anymore,
+        # reconcile that stale in-memory state before falling back to process spawn.
+        if parent_session and parent_session.status == "running":
+            state.checkpoint_interrupted_session_runtime(parent_session_id)
+            parent_session.status = "finished"
+            state.notify_experiment_list_changed()
         # Spawn a new process directly
         state.spawn_session_process(parent_session_id, session_id)
 

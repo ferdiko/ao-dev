@@ -138,6 +138,44 @@ def test_restart_sweeps_orphaned_parent_before_dispatch(monkeypatch):
         _cleanup(project_id, child_session_id, parent_session_id)
 
 
+def test_restart_running_parent_without_queue_spawns_directly(monkeypatch):
+    project_id = str(uuid.uuid4())
+    parent_session_id = str(uuid.uuid4())
+    child_session_id = str(uuid.uuid4())
+    state = ServerState()
+
+    _seed_experiment(parent_session_id, project_id)
+    _seed_experiment(child_session_id, project_id, parent_session_id=parent_session_id)
+    try:
+        parent_session = state.start_session_attempt(
+            parent_session_id,
+            project_id=project_id,
+            reset_runner_connection=True,
+        )
+        scheduled_events: list[tuple[str, dict]] = []
+        spawned_sessions: list[tuple[str, str]] = []
+
+        monkeypatch.setattr(
+            state,
+            "schedule_runner_event",
+            lambda session_id, event: scheduled_events.append((session_id, event)),
+        )
+        monkeypatch.setattr(
+            state,
+            "spawn_session_process",
+            lambda session_id, child_id: spawned_sessions.append((session_id, child_id)),
+        )
+
+        response = restart(RestartRequest(session_id=child_session_id), state)
+
+        assert response == {"ok": True}
+        assert scheduled_events == []
+        assert spawned_sessions == [(parent_session_id, child_session_id)]
+        assert parent_session.status == "finished"
+    finally:
+        _cleanup(project_id, child_session_id, parent_session_id)
+
+
 def test_connected_runner_is_not_swept_from_project_experiments():
     project_id = str(uuid.uuid4())
     session_id = str(uuid.uuid4())
