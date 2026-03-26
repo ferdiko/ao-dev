@@ -1,12 +1,10 @@
 [project]
-name = "sovara-examples-anthropic"
+name = "sovara-examples-prettify-fixture"
 version = "0.1.0"
-description = "Sovara debug examples for Anthropic"
+description = "Synthetic Sovara run for prettified-view UI testing"
 requires-python = ">=3.10"
 dependencies = [
     "sovara",
-    "anthropic",
-    "e2b-code-interpreter",
 ]
 
 [tool.uv.sources]

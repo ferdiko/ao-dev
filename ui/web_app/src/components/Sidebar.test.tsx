@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
-  it("shows only the supported project navigation entries", async () => {
+  it("hides unsupported optimization entries", async () => {
     vi.mocked(fetchProjects).mockResolvedValue([
       {
         project_id: "project-1",
@@ -40,8 +40,10 @@ describe("Sidebar", () => {
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(screen.getByText("SovaraDB")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Runs")).toBeInTheDocument());
 
+    expect(screen.queryByText("SovaraDB")).not.toBeInTheDocument();
+    expect(screen.queryByText("Optimization")).not.toBeInTheDocument();
     expect(screen.queryByText("Manage Priors")).not.toBeInTheDocument();
     expect(screen.queryByText("Collaboration")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sovara" })).not.toBeInTheDocument();

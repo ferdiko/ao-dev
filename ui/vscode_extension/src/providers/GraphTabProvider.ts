@@ -5,6 +5,7 @@ import * as path from 'path';
 import { PythonServerClient } from './PythonServerClient';
 import { PlaybookClient } from './PlaybookClient';
 import { ProcessInfo } from '@sovara/shared-components/types';
+import { type DetectedDocument, getFileExtensionsForDocumentType, getMimeTypeForDocumentType } from '@sovara/shared-components/utils/documentDetection';
 
 export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     public static readonly viewType = 'sovara.graphTab';
@@ -307,6 +308,12 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                 case 'openDocument':
                     this._handleOpenDocument(data.payload, panel);
                     break;
+                case 'saveDocument':
+                    this._handleSaveDocument(data.payload);
+                    break;
+                case 'pickReplacementDocument':
+                    this._handlePickReplacementDocument(data.payload, panel);
+                    break;
                 case 'openNodeEditorTab':
                     this.createOrShowNodeEditorTab(
                         data.nodeId,
@@ -577,6 +584,12 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                 case 'openDocument':
                     this._handleOpenDocument(data.payload, panel);
                     break;
+                case 'saveDocument':
+                    this._handleSaveDocument(data.payload);
+                    break;
+                case 'pickReplacementDocument':
+                    this._handlePickReplacementDocument(data.payload, panel);
+                    break;
                 case 'closeTab':
                     panel.dispose();
                     break;
@@ -825,18 +838,18 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         return { filePath: undefined, line: undefined };
     }
 
-    private async _handleOpenDocument(payload: { data: string; fileType: string; mimeType: string; documentKey?: string }, panel: vscode.WebviewPanel): Promise<void> {
-        const { data, fileType, documentKey } = payload;
+    private async _handleOpenDocument(payload: { data: string; fileType: string; mimeType: string; documentKey?: string; fileName?: string }, panel: vscode.WebviewPanel): Promise<void> {
+        const { data, fileType, documentKey, fileName } = payload;
 
         // Whitelist of file types we'll open with system default app
-        const openableTypes = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'docx', 'xlsx'];
+        const openableTypes = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'docx', 'xlsx', 'pptx'];
         const shouldOpen = openableTypes.includes(fileType);
 
         try {
             // Save to temp file
             const tempDir = os.tmpdir();
-            const fileName = `sovara-preview-${Date.now()}.${fileType}`;
-            const tempPath = path.join(tempDir, fileName);
+            const safeFileName = (fileName || `sovara-preview-${Date.now()}.${fileType}`).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+            const tempPath = path.join(tempDir, safeFileName);
 
             const buffer = Buffer.from(data, 'base64');
             fs.writeFileSync(tempPath, buffer);
@@ -855,6 +868,74 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         } catch (error) {
             console.error('[GraphTabProvider] Failed to open document:', error);
             vscode.window.showErrorMessage(`Failed to open document: ${error}`);
+        }
+    }
+
+    private async _handleSaveDocument(payload: { data: string; fileType: string; mimeType: string; fileName?: string }): Promise<void> {
+        const { data, fileType, fileName } = payload;
+
+        try {
+            const suggestedName = (fileName || `document.${fileType}`).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+            const targetUri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(path.join(os.homedir(), suggestedName)),
+                filters: {
+                    [fileType.toUpperCase()]: [fileType],
+                },
+            });
+
+            if (!targetUri) {
+                return;
+            }
+
+            const buffer = Buffer.from(data, 'base64');
+            fs.writeFileSync(targetUri.fsPath, buffer);
+        } catch (error) {
+            console.error('[GraphTabProvider] Failed to save document:', error);
+            vscode.window.showErrorMessage(`Failed to save document: ${error}`);
+        }
+    }
+
+    private async _handlePickReplacementDocument(
+        payload: { requestId: string; expectedType: DetectedDocument['type'] },
+        panel: vscode.WebviewPanel,
+    ): Promise<void> {
+        const { requestId, expectedType } = payload;
+
+        try {
+            const fileExtensions = getFileExtensionsForDocumentType(expectedType);
+            const selectedUris = await vscode.window.showOpenDialog({
+                canSelectMany: false,
+                openLabel: 'Replace File',
+                filters: {
+                    [expectedType.toUpperCase()]: fileExtensions,
+                },
+            });
+
+            const selectedUri = selectedUris?.[0];
+            if (!selectedUri) {
+                panel.webview.postMessage({
+                    type: 'replacementDocumentPicked',
+                    payload: { requestId, cancelled: true },
+                });
+                return;
+            }
+
+            const buffer = fs.readFileSync(selectedUri.fsPath);
+            panel.webview.postMessage({
+                type: 'replacementDocumentPicked',
+                payload: {
+                    requestId,
+                    data: buffer.toString('base64'),
+                    fileName: path.basename(selectedUri.fsPath),
+                    mimeType: getMimeTypeForDocumentType(expectedType),
+                },
+            });
+        } catch (error) {
+            console.error('[GraphTabProvider] Failed to pick replacement document:', error);
+            panel.webview.postMessage({
+                type: 'replacementDocumentPicked',
+                payload: { requestId, cancelled: true },
+            });
         }
     }
 

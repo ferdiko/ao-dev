@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 export interface RunViewLayoutState {
   graphWidth: number;
@@ -31,10 +31,19 @@ function loadRunViewLayout(): RunViewLayoutState {
 
 export function useRunViewLayout() {
   const [layoutState, setLayoutState] = useState<RunViewLayoutState>(loadRunViewLayout);
+  const stateRef = useRef(layoutState);
 
-  useEffect(() => {
-    localStorage.setItem(RUN_VIEW_LAYOUT_STORAGE_KEY, JSON.stringify(layoutState));
-  }, [layoutState]);
+  const setLayoutStateAndTrack: typeof setLayoutState = useCallback((action) => {
+    setLayoutState((prev) => {
+      const next = typeof action === "function" ? action(prev) : action;
+      stateRef.current = next;
+      return next;
+    });
+  }, []);
 
-  return [layoutState, setLayoutState] as const;
+  const persistLayout = useCallback(() => {
+    localStorage.setItem(RUN_VIEW_LAYOUT_STORAGE_KEY, JSON.stringify(stateRef.current));
+  }, []);
+
+  return [layoutState, setLayoutStateAndTrack, persistLayout] as const;
 }

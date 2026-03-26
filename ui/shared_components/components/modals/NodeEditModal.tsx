@@ -128,6 +128,10 @@ export const NodeEditModal: React.FC<NodeEditModalProps> = ({
    * Reconstructs `{ raw, to_show }` while preserving `raw`.
    */
   const handleSave = () => {
+    if (!hasChanges) {
+      return;
+    }
+
     let valueToSave = currentValue;
 
     try {

@@ -4,11 +4,38 @@
  */
 
 export interface DetectedDocument {
-  type: "pdf" | "png" | "jpeg" | "gif" | "webp" | "docx" | "xlsx" | "zip" | "unknown";
+  type: "pdf" | "png" | "jpeg" | "gif" | "webp" | "docx" | "xlsx" | "pptx" | "zip" | "unknown";
   mimeType: string;
   size: number;      // base64 string length
   data: string;      // the base64 string itself
+  name?: string;
 }
+
+const TYPE_TO_MIME: Record<DetectedDocument["type"], string> = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  zip: "application/zip",
+  unknown: "application/octet-stream",
+};
+
+const TYPE_TO_EXTENSIONS: Record<DetectedDocument["type"], string[]> = {
+  pdf: ["pdf"],
+  png: ["png"],
+  jpeg: ["jpg", "jpeg"],
+  gif: ["gif"],
+  webp: ["webp"],
+  docx: ["docx"],
+  xlsx: ["xlsx"],
+  pptx: ["pptx"],
+  zip: ["zip"],
+  unknown: ["bin"],
+};
 
 // Magic number prefixes (base64-encoded)
 const BASE64_MAGIC: Record<string, { type: DetectedDocument["type"]; mime: string }> = {
@@ -31,8 +58,29 @@ const MIME_TYPE_MAP: Record<string, DetectedDocument["type"]> = {
   "application/zip": "zip",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "unknown",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
 };
+
+const DOCUMENT_NAME_KEYS = ["filename", "file_name", "name"] as const;
+
+function inferTypeFromName(name?: string | null): DetectedDocument["type"] | null {
+  if (!name) {
+    return null;
+  }
+
+  const normalized = name.trim().toLowerCase();
+  for (const [type, extensions] of Object.entries(TYPE_TO_EXTENSIONS) as Array<[DetectedDocument["type"], string[]]>) {
+    if (type === "unknown" || type === "zip") {
+      continue;
+    }
+
+    if (extensions.some((extension) => normalized.endsWith(`.${extension}`))) {
+      return type;
+    }
+  }
+
+  return null;
+}
 
 /**
  * Extract MIME type from sibling keys in the JSON structure.
@@ -53,16 +101,44 @@ function extractMimeFromSiblings(siblings?: Record<string, unknown>): string | n
   return null;
 }
 
+export function extractDocumentName(siblings?: Record<string, unknown>): string | null {
+  if (!siblings) return null;
+
+  for (const key of DOCUMENT_NAME_KEYS) {
+    const value = siblings[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
 /**
  * Create a DetectedDocument from a known MIME type.
  */
-function fromMimeType(mime: string, data: string): DetectedDocument {
+function fromMimeType(mime: string, data: string, name?: string | null): DetectedDocument {
+  const namedType = inferTypeFromName(name);
+  const mimeType = MIME_TYPE_MAP[mime] || "unknown";
+  const type = mimeType === "zip" && namedType ? namedType : mimeType;
   return {
-    type: MIME_TYPE_MAP[mime] || "unknown",
-    mimeType: mime,
+    type,
+    mimeType: type !== mimeType ? TYPE_TO_MIME[type] : mime,
     size: data.length,
     data,
+    name: name || undefined,
   };
+}
+
+export function isPreviewableDocument(doc: Pick<DetectedDocument, "type">): boolean {
+  return ["pdf", "png", "jpeg", "gif", "webp"].includes(doc.type);
+}
+
+function looksLikeBase64Payload(value: string): boolean {
+  const normalized = value.trim().replace(/\s+/g, "");
+  if (normalized.length < 50) return false;
+  if (!/^[A-Za-z0-9+/=]+$/.test(normalized)) return false;
+  return normalized.length % 4 === 0;
 }
 
 /**
@@ -82,24 +158,33 @@ export function detectDocument(
   siblingData?: Record<string, unknown>
 ): DetectedDocument | null {
   if (typeof value !== "string" || value.length < 50) return null;
+  const name = extractDocumentName(siblingData);
 
-  // 1. Check MIME type from sibling keys
-  const mimeHint = extractMimeFromSiblings(siblingData);
-  if (mimeHint && MIME_TYPE_MAP[mimeHint]) {
-    return fromMimeType(mimeHint, value);
-  }
-
-  // 2. Check data URL prefix: "data:image/png;base64,..."
+  // 1. Check data URL prefix: "data:image/png;base64,..."
   const dataUrlMatch = value.match(/^data:([^;]+);base64,(.+)$/);
   if (dataUrlMatch) {
     const [, mime, data] = dataUrlMatch;
-    return fromMimeType(mime, data);
+    return fromMimeType(mime, data, name);
+  }
+
+  // 2. Check MIME type from sibling keys, but only when the value looks like base64 payload.
+  const mimeHint = extractMimeFromSiblings(siblingData);
+  if (mimeHint && MIME_TYPE_MAP[mimeHint] && looksLikeBase64Payload(value)) {
+    return fromMimeType(mimeHint, value, name);
   }
 
   // 3. Fall back to magic number detection
   for (const [magic, info] of Object.entries(BASE64_MAGIC)) {
     if (value.startsWith(magic)) {
-      return { type: info.type, mimeType: info.mime, size: value.length, data: value };
+      const namedType = inferTypeFromName(name);
+      const type = info.type === "zip" && namedType ? namedType : info.type;
+      return {
+        type,
+        mimeType: type !== info.type ? TYPE_TO_MIME[type] : info.mime,
+        size: value.length,
+        data: value,
+        name: name || undefined,
+      };
     }
   }
 
@@ -121,18 +206,15 @@ export function formatFileSize(base64Length: number): string {
  * Get file extension for a document type.
  */
 export function getFileExtension(type: DetectedDocument["type"]): string {
-  const extensions: Record<DetectedDocument["type"], string> = {
-    pdf: "pdf",
-    png: "png",
-    jpeg: "jpg",
-    gif: "gif",
-    webp: "webp",
-    docx: "docx",
-    xlsx: "xlsx",
-    zip: "zip",
-    unknown: "bin",
-  };
-  return extensions[type];
+  return TYPE_TO_EXTENSIONS[type][0];
+}
+
+export function getFileExtensionsForDocumentType(type: DetectedDocument["type"]): string[] {
+  return TYPE_TO_EXTENSIONS[type];
+}
+
+export function getMimeTypeForDocumentType(type: DetectedDocument["type"]): string {
+  return TYPE_TO_MIME[type];
 }
 
 /**

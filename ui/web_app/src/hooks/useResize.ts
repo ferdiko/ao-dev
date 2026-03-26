@@ -22,6 +22,13 @@ export function useResize(
       document.body.style.cursor = direction === "horizontal" ? "col-resize" : "row-resize";
       document.body.style.userSelect = "none";
 
+      // Transparent overlay prevents iframes/canvases (e.g. ReactFlow) from
+      // swallowing mousemove events during drag.
+      const overlay = document.createElement("div");
+      overlay.style.cssText = "position:fixed;inset:0;z-index:9999;cursor:" +
+        (direction === "horizontal" ? "col-resize" : "row-resize");
+      document.body.appendChild(overlay);
+
       const onMouseMove = (ev: MouseEvent) => {
         const current = direction === "horizontal" ? ev.clientX : ev.clientY;
         const delta = current - startPos.current;
@@ -32,6 +39,7 @@ export function useResize(
       const onMouseUp = () => {
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
+        overlay.remove();
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
         onResizeEnd?.();

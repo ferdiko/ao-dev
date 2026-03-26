@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import {
   ReactFlow,
@@ -104,7 +104,7 @@ export function RunView() {
   const { projectId, sessionId: rawSessionIds } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const [layoutState, setLayoutState] = useRunViewLayout();
+  const [layoutState, setLayoutState, persistLayout] = useRunViewLayout();
 
   const sessionIds = useMemo(() => rawSessionIds?.split(",").filter(Boolean) ?? [], [rawSessionIds]);
   const activeSessionId = searchParams.get("active") ?? sessionIds[0];
@@ -172,6 +172,7 @@ export function RunView() {
           sessionId={activeSessionId}
           layoutState={layoutState}
           setLayoutState={setLayoutState}
+          persistLayout={persistLayout}
         />
       </div>
     );
@@ -196,6 +197,7 @@ export function RunView() {
           sessionId={activeSessionId}
           layoutState={layoutState}
           setLayoutState={setLayoutState}
+          persistLayout={persistLayout}
         />
       </div>
     </div>
@@ -209,11 +211,13 @@ function RunViewContent({
   sessionId,
   layoutState,
   setLayoutState,
+  persistLayout,
 }: {
   projectId?: string;
   sessionId: string;
   layoutState: RunViewLayoutState;
   setLayoutState: React.Dispatch<React.SetStateAction<RunViewLayoutState>>;
+  persistLayout: () => void;
 }) {
   // UI state
   const [viewMode, setViewMode] = useState<ViewMode>("pretty");
@@ -244,6 +248,8 @@ function RunViewContent({
   const GRAPH_MIN = 180; const GRAPH_MAX = 600;
   const CHAT_MIN = 200; const CHAT_MAX = 700;
   const { graphWidth, chatWidth, chatCollapsed } = layoutState;
+  const graphPanelRef = useRef<HTMLDivElement>(null);
+  const chatPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     prefetchTrace(sessionId);
@@ -333,20 +339,33 @@ function RunViewContent({
     }
   }, [projectId, reloadTags, setSelectedTags, tagPendingDelete]);
 
+  // Resize via direct DOM mutation to avoid re-rendering the entire tree per frame.
+  // React state is synced once on mouseUp.
+  const graphWidthRef = useRef(graphWidth);
+  graphWidthRef.current = graphWidth;
+  const chatWidthRef = useRef(chatWidth);
+  chatWidthRef.current = chatWidth;
+
   const onGraphResize = useCallback((delta: number) => {
-    setLayoutState((prev) => ({
-      ...prev,
-      graphWidth: Math.min(GRAPH_MAX, Math.max(GRAPH_MIN, prev.graphWidth + delta)),
-    }));
-  }, [setLayoutState]);
+    graphWidthRef.current = Math.min(GRAPH_MAX, Math.max(GRAPH_MIN, graphWidthRef.current + delta));
+    if (graphPanelRef.current) graphPanelRef.current.style.width = `${graphWidthRef.current}px`;
+  }, []);
+  const onGraphResizeEnd = useCallback(() => {
+    setLayoutState((prev) => ({ ...prev, graphWidth: graphWidthRef.current }));
+    persistLayout();
+  }, [setLayoutState, persistLayout]);
+
   const onChatResize = useCallback((delta: number) => {
-    setLayoutState((prev) => ({
-      ...prev,
-      chatWidth: Math.min(CHAT_MAX, Math.max(CHAT_MIN, prev.chatWidth - delta)),
-    }));
-  }, [setLayoutState]);
-  const graphHandleDown = useResize("horizontal", onGraphResize);
-  const chatHandleDown = useResize("horizontal", onChatResize);
+    chatWidthRef.current = Math.min(CHAT_MAX, Math.max(CHAT_MIN, chatWidthRef.current - delta));
+    if (chatPanelRef.current) chatPanelRef.current.style.width = `${chatWidthRef.current}px`;
+  }, []);
+  const onChatResizeEnd = useCallback(() => {
+    setLayoutState((prev) => ({ ...prev, chatWidth: chatWidthRef.current }));
+    persistLayout();
+  }, [setLayoutState, persistLayout]);
+
+  const graphHandleDown = useResize("horizontal", onGraphResize, onGraphResizeEnd);
+  const chatHandleDown = useResize("horizontal", onChatResize, onChatResizeEnd);
 
   // Compute full graph layout (positions + routed edges)
   const graphLayout = useMemo(
@@ -480,7 +499,7 @@ function RunViewContent({
 
       <div className="run-view-body">
         {/* Left: Graph */}
-        <div className="run-graph-panel" style={{ width: graphWidth, flex: "none" }}>
+        <div ref={graphPanelRef} className="run-graph-panel" style={{ width: graphWidth, flex: "none" }}>
           <div className="run-graph-canvas" ref={canvasRef}>
             {hasGraph ? (
               <ReactFlowProvider>
@@ -561,7 +580,7 @@ function RunViewContent({
       </div>{/* end run-view-left */}
 
       {!chatCollapsed && <div className="resize-handle resize-handle-h" onMouseDown={chatHandleDown} />}
-      <div className={`run-chat-panel${chatCollapsed ? " collapsed" : ""}`} style={chatCollapsed ? undefined : { width: chatWidth, flex: "none" }}>
+      <div ref={chatPanelRef} className={`run-chat-panel${chatCollapsed ? " collapsed" : ""}`} style={chatCollapsed ? undefined : { width: chatWidth, flex: "none" }}>
         {chatCollapsed ? (
           <div
             className="run-chat-collapsed"

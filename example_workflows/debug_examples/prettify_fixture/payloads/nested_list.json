@@ -1,0 +1,14 @@
+[
+  {
+    "kind": "markdown",
+    "body": "## Card\n\n`inline` sample"
+  },
+  {
+    "kind": "xml",
+    "body": "<node depth=\"2\" />"
+  },
+  {
+    "kind": "code",
+    "body": "console.log('array item');"
+  }
+]

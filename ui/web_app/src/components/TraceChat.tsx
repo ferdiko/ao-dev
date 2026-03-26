@@ -16,12 +16,23 @@ export function TraceChat({ sessionId, onCollapse }: { sessionId: string; onColl
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
+
+  useEffect(() => {
+    const textarea = inputRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    textarea.style.height = "0px";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+  }, [input]);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
@@ -86,14 +97,20 @@ export function TraceChat({ sessionId, onCollapse }: { sessionId: string; onColl
           )}
         </div>
         <div className="trace-chat-input-row">
-          <input
+          <textarea
+            ref={inputRef}
             className="trace-chat-input"
-            type="text"
             placeholder="Ask about this trace…"
             value={input}
             disabled={isLoading}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") void handleSend(); }}
+            rows={1}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void handleSend();
+              }
+            }}
           />
           <button className="trace-chat-send" onClick={() => void handleSend()} disabled={!input.trim() || isLoading}>
             {isLoading ? <Loader2 size={13} className="fa-spinner" /> : <Send size={13} />}

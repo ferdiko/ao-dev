@@ -28,7 +28,7 @@ tools = [
 
 # Load an image (you can replace this with your own image path)
 # For this example, we'll create a simple image or use a placeholder
-image_path = "./example_workflows/debug_examples/user_files/sample_program.jpg"
+image_path = "../user_files/sample_program.jpg"
 
 with open(image_path, "rb") as image_file:
     image_data = base64.standard_b64encode(image_file.read()).decode("utf-8")

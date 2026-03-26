@@ -1,0 +1,1 @@
+{title: "missing quotes around key", items: [1, 2,], note: "should fall back to text"}

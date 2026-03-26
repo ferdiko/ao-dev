@@ -5,7 +5,6 @@ import {
   HelpCircle,
   ChevronDown,
   BarChart3,
-  Database,
   Play,
   UserPlus,
   PanelLeft,
@@ -22,10 +21,6 @@ interface NavItem {
 
 const observabilityItems: NavItem[] = [
   { label: "Runs", icon: <Play size={16} />, id: "runs" },
-];
-
-const optimizationItems: NavItem[] = [
-  { label: "SovaraDB", icon: <Database size={16} />, id: "db-priors" },
 ];
 
 const settingsItems: NavItem[] = [
@@ -84,7 +79,6 @@ export function Sidebar({ projectId, style, children, user, collapsed, onToggleC
 
   const navRoutes: Record<string, string> = {
     runs: `/project/${projectId}`,
-    "db-priors": `/project/${projectId}/priors`,
   };
 
   const callbackItems: Record<string, (() => void) | undefined> = {
@@ -163,9 +157,6 @@ export function Sidebar({ projectId, style, children, user, collapsed, onToggleC
           <>
             {!collapsed && <div className="sidebar-section">Observability</div>}
             {observabilityItems.map(renderNavItem)}
-
-            {!collapsed && <div className="sidebar-section">Optimization</div>}
-            {optimizationItems.map(renderNavItem)}
           </>
         ) : (
           <>

@@ -1,8 +1,7 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
-import Zoom from "react-medium-image-zoom";
 import "react-medium-image-zoom/dist/styles.css";
 import {
   MIME_TO_EXT,
@@ -11,30 +10,15 @@ import {
   isPdfMime,
   type Attachment,
 } from "../attachmentUtils";
+import { saveDocument } from "@sovara/shared-components/utils/documentDownload";
+import { detectDocument } from "@sovara/shared-components/utils/documentDetection";
+import { DocumentPreviewModal } from "./DocumentPreviewModal";
 
 // Configure PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
   import.meta.url,
 ).toString();
-
-// ── Download helper ─────────────────────────────────────
-
-/** Trigger a browser download for an attachment. */
-function downloadAttachment(att: Attachment) {
-  const binary = atob(att.data);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  const blob = new Blob([bytes], { type: att.mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = att.name;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
 
 // ── Thumbnail component ──────────────────────────────────
 
@@ -69,67 +53,6 @@ function AttachmentThumbnail({
   );
 }
 
-// ── Modal preview (images + PDFs only) ───────────────────
-
-function PreviewModal({
-  attachment,
-  onClose,
-}: {
-  attachment: Attachment;
-  onClose: () => void;
-}) {
-  const [numPages, setNumPages] = useState<number>(0);
-
-  const dataUri = useMemo(
-    () => `data:${attachment.mimeType};base64,${attachment.data}`,
-    [attachment],
-  );
-
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [onClose]);
-
-  const handleBackdropClick = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
-
-  return (
-    <div className="attachment-modal-backdrop" onClick={handleBackdropClick}>
-      <div className="attachment-modal">
-        <div className="attachment-modal-header">
-          <span className="attachment-modal-title">{attachment.name}</span>
-          <button className="attachment-modal-close" onClick={onClose}>✕</button>
-        </div>
-        <div className="attachment-modal-body">
-          {isImageMime(attachment.mimeType) ? (
-            <Zoom>
-              <img src={dataUri} alt={attachment.name} className="attachment-modal-img" />
-            </Zoom>
-          ) : isPdfMime(attachment.mimeType) ? (
-            <div className="attachment-modal-pdf">
-              <Document
-                file={dataUri}
-                onLoadSuccess={({ numPages: n }) => setNumPages(n)}
-              >
-                {Array.from({ length: numPages }, (_, i) => (
-                  <Page key={i + 1} pageNumber={i + 1} width={700} />
-                ))}
-              </Document>
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── Main AttachmentStrip ─────────────────────────────────
 
 export function AttachmentStrip({ attachments }: { attachments: Attachment[] }) {
@@ -141,8 +64,14 @@ export function AttachmentStrip({ attachments }: { attachments: Attachment[] }) 
     if (hasInBrowserPreview(att.mimeType)) {
       setPreviewAtt(att);
     } else {
-      // Office docs (DOCX, XLSX, PPTX, etc.): download and let OS open
-      downloadAttachment(att);
+      void saveDocument(
+        detectDocument(att.data, { mime_type: att.mimeType, filename: att.name }) || {
+          data: att.data,
+          mimeType: att.mimeType,
+          type: "unknown",
+          name: att.name,
+        },
+      );
     }
   }
 
@@ -158,7 +87,7 @@ export function AttachmentStrip({ attachments }: { attachments: Attachment[] }) 
         ))}
       </div>
       {previewAtt && (
-        <PreviewModal
+        <DocumentPreviewModal
           attachment={previewAtt}
           onClose={() => setPreviewAtt(null)}
         />

@@ -3189,12 +3189,12 @@
   min-height: 0;
   overflow: hidden;
   background: #ffffff;
-  transition: width 0.25s ease;
 }
 .run-chat-panel.collapsed {
   width: 40px !important;
   flex: none;
   overflow: visible;
+  transition: width 0.25s ease;
 }
 .run-chat-panel .trace-chat {
   flex: 1;
@@ -3518,6 +3518,16 @@
   color: var(--color-primary);
 }
 
+.io-attachments-header {
+  margin-top: 14px;
+  margin-bottom: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
 .io-role-label {
   font-weight: 700;
   font-size: 13px;
@@ -3554,6 +3564,12 @@
   padding: 4px 12px;
   background: var(--color-border-light);
   border-bottom: 1px solid var(--color-border);
+}
+
+.code-block-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .code-block-lang {
@@ -3684,8 +3700,7 @@
   box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.15);
 }
 
-.io-edit-btn,
-.io-suggest-btn {
+.io-edit-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -3712,19 +3727,6 @@
 .io-edit-locked-wrapper {
   cursor: not-allowed;
 }
-.io-suggest-btn {
-  color: #7c3aed;
-  border-color: #e9e0ff;
-}
-.io-suggest-btn:hover:not(:disabled) {
-  background: #f5f0ff;
-  border-color: #7c3aed;
-}
-.io-suggest-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 /* Edit area (textarea + toolbar) */
 .io-edit-area {
   display: flex;
@@ -3736,8 +3738,8 @@
 }
 .io-edit-textarea {
   width: 100%;
-  min-height: 160px;
-  max-height: 400px;
+  min-height: 220px;
+  max-height: 75vh;
   padding: 10px 12px;
   font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
   font-size: 12px;
@@ -3791,6 +3793,12 @@
   display: flex;
   gap: 6px;
   justify-content: flex-end;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding-top: 8px;
+  padding-bottom: 2px;
+  background: linear-gradient(to bottom, rgba(248, 246, 238, 0), var(--color-surface-warm) 24px);
 }
 .io-edit-save-rerun {
   padding: 4px 14px;
@@ -3804,6 +3812,11 @@
   cursor: pointer;
 }
 .io-edit-save-rerun:hover { opacity: 0.9; }
+.io-edit-save-rerun:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.io-edit-save-rerun:disabled:hover { opacity: 0.45; }
 .io-edit-save {
   padding: 4px 14px;
   font-size: 11px;
@@ -3816,6 +3829,11 @@
   cursor: pointer;
 }
 .io-edit-save:hover { background: var(--color-bg); }
+.io-edit-save:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.io-edit-save:disabled:hover { background: var(--color-surface); }
 .io-edit-cancel {
   padding: 4px 14px;
   font-size: 11px;
@@ -3902,13 +3920,15 @@
   min-height: 0;
 }
 .trace-chat-msg {
-  max-width: 95%;
+  display: flex;
+  max-width: calc(100% - 16px);
 }
 .trace-chat-msg-user {
   align-self: flex-end;
+  justify-content: flex-end;
 }
 .trace-chat-msg-assistant {
-  align-self: flex-start;
+  justify-content: flex-start;
 }
 .trace-chat-msg-content {
   padding: 7px 11px;
@@ -3916,10 +3936,14 @@
   font-size: 12px;
   font-family: "Roboto", sans-serif;
   line-height: 1.5;
+  max-width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border);
 }
 .trace-chat-msg-user .trace-chat-msg-content {
   background: var(--color-primary);
-  color: white;
+  color: #fff;
+  border-color: var(--color-primary);
   border-bottom-right-radius: 3px;
 }
 .trace-chat-msg-assistant .trace-chat-msg-content {
@@ -3977,7 +4001,7 @@
 
 .trace-chat-input-row {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
   padding: 8px 14px;
   border-top: 1px solid var(--color-border-light);
@@ -3993,6 +4017,13 @@
   background: var(--color-surface);
   color: var(--color-text);
   outline: none;
+  resize: none;
+  overflow-y: auto;
+  min-height: 32px;
+  max-height: 180px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .trace-chat-input:focus {
   border-color: var(--color-primary);
@@ -4179,6 +4210,36 @@
 .attachment-modal-close:hover {
   background: var(--color-surface-warm);
   color: var(--color-text-primary);
+}
+
+.attachment-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.attachment-modal-download {
+  border: 1px solid var(--color-border-light);
+  background: var(--color-surface-card);
+  color: var(--color-text-primary);
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.attachment-modal-download:hover {
+  background: var(--color-surface-warm);
+}
+
+.attachment-modal-download-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
 }
 
 .attachment-modal-body {
