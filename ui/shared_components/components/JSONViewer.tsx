@@ -39,13 +39,17 @@ interface BaseNodeProps {
   path: string[];
   siblingData?: Record<string, unknown>;
   onChange?: (path: string[], newValue: any) => void;
+  onJumpToRaw?: (path: string[]) => void;
   onOpenDocument?: (doc: DetectedDocument) => void;
+  focusRequest?: FocusRequest | null;
+  onFocusHandled?: (nonce: number) => void;
   searchQuery?: string;
   currentMatchIndex?: number;
   matchIndexOffset?: number;
 }
 
 type ViewMode = 'pretty' | 'raw';
+type FocusRequest = { path: string[]; nonce: number };
 type CodeTokenType = 'plain' | 'comment' | 'string' | 'number' | 'boolean' | 'keyword' | 'property' | 'tag' | 'attribute' | 'variable';
 type CodeToken = { type: CodeTokenType; text: string };
 
@@ -87,6 +91,22 @@ function keyLabelFromPath(keyName: string | null): string {
   }
 
   return keyName.split('.').pop() || keyName;
+}
+
+function pathsEqual(left: string[], right: string[] | null | undefined): boolean {
+  if (!right || left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((segment, index) => segment === right[index]);
+}
+
+function isProperPathPrefix(prefix: string[], fullPath: string[] | null | undefined): boolean {
+  if (!fullPath || prefix.length >= fullPath.length) {
+    return false;
+  }
+
+  return prefix.every((segment, index) => segment === fullPath[index]);
 }
 
 function countMatches(text: string, query: string): number {
@@ -193,7 +213,13 @@ const ActionIconButton: React.FC<{
   <button
     title={title}
     aria-label={title}
-    onClick={onClick}
+    onClick={(event) => {
+      event.stopPropagation();
+      onClick();
+    }}
+    onDoubleClick={(event) => {
+      event.stopPropagation();
+    }}
     style={{
       display: 'inline-flex',
       alignItems: 'center',
@@ -228,6 +254,23 @@ const ActionIconButton: React.FC<{
   >
     {typeof icon === 'string' ? <i className={`codicon ${icon}`} style={{ fontSize: '12px' }} /> : icon}
   </button>
+);
+
+const HoverActionSlot: React.FC<{
+  visible: boolean;
+  children: React.ReactNode;
+}> = ({ visible, children }) => (
+  <div
+    style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      opacity: visible ? 1 : 0,
+      pointerEvents: visible ? 'auto' : 'none',
+      transition: 'opacity 120ms ease',
+    }}
+  >
+    {children}
+  </div>
 );
 
 const ViewerToggle: React.FC<{
@@ -352,7 +395,13 @@ const DocumentButton: React.FC<{
             fontFamily: 'var(--vscode-font-family, sans-serif)',
             fontSize: '13px',
           }}
-          onClick={() => onOpenDocument(doc)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenDocument(doc);
+          }}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+          }}
         >
           <i className={`codicon codicon-${iconMap[doc.type]}`} />
           {` Open ${labelMap[doc.type]} (${formatFileSize(doc.size)})`}
@@ -380,10 +429,28 @@ const PrettyShell: React.FC<{
   depth: number;
   children: React.ReactNode;
   actions?: React.ReactNode;
+  onJumpToRaw?: () => void;
   compact?: boolean;
-}> = ({ label, badge, isDarkTheme, depth, children, actions, compact = false }) => {
+}> = ({ label, badge, isDarkTheme, depth, children, actions, onJumpToRaw, compact = false }) => {
   const colors = getViewerColors(isDarkTheme);
   const title = keyLabelFromPath(label);
+  const [isHovered, setIsHovered] = useState(false);
+  const editAction = onJumpToRaw ? (
+    <HoverActionSlot visible={isHovered}>
+      <ActionIconButton
+        title="Edit in raw JSON"
+        icon="codicon-edit"
+        isDarkTheme={isDarkTheme}
+        onClick={onJumpToRaw}
+      />
+    </HoverActionSlot>
+  ) : null;
+  const actionGroup = editAction && actions ? (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+      {editAction}
+      {actions}
+    </div>
+  ) : editAction || actions;
 
   return (
     <div
@@ -391,8 +458,14 @@ const PrettyShell: React.FC<{
         marginBottom: '10px',
         marginLeft: depth > 0 ? '12px' : '0',
       }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onDoubleClick={onJumpToRaw ? (event) => {
+        event.stopPropagation();
+        onJumpToRaw();
+      } : undefined}
     >
-      {(title || badge || actions) && (
+      {(title || badge || actionGroup) && (
         <div
           style={{
             display: 'flex',
@@ -420,7 +493,7 @@ const PrettyShell: React.FC<{
             )}
             {badge && <TypeBadge label={badge} isDarkTheme={isDarkTheme} />}
           </div>
-          {actions}
+          {actionGroup}
         </div>
       )}
       <div
@@ -442,13 +515,15 @@ const ScalarBox: React.FC<{
   value: unknown;
   isDarkTheme: boolean;
   depth: number;
-}> = ({ label, value, isDarkTheme, depth }) => {
+  onJumpToRaw?: () => void;
+}> = ({ label, value, isDarkTheme, depth, onJumpToRaw }) => {
   return (
     <PrettyShell
       label={label}
       badge={getScalarTypeLabel(value)}
       isDarkTheme={isDarkTheme}
       depth={depth}
+      onJumpToRaw={onJumpToRaw}
       compact
     >
       <CompactScalarValue value={value} isDarkTheme={isDarkTheme} singleLine />
@@ -521,12 +596,14 @@ const InlineValueRow: React.FC<{
   label: string;
   value: unknown;
   isDarkTheme: boolean;
+  onJumpToRaw?: () => void;
   searchQuery?: string;
   currentMatchIndex?: number;
   matchIndexOffset?: number;
-}> = ({ label, value, isDarkTheme, searchQuery, currentMatchIndex, matchIndexOffset = 0 }) => {
+}> = ({ label, value, isDarkTheme, onJumpToRaw, searchQuery, currentMatchIndex, matchIndexOffset = 0 }) => {
   const colors = getViewerColors(isDarkTheme);
   const isString = typeof value === 'string';
+  const [isHovered, setIsHovered] = useState(false);
   const { element: highlighted } = isString
     ? highlightText(value, searchQuery, matchIndexOffset, currentMatchIndex ?? -1)
     : { element: null };
@@ -542,6 +619,12 @@ const InlineValueRow: React.FC<{
         border: `1px solid ${isDarkTheme ? 'rgba(110, 118, 129, 0.22)' : 'rgba(110, 118, 129, 0.14)'}`,
         backgroundColor: isDarkTheme ? 'rgba(110, 118, 129, 0.06)' : 'rgba(110, 118, 129, 0.03)',
       }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onDoubleClick={onJumpToRaw ? (event) => {
+        event.stopPropagation();
+        onJumpToRaw();
+      } : undefined}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '140px', maxWidth: '240px' }}>
         <span
@@ -576,6 +659,16 @@ const InlineValueRow: React.FC<{
           <CompactScalarValue value={value} isDarkTheme={isDarkTheme} />
         )}
       </div>
+      {onJumpToRaw && (
+        <HoverActionSlot visible={isHovered}>
+          <ActionIconButton
+            title="Edit in raw JSON"
+            icon="codicon-edit"
+            isDarkTheme={isDarkTheme}
+            onClick={onJumpToRaw}
+          />
+        </HoverActionSlot>
+      )}
     </div>
   );
 };
@@ -601,32 +694,55 @@ const ArrayItemBox: React.FC<{
   index: number;
   isDarkTheme: boolean;
   children: React.ReactNode;
-}> = ({ index, isDarkTheme, children }) => (
-  <div
-    style={{
-      border: `1px solid ${isDarkTheme ? 'rgba(110, 118, 129, 0.22)' : 'rgba(110, 118, 129, 0.14)'}`,
-      borderRadius: '8px',
-      backgroundColor: isDarkTheme ? 'rgba(110, 118, 129, 0.06)' : 'rgba(110, 118, 129, 0.03)',
-      padding: '8px 10px',
-    }}
-  >
-    <div style={{ marginBottom: '6px' }}>
-      <ArrayIndexLabel index={index} isDarkTheme={isDarkTheme} />
+  onJumpToRaw?: () => void;
+}> = ({ index, isDarkTheme, children, onJumpToRaw }) => {
+  const [isHovered, setIsHovered] = useState(false);
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${isDarkTheme ? 'rgba(110, 118, 129, 0.22)' : 'rgba(110, 118, 129, 0.14)'}`,
+        borderRadius: '8px',
+        backgroundColor: isDarkTheme ? 'rgba(110, 118, 129, 0.06)' : 'rgba(110, 118, 129, 0.03)',
+        padding: '8px 10px',
+      }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onDoubleClick={onJumpToRaw ? (event) => {
+        event.stopPropagation();
+        onJumpToRaw();
+      } : undefined}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
+        <ArrayIndexLabel index={index} isDarkTheme={isDarkTheme} />
+        {onJumpToRaw && (
+          <HoverActionSlot visible={isHovered}>
+            <ActionIconButton
+              title="Edit in raw JSON"
+              icon="codicon-edit"
+              isDarkTheme={isDarkTheme}
+              onClick={onJumpToRaw}
+            />
+          </HoverActionSlot>
+        )}
+      </div>
+      {children}
     </div>
-    {children}
-  </div>
-);
+  );
+};
 
 const InlineArrayItemRow: React.FC<{
   index: number;
   value: unknown;
   isDarkTheme: boolean;
+  onJumpToRaw?: () => void;
   searchQuery?: string;
   currentMatchIndex?: number;
   matchIndexOffset?: number;
-}> = ({ index, value, isDarkTheme, searchQuery, currentMatchIndex, matchIndexOffset = 0 }) => {
+}> = ({ index, value, isDarkTheme, onJumpToRaw, searchQuery, currentMatchIndex, matchIndexOffset = 0 }) => {
   const colors = getViewerColors(isDarkTheme);
   const isString = typeof value === 'string';
+  const [isHovered, setIsHovered] = useState(false);
   const { element: highlighted } = isString
     ? highlightText(value, searchQuery, matchIndexOffset, currentMatchIndex ?? -1)
     : { element: null };
@@ -642,6 +758,12 @@ const InlineArrayItemRow: React.FC<{
         border: `1px solid ${isDarkTheme ? 'rgba(110, 118, 129, 0.22)' : 'rgba(110, 118, 129, 0.14)'}`,
         backgroundColor: isDarkTheme ? 'rgba(110, 118, 129, 0.06)' : 'rgba(110, 118, 129, 0.03)',
       }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onDoubleClick={onJumpToRaw ? (event) => {
+        event.stopPropagation();
+        onJumpToRaw();
+      } : undefined}
     >
       <ArrayIndexLabel index={index} isDarkTheme={isDarkTheme} />
       <div style={{ minWidth: 0, flex: 1 }}>
@@ -662,6 +784,16 @@ const InlineArrayItemRow: React.FC<{
           <CompactScalarValue value={value} isDarkTheme={isDarkTheme} />
         )}
       </div>
+      {onJumpToRaw && (
+        <HoverActionSlot visible={isHovered}>
+          <ActionIconButton
+            title="Edit in raw JSON"
+            icon="codicon-edit"
+            isDarkTheme={isDarkTheme}
+            onClick={onJumpToRaw}
+          />
+        </HoverActionSlot>
+      )}
     </div>
   );
 };
@@ -1203,41 +1335,20 @@ const PrettyStringNode: React.FC<BaseNodeProps> = ({
   value,
   isDarkTheme,
   depth,
+  path,
   siblingData,
+  onJumpToRaw,
   onOpenDocument,
   searchQuery,
   currentMatchIndex,
   matchIndexOffset = 0,
 }) => {
   const colors = getViewerColors(isDarkTheme);
-  const [showRawString, setShowRawString] = useState(false);
   const [isExpanded, setIsExpanded] = useState(!shouldCollapseLongText(value));
   const detectedDoc = onOpenDocument ? detectDocument(value, siblingData) : null;
-  const doc = detectedDoc && !showRawString ? detectedDoc : null;
+  const doc = detectedDoc;
   const classification = classifyStringContent(value);
-  const rawToggleAction =
-    detectedDoc || classification.kind === 'json' || classification.kind === 'markdown' || classification.kind === 'xml'
-      ? (
-          <ActionIconButton
-            title={showRawString ? 'Show rendered' : 'Show raw'}
-            icon={
-              <span
-                style={{
-                  fontFamily: 'var(--vscode-editor-font-family, monospace)',
-                  fontSize: '10px',
-                  lineHeight: 1,
-                }}
-              >
-                {'{}'}
-              </span>
-            }
-            isDarkTheme={isDarkTheme}
-            active={showRawString}
-            onClick={() => setShowRawString((current) => !current)}
-          />
-        )
-      : undefined;
-  const canCollapseVisibleText = shouldCollapseLongText(value) && (showRawString || classification.kind === 'plain');
+  const canCollapseVisibleText = shouldCollapseLongText(value) && classification.kind === 'plain';
   const collapseAction = canCollapseVisibleText ? (
     <ActionIconButton
       title={isExpanded ? 'Collapse' : 'Expand'}
@@ -1246,12 +1357,7 @@ const PrettyStringNode: React.FC<BaseNodeProps> = ({
       onClick={() => setIsExpanded((current) => !current)}
     />
   ) : undefined;
-  const plainStringActions = rawToggleAction && collapseAction ? (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-      {rawToggleAction}
-      {collapseAction}
-    </div>
-  ) : rawToggleAction || collapseAction;
+  const plainStringActions = collapseAction;
 
   if (doc) {
     return (
@@ -1260,7 +1366,7 @@ const PrettyStringNode: React.FC<BaseNodeProps> = ({
         badge={doc.type}
         isDarkTheme={isDarkTheme}
         depth={depth}
-        actions={rawToggleAction}
+        onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
         compact
       >
         <DocumentButton doc={doc} isDarkTheme={isDarkTheme} onOpenDocument={onOpenDocument} />
@@ -1268,21 +1374,22 @@ const PrettyStringNode: React.FC<BaseNodeProps> = ({
     );
   }
 
-  if (classification.kind === 'json' && depth < MAX_PRETTY_DEPTH && !showRawString) {
+  if (classification.kind === 'json' && depth < MAX_PRETTY_DEPTH) {
     return (
       <PrettyShell
         label={keyName}
         badge={classification.label}
         isDarkTheme={isDarkTheme}
         depth={depth}
-        actions={rawToggleAction}
+        onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
       >
         <PrettyJSONNode
           keyName={null}
           value={classification.parsed}
           isDarkTheme={isDarkTheme}
           depth={depth + 1}
-          path={[]}
+          path={path}
+          onJumpToRaw={undefined}
           onOpenDocument={onOpenDocument}
           searchQuery={searchQuery}
           currentMatchIndex={currentMatchIndex}
@@ -1292,14 +1399,14 @@ const PrettyStringNode: React.FC<BaseNodeProps> = ({
     );
   }
 
-  if (classification.kind === 'markdown' && !showRawString) {
+  if (classification.kind === 'markdown') {
     return (
       <PrettyShell
         label={keyName}
         badge="markdown"
         isDarkTheme={isDarkTheme}
         depth={depth}
-        actions={rawToggleAction}
+        onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
       >
         <MarkdownRenderer
           markdown={value}
@@ -1312,14 +1419,14 @@ const PrettyStringNode: React.FC<BaseNodeProps> = ({
     );
   }
 
-  if (classification.kind === 'xml' && !showRawString) {
+  if (classification.kind === 'xml') {
     return (
       <PrettyShell
         label={keyName}
         badge="xml"
         isDarkTheme={isDarkTheme}
         depth={depth}
-        actions={rawToggleAction}
+        onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
       >
         <CodeBlock
           code={value}
@@ -1341,6 +1448,7 @@ const PrettyStringNode: React.FC<BaseNodeProps> = ({
         badge={classification.fenced ? 'fenced code' : 'code'}
         isDarkTheme={isDarkTheme}
         depth={depth}
+        onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
       >
         <CodeBlock
           code={code}
@@ -1363,6 +1471,7 @@ const PrettyStringNode: React.FC<BaseNodeProps> = ({
       isDarkTheme={isDarkTheme}
       depth={depth}
       actions={plainStringActions}
+      onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
     >
       <pre
         style={{
@@ -1386,6 +1495,8 @@ const PrettyArrayNode: React.FC<BaseNodeProps> = ({
   value,
   isDarkTheme,
   depth,
+  path,
+  onJumpToRaw,
   onOpenDocument,
   searchQuery,
   currentMatchIndex,
@@ -1467,19 +1578,26 @@ const PrettyArrayNode: React.FC<BaseNodeProps> = ({
             index={index}
             value={item}
             isDarkTheme={isDarkTheme}
+            onJumpToRaw={onJumpToRaw ? () => onJumpToRaw([...path, String(index)]) : undefined}
             searchQuery={searchQuery}
             currentMatchIndex={currentMatchIndex}
             matchIndexOffset={matchIndexOffset}
           />
         ) : (
-          <ArrayItemBox key={`array-${index}`} index={index} isDarkTheme={isDarkTheme}>
+          <ArrayItemBox
+            key={`array-${index}`}
+            index={index}
+            isDarkTheme={isDarkTheme}
+            onJumpToRaw={onJumpToRaw ? () => onJumpToRaw([...path, String(index)]) : undefined}
+          >
             <PrettyJSONNode
               keyName={null}
               value={item}
               isDarkTheme={isDarkTheme}
               depth={depth + 1}
-              path={[]}
+              path={[...path, String(index)]}
               siblingData={isRecord(item) ? item : undefined}
+              onJumpToRaw={onJumpToRaw}
               onOpenDocument={onOpenDocument}
               searchQuery={searchQuery}
               currentMatchIndex={currentMatchIndex}
@@ -1497,6 +1615,7 @@ const PrettyArrayNode: React.FC<BaseNodeProps> = ({
       badge={`list · ${arrayValue.length}`}
       isDarkTheme={isDarkTheme}
       depth={depth}
+      onJumpToRaw={onJumpToRaw && path.length > 0 ? () => onJumpToRaw(path) : undefined}
       actions={<ActionIconButton title={isExpanded ? 'Collapse' : 'Expand'} icon={isExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'} isDarkTheme={isDarkTheme} onClick={() => setIsExpanded((current) => !current)} />}
     >
       {content}
@@ -1509,6 +1628,8 @@ const PrettyObjectNode: React.FC<BaseNodeProps> = ({
   value,
   isDarkTheme,
   depth,
+  path,
+  onJumpToRaw,
   onOpenDocument,
   searchQuery,
   currentMatchIndex,
@@ -1525,6 +1646,7 @@ const PrettyObjectNode: React.FC<BaseNodeProps> = ({
             label={childKey}
             value={childValue}
             isDarkTheme={isDarkTheme}
+            onJumpToRaw={onJumpToRaw ? () => onJumpToRaw([...path, childKey]) : undefined}
             searchQuery={searchQuery}
             currentMatchIndex={currentMatchIndex}
             matchIndexOffset={matchIndexOffset}
@@ -1536,8 +1658,9 @@ const PrettyObjectNode: React.FC<BaseNodeProps> = ({
             value={childValue}
             isDarkTheme={isDarkTheme}
             depth={depth + 1}
-            path={[]}
+            path={[...path, childKey]}
             siblingData={value as Record<string, unknown>}
+            onJumpToRaw={onJumpToRaw}
             onOpenDocument={onOpenDocument}
             searchQuery={searchQuery}
             currentMatchIndex={currentMatchIndex}
@@ -1553,7 +1676,13 @@ const PrettyObjectNode: React.FC<BaseNodeProps> = ({
   }
 
   return (
-    <PrettyShell label={keyName} badge={`object · ${entries.length}`} isDarkTheme={isDarkTheme} depth={depth}>
+    <PrettyShell
+      label={keyName}
+      badge={`object · ${entries.length}`}
+      isDarkTheme={isDarkTheme}
+      depth={depth}
+      onJumpToRaw={onJumpToRaw && path.length > 0 ? () => onJumpToRaw(path) : undefined}
+    >
       {objectContent}
     </PrettyShell>
   );
@@ -1564,7 +1693,9 @@ const PrettyJSONNode: React.FC<BaseNodeProps> = ({
   value,
   isDarkTheme,
   depth,
+  path,
   siblingData,
+  onJumpToRaw,
   onOpenDocument,
   searchQuery,
   currentMatchIndex,
@@ -1587,7 +1718,15 @@ const PrettyJSONNode: React.FC<BaseNodeProps> = ({
   }
 
   if (isLosslessNumberValue(value) || value === null || typeof value === 'number' || typeof value === 'boolean') {
-    return <ScalarBox label={keyName} value={value} isDarkTheme={isDarkTheme} depth={depth} />;
+    return (
+      <ScalarBox
+        label={keyName}
+        value={value}
+        isDarkTheme={isDarkTheme}
+        depth={depth}
+        onJumpToRaw={onJumpToRaw && path.length > 0 ? () => onJumpToRaw(path) : undefined}
+      />
+    );
   }
 
   if (typeof value === 'string') {
@@ -1597,8 +1736,9 @@ const PrettyJSONNode: React.FC<BaseNodeProps> = ({
         value={value}
         isDarkTheme={isDarkTheme}
         depth={depth}
-        path={[]}
+        path={path}
         siblingData={siblingData}
+        onJumpToRaw={onJumpToRaw}
         onOpenDocument={onOpenDocument}
         searchQuery={searchQuery}
         currentMatchIndex={currentMatchIndex}
@@ -1614,7 +1754,8 @@ const PrettyJSONNode: React.FC<BaseNodeProps> = ({
         value={value}
         isDarkTheme={isDarkTheme}
         depth={depth}
-        path={[]}
+        path={path}
+        onJumpToRaw={onJumpToRaw}
         onOpenDocument={onOpenDocument}
         searchQuery={searchQuery}
         currentMatchIndex={currentMatchIndex}
@@ -1630,8 +1771,9 @@ const PrettyJSONNode: React.FC<BaseNodeProps> = ({
         value={value}
         isDarkTheme={isDarkTheme}
         depth={depth}
-        path={[]}
+        path={path}
         siblingData={siblingData}
+        onJumpToRaw={onJumpToRaw}
         onOpenDocument={onOpenDocument}
         searchQuery={searchQuery}
         currentMatchIndex={currentMatchIndex}
@@ -1640,7 +1782,15 @@ const PrettyJSONNode: React.FC<BaseNodeProps> = ({
     );
   }
 
-  return <ScalarBox label={keyName} value={String(value)} isDarkTheme={isDarkTheme} depth={depth} />;
+  return (
+    <ScalarBox
+      label={keyName}
+      value={String(value)}
+      isDarkTheme={isDarkTheme}
+      depth={depth}
+      onJumpToRaw={onJumpToRaw && path.length > 0 ? () => onJumpToRaw(path) : undefined}
+    />
+  );
 };
 
 const RawJSONNode: React.FC<BaseNodeProps> = ({
@@ -1650,18 +1800,19 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
   depth,
   path,
   onChange,
-  siblingData,
-  onOpenDocument,
   searchQuery,
   currentMatchIndex,
   matchIndexOffset = 0,
+  focusRequest,
+  onFocusHandled,
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [originalType] = useState<string>(typeof value);
-  const [showRawDocument, setShowRawDocument] = useState(false);
   const colors = getViewerColors(isDarkTheme);
+  const headerRef = React.useRef<HTMLDivElement>(null);
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
   const indent = depth * 15;
 
@@ -1771,24 +1922,11 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
   const renderValue = (val: any) => {
     const editable = onChange !== undefined;
 
-    if (typeof val === 'string' && !showRawDocument) {
-      const doc = onOpenDocument ? detectDocument(val, siblingData) : null;
-      if (doc) {
-        return (
-          <DocumentButton
-            doc={doc}
-            isDarkTheme={isDarkTheme}
-            onOpenDocument={onOpenDocument}
-            onShowRaw={() => setShowRawDocument(true)}
-          />
-        );
-      }
-    }
-
     if (isLosslessNumberValue(val)) {
       const numericValue = unwrapLosslessNumber(val);
       return (
         <textarea
+          ref={textareaRef}
           rows={getRows(String(numericValue))}
           value={isEditing ? editValue : String(numericValue)}
           onChange={(event) => handleChange(event.target.value)}
@@ -1816,6 +1954,7 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
     if (val === null) {
       return (
         <textarea
+          ref={textareaRef}
           rows={1}
           value={editValue || 'null'}
           onChange={(event) => handleChange(event.target.value)}
@@ -1842,7 +1981,7 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
 
     if (typeof val === 'string') {
       const displayValue = isEditing ? editValue : val;
-      if (searchQuery && !isEditing) {
+      if (searchQuery && !isEditing && !editable) {
         const { element: highlighted } = highlightText(val, searchQuery, matchIndexOffset, currentMatchIndex ?? -1);
         return (
           <pre
@@ -1879,6 +2018,7 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
 
       return (
         <textarea
+          ref={textareaRef}
           rows={getRows(displayValue)}
           value={displayValue}
           onChange={(event) => handleChange(event.target.value)}
@@ -1906,6 +2046,7 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
     if (typeof val === 'number') {
       return (
         <textarea
+          ref={textareaRef}
           rows={1}
           value={isEditing ? editValue : String(val)}
           onChange={(event) => handleChange(event.target.value)}
@@ -1933,6 +2074,7 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
     if (typeof val === 'boolean') {
       return (
         <textarea
+          ref={textareaRef}
           rows={1}
           value={isEditing ? editValue : String(val)}
           onChange={(event) => handleChange(event.target.value)}
@@ -1966,6 +2108,79 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
     }
   };
 
+  const scrollElementIntoView = (element: HTMLElement | null) => {
+    if (!element) {
+      return;
+    }
+
+    try {
+      element.scrollIntoView({ block: 'center', inline: 'nearest' });
+    } catch {
+      try {
+        element.scrollIntoView();
+      } catch {
+        // Ignore browser-specific scroll errors.
+      }
+    }
+  };
+
+  React.useEffect(() => {
+    if (!focusRequest || !isExpandable(value)) {
+      return;
+    }
+
+    if (isProperPathPrefix(path, focusRequest.path) && !isExpanded) {
+      setIsExpanded(true);
+    }
+  }, [focusRequest, isExpanded, path, value]);
+
+  React.useEffect(() => {
+    if (!focusRequest || !pathsEqual(path, focusRequest.path)) {
+      return;
+    }
+
+    console.info('[JSONViewer] resolving focus request', {
+      path,
+      isExpandable: isExpandable(value),
+      valueType: Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value,
+    });
+
+    if (isExpandable(value)) {
+      setIsExpanded(true);
+      requestAnimationFrame(() => {
+        scrollElementIntoView(headerRef.current);
+        onFocusHandled?.(focusRequest.nonce);
+      });
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      const target = textareaRef.current;
+      if (!target) {
+        onFocusHandled?.(focusRequest.nonce);
+        return;
+      }
+
+      scrollElementIntoView(target);
+
+      try {
+        target.focus();
+      } catch {
+        onFocusHandled?.(focusRequest.nonce);
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        try {
+          target.setSelectionRange(0, 0);
+        } catch {
+          // Some hosts can reject programmatic selection changes transiently.
+        }
+        onFocusHandled?.(focusRequest.nonce);
+      });
+    });
+  }, [focusRequest, onFocusHandled, path, value]);
+
   if (!isExpandable(value)) {
     return (
       <div
@@ -1978,7 +2193,7 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
         }}
       >
         {keyName !== null && (
-          <div style={{ marginBottom: '2px' }}>
+          <div ref={headerRef} tabIndex={-1} style={{ marginBottom: '2px', outline: 'none' }}>
             <span style={{ color: colors.key }}>"{keyLabelFromPath(keyName)}"</span>
             <span style={{ color: colors.bracket }}>:</span>
           </div>
@@ -1994,6 +2209,8 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
   return (
     <div>
       <div
+        ref={headerRef}
+        tabIndex={-1}
         onClick={toggleExpand}
         style={{
           paddingLeft: `${indent}px`,
@@ -2002,6 +2219,7 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
           lineHeight: '20px',
           cursor: 'pointer',
           userSelect: 'none',
+          outline: 'none',
         }}
         onMouseEnter={(event) => {
           event.currentTarget.style.backgroundColor = colors.hoverBackground;
@@ -2043,7 +2261,8 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
               path={[...path, childKey]}
               onChange={onChange}
               siblingData={isArray ? undefined : value}
-              onOpenDocument={onOpenDocument}
+              focusRequest={focusRequest}
+              onFocusHandled={onFocusHandled}
               searchQuery={searchQuery}
               currentMatchIndex={currentMatchIndex}
               matchIndexOffset={matchIndexOffset + index}
@@ -2081,9 +2300,15 @@ export const JSONViewer: React.FC<JSONViewerProps> = ({
 }) => {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [viewMode, setViewMode] = React.useState<ViewMode>(defaultViewMode);
+  const [focusRequest, setFocusRequest] = React.useState<FocusRequest | null>(null);
 
   const handleChange = (path: string[], newValue: any) => {
     if (!onChange) {
+      return;
+    }
+
+    if (path.length === 0) {
+      onChange(newValue);
       return;
     }
 
@@ -2097,6 +2322,22 @@ export const JSONViewer: React.FC<JSONViewerProps> = ({
     current[path[path.length - 1]] = newValue;
     onChange(newData);
   };
+
+  const handleJumpToRaw = React.useCallback((path: string[]) => {
+    console.info('[JSONViewer] jump to raw requested', {
+      path,
+      dataType: Array.isArray(data) ? 'array' : data === null ? 'null' : typeof data,
+    });
+    setViewMode('raw');
+    setFocusRequest({
+      path,
+      nonce: Date.now() + Math.random(),
+    });
+  }, []);
+
+  const handleFocusHandled = React.useCallback((nonce: number) => {
+    setFocusRequest((current) => (current?.nonce === nonce ? null : current));
+  }, []);
 
   React.useEffect(() => {
     if (!containerRef.current || !searchQuery) {
@@ -2126,6 +2367,7 @@ export const JSONViewer: React.FC<JSONViewerProps> = ({
       depth={depth}
       path={[]}
       siblingData={isRecord(data) ? data : undefined}
+      onJumpToRaw={onChange ? handleJumpToRaw : undefined}
       onOpenDocument={onOpenDocument}
       searchQuery={searchQuery}
       currentMatchIndex={currentMatchIndex}
@@ -2150,7 +2392,8 @@ export const JSONViewer: React.FC<JSONViewerProps> = ({
               path={[key]}
               onChange={onChange ? handleChange : undefined}
               siblingData={isArray ? undefined : data}
-              onOpenDocument={onOpenDocument}
+              focusRequest={focusRequest}
+              onFocusHandled={handleFocusHandled}
               searchQuery={searchQuery}
               currentMatchIndex={currentMatchIndex}
               matchIndexOffset={0}
@@ -2168,7 +2411,8 @@ export const JSONViewer: React.FC<JSONViewerProps> = ({
         depth={depth}
         path={[]}
         onChange={onChange ? handleChange : undefined}
-        onOpenDocument={onOpenDocument}
+        focusRequest={focusRequest}
+        onFocusHandled={handleFocusHandled}
         searchQuery={searchQuery}
         currentMatchIndex={currentMatchIndex}
         matchIndexOffset={0}

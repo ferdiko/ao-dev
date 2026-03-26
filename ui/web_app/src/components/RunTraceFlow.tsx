@@ -1,11 +1,11 @@
-import { useState, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AttachmentStrip } from "./AttachmentPreview";
 import { extractAttachments } from "../attachmentUtils";
-import { Sparkles, Pencil, Loader2, Copy, ChevronDown, ChevronRight, Braces } from "lucide-react";
+import { Sparkles, Pencil, Loader2, Copy, ChevronDown, ChevronRight } from "lucide-react";
 import {
   detectDocument,
   formatFileSize,
@@ -97,6 +97,8 @@ type StringClassification =
   | { kind: "code"; language: string; fenced: boolean }
   | { kind: "xml" }
   | { kind: "plain" };
+
+type JsonPath = string[];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -304,6 +306,103 @@ function stringifyScalar(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function normalizeJsonText(value: string): string {
+  try {
+    return JSON.stringify(JSON.parse(value));
+  } catch {
+    return value;
+  }
+}
+
+function pathsEqual(left: JsonPath | null, right: JsonPath | null): boolean {
+  if (!left || !right || left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((segment, index) => segment === right[index]);
+}
+
+function stringifyJsonWithOffset(value: unknown, targetPath: JsonPath | null): { text: string; offset: number | null } {
+  const indentUnit = "  ";
+
+  const matchesTarget = (path: JsonPath) => pathsEqual(path, targetPath);
+
+  const serialize = (currentValue: unknown, currentPath: JsonPath, indentLevel: number): { text: string; offset: number | null } => {
+    if (Array.isArray(currentValue)) {
+      if (currentValue.length === 0) {
+        return { text: "[]", offset: matchesTarget(currentPath) ? 0 : null };
+      }
+
+      let text = "[";
+      let offset = matchesTarget(currentPath) ? 0 : null;
+
+      currentValue.forEach((item, index) => {
+        const itemPath = [...currentPath, String(index)];
+        text += `\n${indentUnit.repeat(indentLevel + 1)}`;
+        const itemStart = text.length;
+        if (matchesTarget(itemPath)) {
+          offset = itemStart;
+        }
+
+        const child = serialize(item, itemPath, indentLevel + 1);
+        if (child.offset !== null) {
+          offset = itemStart + child.offset;
+        }
+        text += child.text;
+
+        if (index < currentValue.length - 1) {
+          text += ",";
+        }
+      });
+
+      text += `\n${indentUnit.repeat(indentLevel)}]`;
+      return { text, offset };
+    }
+
+    if (isRecord(currentValue)) {
+      const entries = Object.entries(currentValue);
+      if (entries.length === 0) {
+        return { text: "{}", offset: matchesTarget(currentPath) ? 0 : null };
+      }
+
+      let text = "{";
+      let offset = matchesTarget(currentPath) ? 0 : null;
+
+      entries.forEach(([key, childValue], index) => {
+        const childPath = [...currentPath, key];
+        text += `\n${indentUnit.repeat(indentLevel + 1)}`;
+        const entryStart = text.length;
+        if (matchesTarget(childPath)) {
+          offset = entryStart;
+        }
+
+        const keyPrefix = `${JSON.stringify(key)}: `;
+        text += keyPrefix;
+        const childStart = text.length;
+        const child = serialize(childValue, childPath, indentLevel + 1);
+        if (child.offset !== null) {
+          offset = childStart + child.offset;
+        }
+        text += child.text;
+
+        if (index < entries.length - 1) {
+          text += ",";
+        }
+      });
+
+      text += `\n${indentUnit.repeat(indentLevel)}}`;
+      return { text, offset };
+    }
+
+    return {
+      text: JSON.stringify(currentValue),
+      offset: matchesTarget(currentPath) ? 0 : null,
+    };
+  };
+
+  return serialize(value, [], 0);
+}
+
 function CodeBlock({ code, language }: { code: string; language: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -318,7 +417,16 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
     <div className="code-block">
       <div className="code-block-header">
         <span className="code-block-lang">{LANG_DISPLAY[language] ?? language}</span>
-        <button className="code-block-copy" onClick={handleCopy}>
+        <button
+          className="code-block-copy"
+          onClick={(event) => {
+            event.stopPropagation();
+            handleCopy();
+          }}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+          }}
+        >
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
@@ -363,37 +471,6 @@ function PrettyBadge({ label }: { label: string }) {
   );
 }
 
-function RawToggleIconButton({
-  showingRaw,
-  onClick,
-}: {
-  showingRaw: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={showingRaw ? "Show rendered" : "Show raw"}
-      aria-label={showingRaw ? "Show rendered" : "Show raw"}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: "20px",
-        height: "20px",
-        borderRadius: "999px",
-        border: showingRaw ? "1px solid rgba(67, 136, 78, 0.24)" : "1px solid rgba(138, 138, 126, 0.14)",
-        background: showingRaw ? "rgba(67, 136, 78, 0.08)" : "rgba(138, 138, 126, 0.04)",
-        color: showingRaw ? "#43884e" : "var(--color-text-muted)",
-        cursor: "pointer",
-        padding: 0,
-      }}
-    >
-      <Braces size={12} />
-    </button>
-  );
-}
-
 function ChevronToggleButton({
   expanded,
   onClick,
@@ -406,7 +483,13 @@ function ChevronToggleButton({
   const Icon = expanded ? ChevronDown : ChevronRight;
   return (
     <button
-      onClick={onClick}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+      }}
       title={title}
       aria-label={title}
       style={{
@@ -428,10 +511,78 @@ function ChevronToggleButton({
   );
 }
 
+function HoverAction({
+  visible,
+  children,
+}: {
+  visible: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        opacity: visible ? 1 : 0,
+        pointerEvents: visible ? "auto" : "none",
+        transition: "opacity 120ms ease",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function EditIconButton({
+  onClick,
+  disabled = false,
+  title,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  title: string;
+}) {
+  return (
+    <button
+      onClick={(event) => {
+        event.stopPropagation();
+        if (!disabled) {
+          onClick();
+        }
+      }}
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+      }}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "20px",
+        height: "20px",
+        borderRadius: "999px",
+        border: "1px solid rgba(138, 138, 126, 0.14)",
+        background: "rgba(138, 138, 126, 0.04)",
+        color: "var(--color-text-muted)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.45 : 1,
+        padding: 0,
+      }}
+    >
+      <Pencil size={12} />
+    </button>
+  );
+}
+
 function PrettyCard({
   label,
   badge,
   actions,
+  onEdit,
+  editDisabled = false,
+  editTitle = "Edit this field",
   depth,
   compact = false,
   children,
@@ -439,13 +590,37 @@ function PrettyCard({
   label: string | null;
   badge?: string;
   actions?: React.ReactNode;
+  onEdit?: () => void;
+  editDisabled?: boolean;
+  editTitle?: string;
   depth: number;
   compact?: boolean;
   children: React.ReactNode;
 }) {
+  const [isHovered, setIsHovered] = useState(false);
+  const editAction = onEdit ? (
+    <HoverAction visible={isHovered}>
+      <EditIconButton onClick={onEdit} disabled={editDisabled} title={editTitle} />
+    </HoverAction>
+  ) : null;
+  const actionGroup = editAction && actions ? (
+    <div style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+      {editAction}
+      {actions}
+    </div>
+  ) : editAction || actions;
+
   return (
-    <div style={{ marginBottom: "10px", marginLeft: depth > 0 ? "12px" : 0 }}>
-      {(label || badge || actions) && (
+    <div
+      style={{ marginBottom: "10px", marginLeft: depth > 0 ? "12px" : 0 }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onDoubleClick={onEdit && !editDisabled ? (event) => {
+        event.stopPropagation();
+        onEdit();
+      } : undefined}
+    >
+      {(label || badge || actionGroup) && (
         <div
           style={{
             display: "flex",
@@ -472,7 +647,7 @@ function PrettyCard({
             )}
             {badge && <PrettyBadge label={badge} />}
           </div>
-          {actions}
+          {actionGroup}
         </div>
       )}
       <div
@@ -521,9 +696,31 @@ function CompactScalarValue({
   );
 }
 
-function ScalarBox({ label, value, depth }: { label: string | null; value: unknown; depth: number }) {
+function ScalarBox({
+  label,
+  value,
+  depth,
+  onEdit,
+  editDisabled,
+  editTitle,
+}: {
+  label: string | null;
+  value: unknown;
+  depth: number;
+  onEdit?: () => void;
+  editDisabled?: boolean;
+  editTitle?: string;
+}) {
   return (
-    <PrettyCard label={label} badge={getScalarTypeLabel(value)} depth={depth} compact>
+    <PrettyCard
+      label={label}
+      badge={getScalarTypeLabel(value)}
+      depth={depth}
+      compact
+      onEdit={onEdit}
+      editDisabled={editDisabled}
+      editTitle={editTitle}
+    >
       <CompactScalarValue value={value} />
     </PrettyCard>
   );
@@ -552,11 +749,18 @@ function isInlineSimpleValue(value: unknown, siblingData?: Record<string, unknow
 function InlineValueRow({
   label,
   value,
+  onEdit,
+  editDisabled = false,
+  editTitle = "Edit this field",
 }: {
   label: string;
   value: unknown;
+  onEdit?: () => void;
+  editDisabled?: boolean;
+  editTitle?: string;
 }) {
   const isString = typeof value === "string";
+  const [isHovered, setIsHovered] = useState(false);
   return (
     <div
       style={{
@@ -568,6 +772,12 @@ function InlineValueRow({
         border: "1px solid rgba(138, 138, 126, 0.14)",
         background: "rgba(255,255,255,0.26)",
       }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onDoubleClick={onEdit && !editDisabled ? (event) => {
+        event.stopPropagation();
+        onEdit();
+      } : undefined}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: "140px", maxWidth: "240px" }}>
         <span
@@ -602,6 +812,11 @@ function InlineValueRow({
           <CompactScalarValue value={value} />
         )}
       </div>
+      {onEdit && (
+        <HoverAction visible={isHovered}>
+          <EditIconButton onClick={onEdit} disabled={editDisabled} title={editTitle} />
+        </HoverAction>
+      )}
     </div>
   );
 }
@@ -628,10 +843,17 @@ function ArrayIndexLabel({ index }: { index: number }) {
 function ArrayItemBox({
   index,
   children,
+  onEdit,
+  editDisabled = false,
+  editTitle = "Edit this field",
 }: {
   index: number;
   children: React.ReactNode;
+  onEdit?: () => void;
+  editDisabled?: boolean;
+  editTitle?: string;
 }) {
+  const [isHovered, setIsHovered] = useState(false);
   return (
     <div
       style={{
@@ -640,9 +862,20 @@ function ArrayItemBox({
         background: "rgba(255,255,255,0.26)",
         padding: "8px 10px",
       }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onDoubleClick={onEdit && !editDisabled ? (event) => {
+        event.stopPropagation();
+        onEdit();
+      } : undefined}
     >
-      <div style={{ marginBottom: "6px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "6px" }}>
         <ArrayIndexLabel index={index} />
+        {onEdit && (
+          <HoverAction visible={isHovered}>
+            <EditIconButton onClick={onEdit} disabled={editDisabled} title={editTitle} />
+          </HoverAction>
+        )}
       </div>
       {children}
     </div>
@@ -652,11 +885,18 @@ function ArrayItemBox({
 function InlineArrayItemRow({
   index,
   value,
+  onEdit,
+  editDisabled = false,
+  editTitle = "Edit this field",
 }: {
   index: number;
   value: unknown;
+  onEdit?: () => void;
+  editDisabled?: boolean;
+  editTitle?: string;
 }) {
   const isString = typeof value === "string";
+  const [isHovered, setIsHovered] = useState(false);
 
   return (
     <div
@@ -669,6 +909,12 @@ function InlineArrayItemRow({
         border: "1px solid rgba(138, 138, 126, 0.14)",
         background: "rgba(255,255,255,0.26)",
       }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onDoubleClick={onEdit && !editDisabled ? (event) => {
+        event.stopPropagation();
+        onEdit();
+      } : undefined}
     >
       <ArrayIndexLabel index={index} />
       <div style={{ minWidth: 0, flex: 1 }}>
@@ -689,6 +935,11 @@ function InlineArrayItemRow({
           <CompactScalarValue value={value} />
         )}
       </div>
+      {onEdit && (
+        <HoverAction visible={isHovered}>
+          <EditIconButton onClick={onEdit} disabled={editDisabled} title={editTitle} />
+        </HoverAction>
+      )}
     </div>
   );
 }
@@ -720,53 +971,58 @@ function PrettyStringValue({
   label,
   value,
   depth,
+  path,
   siblingData,
+  onJumpToEdit,
+  editDisabled,
+  editTitle,
   onOpenDocument,
 }: {
   label: string | null;
   value: string;
   depth: number;
+  path: JsonPath;
   siblingData?: Record<string, unknown>;
+  onJumpToEdit?: (path: JsonPath) => void;
+  editDisabled?: boolean;
+  editTitle?: string;
   onOpenDocument: (doc: DetectedDocument) => void;
 }) {
-  const [showRaw, setShowRaw] = useState(false);
   const [expanded, setExpanded] = useState(!shouldCollapseLongText(value));
   const detectedDoc = detectDocument(value, siblingData);
   const classification = classifyStringContent(value);
-  const canToggleRaw =
-    Boolean(detectedDoc) ||
-    classification.kind === "json" ||
-    classification.kind === "markdown" ||
-    classification.kind === "xml";
-  const canCollapseVisibleText = shouldCollapseLongText(value) && (showRaw || classification.kind === "plain");
+  const canCollapseVisibleText = shouldCollapseLongText(value) && classification.kind === "plain";
+  const actions = canCollapseVisibleText ? (
+    <ChevronToggleButton
+      expanded={expanded}
+      onClick={() => setExpanded((current) => !current)}
+      title={expanded ? "Collapse" : "Expand"}
+    />
+  ) : undefined;
 
-  const actions = (
-    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-      {canToggleRaw && (
-        <RawToggleIconButton
-          showingRaw={showRaw}
-          onClick={() => setShowRaw((current) => !current)}
-        />
-      )}
-      {canCollapseVisibleText && (
-        <ChevronToggleButton
-          expanded={expanded}
-          onClick={() => setExpanded((current) => !current)}
-          title={expanded ? "Collapse" : "Expand"}
-        />
-      )}
-    </div>
-  );
-
-  if (detectedDoc && !showRaw) {
+  if (detectedDoc) {
     return (
-      <PrettyCard label={label} badge={detectedDoc.type} depth={depth} actions={actions}>
+      <PrettyCard
+        label={label}
+        badge={detectedDoc.type}
+        depth={depth}
+        actions={actions}
+        onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
           <span style={{ fontSize: "12px", color: "var(--color-text-muted)" }}>
             {formatFileSize(detectedDoc.size)} · {detectedDoc.mimeType}
           </span>
           <button
-            onClick={() => onOpenDocument(detectedDoc)}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenDocument(detectedDoc);
+            }}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+            }}
             style={{
               border: "1px solid var(--color-border)",
               borderRadius: "6px",
@@ -784,43 +1040,74 @@ function PrettyStringValue({
     );
   }
 
-  if (classification.kind === "json" && !showRaw && depth < MAX_PRETTY_DEPTH) {
+  if (classification.kind === "json" && depth < MAX_PRETTY_DEPTH) {
     return (
-      <PrettyCard label={label} badge={classification.label} depth={depth} actions={actions}>
+      <PrettyCard
+        label={label}
+        badge={classification.label}
+        depth={depth}
+        actions={actions}
+        onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
+      >
         <PrettyValue
           label={null}
           value={classification.parsed}
           depth={depth + 1}
+          path={path}
           siblingData={isRecord(classification.parsed) ? classification.parsed : undefined}
+          onJumpToEdit={undefined}
+          editDisabled={editDisabled}
+          editTitle={editTitle}
           onOpenDocument={onOpenDocument}
         />
       </PrettyCard>
     );
   }
 
-  if (classification.kind === "markdown" && !showRaw) {
+  if (classification.kind === "markdown") {
     return (
-      <PrettyCard label={label} badge="markdown" depth={depth} actions={actions}>
+      <PrettyCard
+        label={label}
+        badge="markdown"
+        depth={depth}
+        actions={actions}
+        onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
+      >
         <MarkdownContent markdown={value} />
       </PrettyCard>
     );
   }
 
-  if (classification.kind === "xml" && !showRaw) {
+  if (classification.kind === "xml") {
     return (
-      <PrettyCard label={label} badge="xml" depth={depth} actions={actions}>
+      <PrettyCard
+        label={label}
+        badge="xml"
+        depth={depth}
+        actions={actions}
+        onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
+      >
         <CodeBlock code={value} language="xml" />
       </PrettyCard>
     );
   }
 
-  if (classification.kind === "code" && !showRaw) {
+  if (classification.kind === "code") {
     const code = classification.fenced ? (unwrapFencedCode(value)?.code ?? value) : value;
     return (
       <PrettyCard
         label={label}
         badge={classification.fenced ? `fenced · ${classification.language}` : `code · ${classification.language}`}
         depth={depth}
+        onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
       >
         <CodeBlock code={code} language={classification.language} />
       </PrettyCard>
@@ -828,7 +1115,15 @@ function PrettyStringValue({
   }
 
   return (
-    <PrettyCard label={label} badge="string" depth={depth} actions={actions}>
+    <PrettyCard
+      label={label}
+      badge="string"
+      depth={depth}
+      actions={actions}
+      onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
+      editDisabled={editDisabled}
+      editTitle={editTitle}
+    >
       <pre
         style={{
           margin: 0,
@@ -850,11 +1145,19 @@ function PrettyArrayValue({
   label,
   value,
   depth,
+  path,
+  onJumpToEdit,
+  editDisabled,
+  editTitle,
   onOpenDocument,
 }: {
   label: string | null;
   value: unknown[];
   depth: number;
+  path: JsonPath;
+  onJumpToEdit?: (path: JsonPath) => void;
+  editDisabled?: boolean;
+  editTitle?: string;
   onOpenDocument: (doc: DetectedDocument) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
@@ -895,14 +1198,31 @@ function PrettyArrayValue({
       <div style={{ display: "grid", gap: "10px" }}>
         {value.map((item, index) => (
           isInlineSimpleValue(item) ? (
-            <InlineArrayItemRow key={`array-${index}`} index={index} value={item} />
+            <InlineArrayItemRow
+              key={`array-${index}`}
+              index={index}
+              value={item}
+              onEdit={onJumpToEdit ? () => onJumpToEdit([...path, String(index)]) : undefined}
+              editDisabled={editDisabled}
+              editTitle={editTitle}
+            />
           ) : (
-            <ArrayItemBox key={`array-${index}`} index={index}>
+            <ArrayItemBox
+              key={`array-${index}`}
+              index={index}
+              onEdit={onJumpToEdit ? () => onJumpToEdit([...path, String(index)]) : undefined}
+              editDisabled={editDisabled}
+              editTitle={editTitle}
+            >
               <PrettyValue
                 label={null}
                 value={item}
                 depth={depth + 1}
+                path={[...path, String(index)]}
                 siblingData={isRecord(item) ? item : undefined}
+                onJumpToEdit={onJumpToEdit}
+                editDisabled={editDisabled}
+                editTitle={editTitle}
                 onOpenDocument={onOpenDocument}
               />
             </ArrayItemBox>
@@ -917,6 +1237,9 @@ function PrettyArrayValue({
       label={label}
       badge={`list · ${value.length}`}
       depth={depth}
+      onEdit={onJumpToEdit && path.length > 0 ? () => onJumpToEdit(path) : undefined}
+      editDisabled={editDisabled}
+      editTitle={editTitle}
       actions={<ChevronToggleButton expanded={expanded} onClick={() => setExpanded((current) => !current)} title={expanded ? "Collapse" : "Expand"} />}
     >
       {content}
@@ -928,11 +1251,19 @@ function PrettyObjectValue({
   label,
   value,
   depth,
+  path,
+  onJumpToEdit,
+  editDisabled,
+  editTitle,
   onOpenDocument,
 }: {
   label: string | null;
   value: Record<string, unknown>;
   depth: number;
+  path: JsonPath;
+  onJumpToEdit?: (path: JsonPath) => void;
+  editDisabled?: boolean;
+  editTitle?: string;
   onOpenDocument: (doc: DetectedDocument) => void;
 }) {
   const entries = Object.entries(value);
@@ -940,14 +1271,25 @@ function PrettyObjectValue({
     <div style={{ display: "grid", gap: "10px" }}>
       {entries.map(([childKey, childValue]) => (
         isInlineSimpleValue(childValue, value) ? (
-          <InlineValueRow key={childKey} label={childKey} value={childValue} />
+          <InlineValueRow
+            key={childKey}
+            label={childKey}
+            value={childValue}
+            onEdit={onJumpToEdit ? () => onJumpToEdit([...path, childKey]) : undefined}
+            editDisabled={editDisabled}
+            editTitle={editTitle}
+          />
         ) : (
           <PrettyValue
             key={childKey}
             label={childKey}
             value={childValue}
             depth={depth + 1}
+            path={[...path, childKey]}
             siblingData={value}
+            onJumpToEdit={onJumpToEdit}
+            editDisabled={editDisabled}
+            editTitle={editTitle}
             onOpenDocument={onOpenDocument}
           />
         )
@@ -960,7 +1302,14 @@ function PrettyObjectValue({
   }
 
   return (
-    <PrettyCard label={label} badge={`object · ${entries.length}`} depth={depth}>
+    <PrettyCard
+      label={label}
+      badge={`object · ${entries.length}`}
+      depth={depth}
+      onEdit={onJumpToEdit && path.length > 0 ? () => onJumpToEdit(path) : undefined}
+      editDisabled={editDisabled}
+      editTitle={editTitle}
+    >
       {entries.length > 0 ? content : <div style={{ color: "var(--color-text-muted)", fontSize: "13px" }}>Empty object</div>}
     </PrettyCard>
   );
@@ -970,13 +1319,21 @@ function PrettyValue({
   label,
   value,
   depth,
+  path,
   siblingData,
+  onJumpToEdit,
+  editDisabled,
+  editTitle,
   onOpenDocument,
 }: {
   label: string | null;
   value: unknown;
   depth: number;
+  path: JsonPath;
   siblingData?: Record<string, unknown>;
+  onJumpToEdit?: (path: JsonPath) => void;
+  editDisabled?: boolean;
+  editTitle?: string;
   onOpenDocument: (doc: DetectedDocument) => void;
 }) {
   if (depth > MAX_PRETTY_DEPTH) {
@@ -996,7 +1353,16 @@ function PrettyValue({
   }
 
   if (value === null || typeof value === "number" || typeof value === "boolean") {
-    return <ScalarBox label={label} value={value} depth={depth} />;
+    return (
+      <ScalarBox
+        label={label}
+        value={value}
+        depth={depth}
+        onEdit={onJumpToEdit && path.length > 0 ? () => onJumpToEdit(path) : undefined}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
+      />
+    );
   }
 
   if (typeof value === "string") {
@@ -1005,33 +1371,84 @@ function PrettyValue({
         label={label}
         value={value}
         depth={depth}
+        path={path}
         siblingData={siblingData}
+        onJumpToEdit={onJumpToEdit}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
         onOpenDocument={onOpenDocument}
       />
     );
   }
 
   if (Array.isArray(value)) {
-    return <PrettyArrayValue label={label} value={value} depth={depth} onOpenDocument={onOpenDocument} />;
+    return (
+      <PrettyArrayValue
+        label={label}
+        value={value}
+        depth={depth}
+        path={path}
+        onJumpToEdit={onJumpToEdit}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
+        onOpenDocument={onOpenDocument}
+      />
+    );
   }
 
   if (isRecord(value)) {
-    return <PrettyObjectValue label={label} value={value} depth={depth} onOpenDocument={onOpenDocument} />;
+    return (
+      <PrettyObjectValue
+        label={label}
+        value={value}
+        depth={depth}
+        path={path}
+        onJumpToEdit={onJumpToEdit}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
+        onOpenDocument={onOpenDocument}
+      />
+    );
   }
 
-  return <ScalarBox label={label} value={String(value)} depth={depth} />;
+  return (
+    <ScalarBox
+      label={label}
+      value={String(value)}
+      depth={depth}
+      onEdit={onJumpToEdit && path.length > 0 ? () => onJumpToEdit(path) : undefined}
+      editDisabled={editDisabled}
+      editTitle={editTitle}
+    />
+  );
 }
 
 function PrettyContent({
   data,
+  onJumpToEdit,
+  editDisabled,
+  editTitle,
   onOpenDocument,
 }: {
   data: Record<string, unknown>;
+  onJumpToEdit?: (path: JsonPath) => void;
+  editDisabled?: boolean;
+  editTitle?: string;
   onOpenDocument: (doc: DetectedDocument) => void;
 }) {
   return (
     <div className="io-pretty-content">
-      <PrettyValue label={null} value={data} depth={0} siblingData={data} onOpenDocument={onOpenDocument} />
+      <PrettyValue
+        label={null}
+        value={data}
+        depth={0}
+        path={[]}
+        siblingData={data}
+        onJumpToEdit={onJumpToEdit}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
+        onOpenDocument={onOpenDocument}
+      />
     </div>
   );
 }
@@ -1061,16 +1478,26 @@ function IOPanel({
   onSaveAndRerun: (nodeId: string, label: "Input" | "Output", newData: string) => void;
   onCancelEdit: () => void;
 }) {
-  const jsonStr = useMemo(() => JSON.stringify(data, null, 2), [data]);
+  const jsonStr = useMemo(() => stringifyJsonWithOffset(data, null).text, [data]);
   const attachments = useMemo(() => extractAttachments(data), [data]);
   const [editValue, setEditValue] = useState("");
   const [suggesting, setSuggesting] = useState(false);
   const [ghost, setGhost] = useState("");
+  const [pendingJumpPath, setPendingJumpPath] = useState<JsonPath | null>(null);
   const ghostTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const myKey: EditKey = `${nodeId}:${label as "Input" | "Output"}`;
   const isActiveEdit = editLock === myKey;
   const isLocked = (editLock !== null && !isActiveEdit) || (hasAnyEdit && !isEdited);
+  const editTitle = isLocked ? "Finish the current edit before editing another field" : `Edit ${label.toLowerCase()} field`;
+  const hasMeaningfulDiff = useMemo(() => {
+    if (!isActiveEdit) {
+      return false;
+    }
+
+    return normalizeJsonText(editValue) !== normalizeJsonText(jsonStr);
+  }, [editValue, isActiveEdit, jsonStr]);
   const handleOpenDocument = useCallback((doc: DetectedDocument) => {
     const binary = atob(doc.data);
     const bytes = new Uint8Array(binary.length);
@@ -1144,10 +1571,20 @@ function IOPanel({
 
   const startEdit = useCallback(() => {
     if (!nodeId || isLocked) return;
-    setEditValue(JSON.stringify(data, null, 2));
+    setEditValue(jsonStr);
     setGhost("");
     onStartEdit(nodeId, label as "Input" | "Output");
-  }, [data, isLocked, label, nodeId, onStartEdit]);
+  }, [isLocked, jsonStr, label, nodeId, onStartEdit]);
+
+  const jumpToEdit = useCallback((path: JsonPath) => {
+    if (!nodeId || isLocked) return;
+    setPendingJumpPath(path);
+    setGhost("");
+    if (!isActiveEdit) {
+      setEditValue(jsonStr);
+      onStartEdit(nodeId, label as "Input" | "Output");
+    }
+  }, [isActiveEdit, isLocked, jsonStr, label, nodeId, onStartEdit]);
 
   const cancelEdit = useCallback(() => {
     setEditValue("");
@@ -1155,16 +1592,16 @@ function IOPanel({
   }, [onCancelEdit]);
 
   const saveEdit = useCallback(() => {
-    if (nodeId) {
+    if (nodeId && hasMeaningfulDiff) {
       onSaveEdit(nodeId, label as "Input" | "Output", editValue);
     }
-  }, [editValue, label, nodeId, onSaveEdit]);
+  }, [editValue, hasMeaningfulDiff, label, nodeId, onSaveEdit]);
 
   const saveAndRerun = useCallback(() => {
-    if (nodeId) {
+    if (nodeId && hasMeaningfulDiff) {
       onSaveAndRerun(nodeId, label as "Input" | "Output", editValue);
     }
-  }, [editValue, label, nodeId, onSaveAndRerun]);
+  }, [editValue, hasMeaningfulDiff, label, nodeId, onSaveAndRerun]);
 
   const handleSuggest = useCallback(() => {
     setSuggesting(true);
@@ -1178,6 +1615,35 @@ function IOPanel({
       setSuggesting(false);
     }, 1200);
   }, [editValue, jsonStr]);
+
+  const focusEditorAtPath = useCallback((path: JsonPath) => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    const { offset } = stringifyJsonWithOffset(data, path);
+    const selectionStart = Math.max(0, offset ?? 0);
+    const lineIndex = jsonStr.slice(0, selectionStart).split("\n").length - 1;
+    const lineHeight = Number.parseFloat(window.getComputedStyle(textarea).lineHeight) || 20;
+
+    textarea.focus();
+    textarea.setSelectionRange(selectionStart, selectionStart);
+    textarea.scrollTop = Math.max(0, lineIndex * lineHeight - textarea.clientHeight / 3);
+  }, [data, jsonStr]);
+
+  useEffect(() => {
+    if (!isActiveEdit || !pendingJumpPath) {
+      return;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      focusEditorAtPath(pendingJumpPath);
+      setPendingJumpPath(null);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [focusEditorAtPath, isActiveEdit, pendingJumpPath]);
 
   return (
     <div className={`io-panel${isEdited ? " io-panel-edited" : ""}`} onClick={(event) => event.stopPropagation()}>
@@ -1223,6 +1689,7 @@ function IOPanel({
                 {ghost && <span className="io-edit-ghost-suggestion">{ghost}</span>}
               </div>
               <textarea
+                ref={textareaRef}
                 className="io-edit-textarea"
                 value={editValue}
                 onChange={handleEditChange}
@@ -1233,15 +1700,21 @@ function IOPanel({
               {ghost && <span className="io-edit-ghost-hint">Tab to accept</span>}
             </div>
             <div className="io-edit-toolbar">
-              <button className="io-edit-save-rerun" onClick={saveAndRerun}>Save and Rerun</button>
-              <button className="io-edit-save" onClick={saveEdit}>Save</button>
+              <button className="io-edit-save-rerun" onClick={saveAndRerun} disabled={!hasMeaningfulDiff}>Save and Rerun</button>
+              <button className="io-edit-save" onClick={saveEdit} disabled={!hasMeaningfulDiff}>Save</button>
               <button className="io-edit-cancel" onClick={cancelEdit}>Cancel</button>
             </div>
           </div>
         ) : viewMode === "json" ? (
           <CodeBlock code={jsonStr} language="json" />
         ) : (
-          <PrettyContent data={data} onOpenDocument={handleOpenDocument} />
+          <PrettyContent
+            data={data}
+            onJumpToEdit={jumpToEdit}
+            editDisabled={isLocked}
+            editTitle={editTitle}
+            onOpenDocument={handleOpenDocument}
+          />
         )}
         {attachments.length > 0 && (
           <>
