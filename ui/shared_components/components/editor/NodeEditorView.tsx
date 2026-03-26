@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { JSONViewer } from '../JSONViewer';
+import { JSONViewer, type ViewMode } from '../JSONViewer';
 import { DetectedDocument } from '../../utils/documentDetection';
 
 interface NodeEditorViewProps {
@@ -32,6 +32,7 @@ export const NodeEditorView: React.FC<NodeEditorViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [matchCount, setMatchCount] = useState(0);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+  const [viewMode, setViewMode] = useState<ViewMode>('pretty');
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   // Navigate to next match
@@ -275,60 +276,105 @@ export const NodeEditorView: React.FC<NodeEditorViewProps> = ({
       <div
         style={{
           display: 'flex',
+          alignItems: 'center',
           backgroundColor: colors.headerBg,
           borderBottom: `1px solid ${colors.border}`,
         }}
       >
-        <button
-          onClick={() => onTabChange('input')}
+        <div style={{ display: 'flex' }}>
+          <button
+            onClick={() => onTabChange('input')}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: activeTab === 'input' ? colors.tabActive : colors.tabInactive,
+              color: colors.text,
+              border: 'none',
+              borderBottom: activeTab === 'input' ? `2px solid ${colors.accentColor}` : '2px solid transparent',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: activeTab === 'input' ? 600 : 400,
+            }}
+            onMouseEnter={(e) => {
+              if (activeTab !== 'input') {
+                e.currentTarget.style.backgroundColor = colors.tabHover;
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (activeTab !== 'input') {
+                e.currentTarget.style.backgroundColor = colors.tabInactive;
+              }
+            }}
+          >
+            Input
+          </button>
+          <button
+            onClick={() => onTabChange('output')}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: activeTab === 'output' ? colors.tabActive : colors.tabInactive,
+              color: colors.text,
+              border: 'none',
+              borderBottom: activeTab === 'output' ? `2px solid ${colors.accentColor}` : '2px solid transparent',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: activeTab === 'output' ? 600 : 400,
+            }}
+            onMouseEnter={(e) => {
+              if (activeTab !== 'output') {
+                e.currentTarget.style.backgroundColor = colors.tabHover;
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (activeTab !== 'output') {
+                e.currentTarget.style.backgroundColor = colors.tabInactive;
+              }
+            }}
+          >
+            Output
+          </button>
+        </div>
+        <div
           style={{
-            padding: '8px 16px',
-            backgroundColor: activeTab === 'input' ? colors.tabActive : colors.tabInactive,
-            color: colors.text,
-            border: 'none',
-            borderBottom: activeTab === 'input' ? `2px solid ${colors.accentColor}` : '2px solid transparent',
-            cursor: 'pointer',
-            fontSize: '13px',
-            fontWeight: activeTab === 'input' ? 600 : 400,
-          }}
-          onMouseEnter={(e) => {
-            if (activeTab !== 'input') {
-              e.currentTarget.style.backgroundColor = colors.tabHover;
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (activeTab !== 'input') {
-              e.currentTarget.style.backgroundColor = colors.tabInactive;
-            }
+            marginLeft: 'auto',
+            paddingRight: '12px',
+            display: 'flex',
+            alignItems: 'center',
           }}
         >
-          Input
-        </button>
-        <button
-          onClick={() => onTabChange('output')}
-          style={{
-            padding: '8px 16px',
-            backgroundColor: activeTab === 'output' ? colors.tabActive : colors.tabInactive,
-            color: colors.text,
-            border: 'none',
-            borderBottom: activeTab === 'output' ? `2px solid ${colors.accentColor}` : '2px solid transparent',
-            cursor: 'pointer',
-            fontSize: '13px',
-            fontWeight: activeTab === 'output' ? 600 : 400,
-          }}
-          onMouseEnter={(e) => {
-            if (activeTab !== 'output') {
-              e.currentTarget.style.backgroundColor = colors.tabHover;
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (activeTab !== 'output') {
-              e.currentTarget.style.backgroundColor = colors.tabInactive;
-            }
-          }}
-        >
-          Output
-        </button>
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '2px',
+              padding: '2px',
+              borderRadius: '8px',
+              border: `1px solid ${colors.border}`,
+              backgroundColor: colors.inputBg,
+            }}
+          >
+            {(['pretty', 'raw'] as const).map((mode) => {
+              const active = viewMode === mode;
+              return (
+                <button
+                  key={mode}
+                  onClick={() => setViewMode(mode)}
+                  style={{
+                    border: 'none',
+                    backgroundColor: active ? colors.accentColor : 'transparent',
+                    color: active ? '#ffffff' : colors.text,
+                    padding: '4px 12px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                  }}
+                >
+                  {mode === 'pretty' ? 'Pretty' : 'Raw'}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {/* JSON Editor */}
@@ -336,6 +382,7 @@ export const NodeEditorView: React.FC<NodeEditorViewProps> = ({
         style={{
           flex: 1,
           overflow: 'auto',
+          minHeight: 0,
         }}
       >
         <JSONViewer
@@ -346,6 +393,10 @@ export const NodeEditorView: React.FC<NodeEditorViewProps> = ({
           searchQuery={searchQuery}
           currentMatchIndex={currentMatchIndex}
           onMatchCountChange={setMatchCount}
+          viewMode={viewMode}
+          onViewModeChange={setViewMode}
+          hideViewToggle
+          scrollMode="external"
         />
       </div>
     </div>

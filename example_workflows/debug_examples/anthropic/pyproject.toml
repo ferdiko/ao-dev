@@ -6,6 +6,7 @@ requires-python = ">=3.10"
 dependencies = [
     "sovara",
     "anthropic",
+    "e2b-code-interpreter",
 ]
 
 [tool.uv.sources]

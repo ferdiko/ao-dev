@@ -4,6 +4,12 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { detectDocument, formatFileSize, getDocumentKey, DetectedDocument } from '../utils/documentDetection';
 import {
+  applyDocumentReplacement,
+  inferDocumentTypeFromMimeOrName,
+  pickReplacementDocumentFromBrowser,
+  type ReplacementDocumentFile,
+} from '../utils/documentReplacement';
+import {
   classifyStringContent,
   getScalarTypeLabel,
   getStringPreview,
@@ -14,7 +20,16 @@ import {
   unwrapFencedCode,
   unwrapLosslessNumber,
 } from '../utils/contentClassification';
+import {
+  detectFlattenedMessageGroups,
+  detectMessageLikeArray,
+  detectMessageLikeObject,
+  type FlattenedMessageGroup,
+  type MessageMetadataEntry,
+  type MessageRoleStyle,
+} from '../utils/messageLike';
 import { useDocumentContext } from '../contexts/DocumentContext';
+import { PrismStyleMap, withTransparentPrismTheme } from '../utils/prismTheme';
 
 interface JSONViewerProps {
   data: any;
@@ -26,9 +41,20 @@ interface JSONViewerProps {
   currentMatchIndex?: number;
   onMatchCountChange?: (count: number) => void;
   defaultViewMode?: ViewMode;
+  viewMode?: ViewMode;
+  onViewModeChange?: (next: ViewMode) => void;
   hideViewToggle?: boolean;
   containerPadding?: string | number;
   containerBackgroundColor?: string;
+  scrollMode?: 'internal' | 'external';
+}
+
+declare global {
+  interface Window {
+    vscode?: {
+      postMessage: (message: unknown) => void;
+    };
+  }
 }
 
 interface BaseNodeProps {
@@ -39,6 +65,7 @@ interface BaseNodeProps {
   path: string[];
   siblingData?: Record<string, unknown>;
   onChange?: (path: string[], newValue: any) => void;
+  onReplaceDocument?: (path: string[], doc: DetectedDocument) => void;
   onJumpToRaw?: (path: string[]) => void;
   onOpenDocument?: (doc: DetectedDocument) => void;
   focusRequest?: FocusRequest | null;
@@ -48,8 +75,9 @@ interface BaseNodeProps {
   matchIndexOffset?: number;
 }
 
-type ViewMode = 'pretty' | 'raw';
-type FocusRequest = { path: string[]; nonce: number };
+export type ViewMode = 'pretty' | 'raw';
+type FocusRequest = { path: string[]; nonce: number; cursorOffset: number | null; selectedText: string | null };
+type SelectionSnapshot = { cursorOffset: number | null; selectedText: string | null };
 type CodeTokenType = 'plain' | 'comment' | 'string' | 'number' | 'boolean' | 'keyword' | 'property' | 'tag' | 'attribute' | 'variable';
 type CodeToken = { type: CodeTokenType; text: string };
 
@@ -107,6 +135,72 @@ function isProperPathPrefix(prefix: string[], fullPath: string[] | null | undefi
   }
 
   return prefix.every((segment, index) => segment === fullPath[index]);
+}
+
+function getSelectionLeafOffset(): number | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) {
+    return null;
+  }
+
+  return Math.max(0, selection.getRangeAt(0).startOffset);
+}
+
+function getSelectionLeafText(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const selection = window.getSelection();
+  if (!selection) {
+    return null;
+  }
+
+  const text = selection.toString().trim();
+  if (!text) {
+    return null;
+  }
+
+  return text.length <= 120 ? text : text.slice(0, 120);
+}
+
+function getTransientSelectionRange(text: string, cursorOffset: number | null, selectedText: string | null): { start: number; end: number; caret: number } {
+  const caret = Math.max(0, Math.min(cursorOffset ?? 0, text.length));
+  if (text.length === 0) {
+    return { start: caret, end: caret, caret };
+  }
+
+  const needle = selectedText?.trim();
+  if (!needle) {
+    return { start: caret, end: caret, caret };
+  }
+
+  let bestStart = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let searchIndex = 0;
+  while (searchIndex <= text.length) {
+    const matchIndex = text.indexOf(needle, searchIndex);
+    if (matchIndex === -1) {
+      break;
+    }
+
+    const distance = Math.abs(matchIndex - caret);
+    if (distance < bestDistance) {
+      bestStart = matchIndex;
+      bestDistance = distance;
+    }
+    searchIndex = matchIndex + 1;
+  }
+
+  if (bestStart === -1) {
+    return { start: caret, end: caret, caret };
+  }
+
+  return { start: bestStart, end: bestStart + needle.length, caret: bestStart };
 }
 
 function countMatches(text: string, query: string): number {
@@ -273,6 +367,74 @@ const HoverActionSlot: React.FC<{
   </div>
 );
 
+const FramedContentPanel: React.FC<{
+  label: string;
+  isDarkTheme: boolean;
+  onJumpToRaw?: () => void;
+  headerActions?: React.ReactNode;
+  children: React.ReactNode;
+}> = ({ label, isDarkTheme, onJumpToRaw, headerActions, children }) => {
+  const colors = getViewerColors(isDarkTheme);
+  const [isHovered, setIsHovered] = useState(false);
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${colors.inputBorder}`,
+        borderRadius: '8px',
+        overflow: 'hidden',
+        backgroundColor: colors.nestedBackground,
+      }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onDoubleClick={onJumpToRaw ? (event) => {
+        event.stopPropagation();
+        onJumpToRaw();
+      } : undefined}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '8px',
+          padding: '4px 12px',
+          backgroundColor: colors.toolbarBackground,
+          borderBottom: `1px solid ${colors.inputBorder}`,
+        }}
+      >
+        <span
+          style={{
+            fontSize: '11px',
+            fontWeight: 600,
+            color: colors.mutedText,
+            letterSpacing: '0.02em',
+            fontFamily: 'var(--vscode-font-family, sans-serif)',
+          }}
+        >
+          {label}
+        </span>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+          {headerActions}
+          {onJumpToRaw && (
+            <HoverActionSlot visible={isHovered}>
+              <ActionIconButton
+                title="Edit in raw JSON"
+                icon="codicon-edit"
+                isDarkTheme={isDarkTheme}
+                onClick={onJumpToRaw}
+              />
+            </HoverActionSlot>
+          )}
+        </div>
+      </div>
+      <div style={{ padding: '12px' }}>
+        {children}
+      </div>
+    </div>
+  );
+};
+
 const ViewerToggle: React.FC<{
   viewMode: ViewMode;
   onChange: (next: ViewMode) => void;
@@ -309,21 +471,8 @@ const ViewerToggle: React.FC<{
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'flex-end',
-        gap: '8px',
-        marginBottom: '10px',
       }}
     >
-      {editable && (
-        <span
-          style={{
-            color: colors.mutedText,
-            fontSize: '12px',
-            fontFamily: 'var(--vscode-font-family, sans-serif)',
-          }}
-        >
-          Raw mode is editable
-        </span>
-      )}
       <div
         style={{
           display: 'inline-flex',
@@ -346,7 +495,8 @@ const DocumentButton: React.FC<{
   doc: DetectedDocument;
   isDarkTheme: boolean;
   onOpenDocument?: (doc: DetectedDocument) => void;
-}> = ({ doc, isDarkTheme, onOpenDocument }) => {
+  onReplaceDocument?: () => void;
+}> = ({ doc, isDarkTheme, onOpenDocument, onReplaceDocument }) => {
   const colors = getViewerColors(isDarkTheme);
   const { openedPaths } = useDocumentContext();
   const docKey = getDocumentKey(doc.data);
@@ -385,8 +535,11 @@ const DocumentButton: React.FC<{
           style={{
             display: 'inline-flex',
             alignItems: 'center',
+            justifyContent: 'center',
             gap: '4px',
-            padding: '5px 10px',
+            height: '30px',
+            boxSizing: 'border-box',
+            padding: '0 10px',
             border: `1px solid ${colors.inputBorder}`,
             borderRadius: '6px',
             backgroundColor: colors.nestedBackground,
@@ -394,6 +547,7 @@ const DocumentButton: React.FC<{
             cursor: 'pointer',
             fontFamily: 'var(--vscode-font-family, sans-serif)',
             fontSize: '13px',
+            lineHeight: 1,
           }}
           onClick={(event) => {
             event.stopPropagation();
@@ -405,6 +559,35 @@ const DocumentButton: React.FC<{
         >
           <i className={`codicon codicon-${iconMap[doc.type]}`} />
           {` Open ${labelMap[doc.type]} (${formatFileSize(doc.size)})`}
+        </button>
+      )}
+      {onReplaceDocument && doc.type !== 'unknown' && (
+        <button
+          title="Replace file"
+          aria-label="Replace file"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '30px',
+            height: '30px',
+            boxSizing: 'border-box',
+            border: `1px solid ${colors.inputBorder}`,
+            borderRadius: '6px',
+            backgroundColor: colors.nestedBackground,
+            color: colors.badgeText,
+            cursor: 'pointer',
+            lineHeight: 1,
+          }}
+          onClick={(event) => {
+            event.stopPropagation();
+            onReplaceDocument();
+          }}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+          }}
+        >
+          <i className="codicon codicon-folder-opened" />
         </button>
       )}
       {openedPath && (
@@ -425,15 +608,17 @@ const DocumentButton: React.FC<{
 const PrettyShell: React.FC<{
   label: string | null;
   badge?: string;
+  headerAddon?: React.ReactNode;
   isDarkTheme: boolean;
   depth: number;
   children: React.ReactNode;
   actions?: React.ReactNode;
   onJumpToRaw?: () => void;
   compact?: boolean;
-}> = ({ label, badge, isDarkTheme, depth, children, actions, onJumpToRaw, compact = false }) => {
+}> = ({ label, badge, headerAddon, isDarkTheme, depth, children, actions, onJumpToRaw, compact = false }) => {
   const colors = getViewerColors(isDarkTheme);
   const title = keyLabelFromPath(label);
+  const hasLeadingHeader = Boolean(title || badge || headerAddon);
   const [isHovered, setIsHovered] = useState(false);
   const editAction = onJumpToRaw ? (
     <HoverActionSlot visible={isHovered}>
@@ -457,6 +642,7 @@ const PrettyShell: React.FC<{
       style={{
         marginBottom: '10px',
         marginLeft: depth > 0 ? '12px' : '0',
+        position: 'relative',
       }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
@@ -465,7 +651,7 @@ const PrettyShell: React.FC<{
         onJumpToRaw();
       } : undefined}
     >
-      {(title || badge || actionGroup) && (
+      {(hasLeadingHeader || (actionGroup && hasLeadingHeader)) && (
         <div
           style={{
             display: 'flex',
@@ -492,7 +678,20 @@ const PrettyShell: React.FC<{
               </span>
             )}
             {badge && <TypeBadge label={badge} isDarkTheme={isDarkTheme} />}
+            {headerAddon}
           </div>
+          {actionGroup}
+        </div>
+      )}
+      {!hasLeadingHeader && actionGroup && (
+        <div
+          style={{
+            position: 'absolute',
+            top: compact ? '6px' : '8px',
+            right: '8px',
+            zIndex: 1,
+          }}
+        >
           {actionGroup}
         </div>
       )}
@@ -566,6 +765,309 @@ const CompactScalarValue: React.FC<{
       {scalarText}
     </div>
   );
+};
+
+const MessageRoleBadge: React.FC<{
+  roleStyle: MessageRoleStyle;
+  isDarkTheme: boolean;
+}> = ({ roleStyle, isDarkTheme }) => {
+  const palette = isDarkTheme ? roleStyle.dark : roleStyle.light;
+
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: '1px 7px',
+        borderRadius: '999px',
+        border: `1px solid ${palette.border}`,
+        backgroundColor: palette.background,
+        color: palette.text,
+        fontSize: '10px',
+        lineHeight: '14px',
+        fontWeight: 600,
+        letterSpacing: '0.01em',
+        textTransform: 'lowercase',
+        fontFamily: 'var(--vscode-font-family, sans-serif)',
+      }}
+    >
+      {roleStyle.label}
+    </span>
+  );
+};
+
+function formatMessageMetadataValue(value: unknown): string | null {
+  const unwrapped = unwrapLosslessNumber(value);
+  if (unwrapped === null) {
+    return 'null';
+  }
+  if (typeof unwrapped === 'string') {
+    return shouldCollapseLongText(unwrapped) ? getStringPreview(unwrapped, 72) : unwrapped;
+  }
+  if (typeof unwrapped === 'number' || typeof unwrapped === 'boolean') {
+    return String(unwrapped);
+  }
+
+  return null;
+}
+
+const MessageMetadataStrip: React.FC<{
+  metadata: MessageMetadataEntry[];
+  isDarkTheme: boolean;
+}> = ({ metadata, isDarkTheme }) => {
+  const colors = getViewerColors(isDarkTheme);
+  const visibleMetadata = metadata
+    .map((entry) => ({ ...entry, text: formatMessageMetadataValue(entry.value) }))
+    .filter((entry): entry is MessageMetadataEntry & { text: string } => Boolean(entry.text));
+
+  if (visibleMetadata.length === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '6px',
+        marginTop: '10px',
+      }}
+    >
+      {visibleMetadata.map((entry) => (
+        <span
+          key={entry.path.join('.')}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '4px',
+            padding: '2px 7px',
+            borderRadius: '999px',
+            border: `1px solid ${isDarkTheme ? 'rgba(110, 118, 129, 0.18)' : 'rgba(110, 118, 129, 0.12)'}`,
+            backgroundColor: isDarkTheme ? 'rgba(110, 118, 129, 0.08)' : 'rgba(110, 118, 129, 0.05)',
+            color: colors.mutedText,
+            fontSize: '11px',
+            lineHeight: '16px',
+            fontFamily: 'var(--vscode-font-family, sans-serif)',
+          }}
+        >
+          <span style={{ fontWeight: 600 }}>{entry.key}</span>
+          <span>{entry.text}</span>
+        </span>
+      ))}
+    </div>
+  );
+};
+
+const MessageBubbleBody: React.FC<{
+  value: unknown;
+  isDarkTheme: boolean;
+  depth: number;
+  path: string[];
+  onReplaceDocument?: (path: string[], doc: DetectedDocument) => void;
+  onJumpToRaw?: (path: string[]) => void;
+  onOpenDocument?: (doc: DetectedDocument) => void;
+  searchQuery?: string;
+  currentMatchIndex?: number;
+  matchIndexOffset?: number;
+  expandPlainText?: boolean;
+  suppressArrayHeader?: boolean;
+}> = ({ value, isDarkTheme, depth, path, onReplaceDocument, onJumpToRaw, onOpenDocument, searchQuery, currentMatchIndex, matchIndexOffset, expandPlainText = true, suppressArrayHeader = false }) => {
+  if (typeof value === 'string') {
+    return (
+      <PrettyStringNode
+        keyName={null}
+        value={value}
+        isDarkTheme={isDarkTheme}
+        depth={depth}
+        path={path}
+        onReplaceDocument={onReplaceDocument}
+        onJumpToRaw={onJumpToRaw}
+        onOpenDocument={onOpenDocument}
+        searchQuery={searchQuery}
+        currentMatchIndex={currentMatchIndex}
+        matchIndexOffset={matchIndexOffset}
+        expandPlainText={expandPlainText}
+      />
+    );
+  }
+
+  return (
+    <PrettyJSONNode
+      keyName={null}
+      value={value}
+      isDarkTheme={isDarkTheme}
+      depth={depth}
+      path={path}
+      siblingData={isRecord(value) ? value : undefined}
+      onReplaceDocument={onReplaceDocument}
+      onJumpToRaw={onJumpToRaw}
+      onOpenDocument={onOpenDocument}
+      searchQuery={searchQuery}
+      currentMatchIndex={currentMatchIndex}
+      matchIndexOffset={matchIndexOffset}
+      suppressArrayHeader={suppressArrayHeader}
+    />
+  );
+};
+
+const MessageObjectNode: React.FC<BaseNodeProps & {
+  detectedMessage: ReturnType<typeof detectMessageLikeObject>;
+}> = ({
+  keyName,
+  isDarkTheme,
+  depth,
+  path,
+  onReplaceDocument,
+  onJumpToRaw,
+  onOpenDocument,
+  searchQuery,
+  currentMatchIndex,
+  matchIndexOffset = 0,
+  detectedMessage,
+}) => {
+  if (!detectedMessage) {
+    return null;
+  }
+
+  const contentBadge = Array.isArray(detectedMessage.content) ? `list · ${detectedMessage.content.length}` : undefined;
+
+  return (
+    <PrettyShell
+      label={keyName}
+      badge={contentBadge}
+      headerAddon={<MessageRoleBadge roleStyle={detectedMessage.roleStyle} isDarkTheme={isDarkTheme} />}
+      isDarkTheme={isDarkTheme}
+      depth={depth}
+    >
+      <MessageBubbleBody
+        value={detectedMessage.content}
+        isDarkTheme={isDarkTheme}
+        depth={depth + 1}
+        path={[...path, ...detectedMessage.contentPath]}
+        onReplaceDocument={onReplaceDocument}
+        onJumpToRaw={onJumpToRaw}
+        onOpenDocument={onOpenDocument}
+        searchQuery={searchQuery}
+        currentMatchIndex={currentMatchIndex}
+        matchIndexOffset={matchIndexOffset}
+        suppressArrayHeader
+      />
+      <MessageMetadataStrip metadata={detectedMessage.metadata} isDarkTheme={isDarkTheme} />
+    </PrettyShell>
+  );
+};
+
+const FlattenedMessageGroupNode: React.FC<BaseNodeProps & {
+  group: FlattenedMessageGroup;
+}> = ({
+  isDarkTheme,
+  depth,
+  onReplaceDocument,
+  onJumpToRaw,
+  onOpenDocument,
+  searchQuery,
+  currentMatchIndex,
+  matchIndexOffset = 0,
+  group,
+}) => {
+  if (group.detectedMessages) {
+    const detectedMessages = group.detectedMessages;
+    const contentBadge = detectedMessages.length === 1 && Array.isArray(detectedMessages[0].content)
+      ? `list · ${detectedMessages[0].content.length}`
+      : `list · ${detectedMessages.length}`;
+    const content = detectedMessages.length === 1 ? (
+      <div style={{ display: 'grid', gap: '8px' }}>
+        <MessageBubbleBody
+          value={detectedMessages[0].content}
+          isDarkTheme={isDarkTheme}
+          depth={depth + 1}
+          path={[group.messageKey, '0', ...detectedMessages[0].contentPath]}
+          onReplaceDocument={onReplaceDocument}
+          onJumpToRaw={onJumpToRaw}
+          onOpenDocument={onOpenDocument}
+          searchQuery={searchQuery}
+          currentMatchIndex={currentMatchIndex}
+          matchIndexOffset={matchIndexOffset}
+          suppressArrayHeader
+        />
+        <MessageMetadataStrip metadata={[...group.metadata, ...detectedMessages[0].metadata]} isDarkTheme={isDarkTheme} />
+      </div>
+    ) : (
+      <div style={{ display: 'grid', gap: '10px' }}>
+        {detectedMessages.map((message, index) => (
+          <ArrayItemBox
+            key={`group-message-${index}`}
+            isDarkTheme={isDarkTheme}
+            headerAddon={<MessageRoleBadge roleStyle={message.roleStyle} isDarkTheme={isDarkTheme} />}
+          >
+            <div style={{ display: 'grid', gap: '8px' }}>
+              <MessageBubbleBody
+                value={message.content}
+                isDarkTheme={isDarkTheme}
+                depth={depth + 1}
+                path={[group.messageKey, String(index), ...message.contentPath]}
+                onReplaceDocument={onReplaceDocument}
+                onJumpToRaw={onJumpToRaw}
+                onOpenDocument={onOpenDocument}
+                searchQuery={searchQuery}
+                currentMatchIndex={currentMatchIndex}
+                matchIndexOffset={matchIndexOffset}
+                suppressArrayHeader
+              />
+              <MessageMetadataStrip metadata={message.metadata} isDarkTheme={isDarkTheme} />
+            </div>
+          </ArrayItemBox>
+        ))}
+        <MessageMetadataStrip metadata={group.metadata} isDarkTheme={isDarkTheme} />
+      </div>
+    );
+
+    return (
+      <PrettyShell
+        label={group.messageKey}
+        badge={contentBadge}
+        headerAddon={
+          detectedMessages.length === 1
+            ? <MessageRoleBadge roleStyle={detectedMessages[0].roleStyle} isDarkTheme={isDarkTheme} />
+            : undefined
+        }
+        isDarkTheme={isDarkTheme}
+        depth={depth}
+      >
+        {content}
+      </PrettyShell>
+    );
+  }
+
+  if (group.detectedMessage) {
+    const contentBadge = Array.isArray(group.detectedMessage.content) ? `list · ${group.detectedMessage.content.length}` : undefined;
+    return (
+      <PrettyShell
+        label={group.messageKey}
+        badge={contentBadge}
+        headerAddon={<MessageRoleBadge roleStyle={group.detectedMessage.roleStyle} isDarkTheme={isDarkTheme} />}
+        isDarkTheme={isDarkTheme}
+        depth={depth}
+      >
+        <MessageBubbleBody
+          value={group.detectedMessage.content}
+          isDarkTheme={isDarkTheme}
+          depth={depth + 1}
+          path={[group.messageKey, ...group.detectedMessage.contentPath]}
+          onReplaceDocument={onReplaceDocument}
+          onJumpToRaw={onJumpToRaw}
+          onOpenDocument={onOpenDocument}
+          searchQuery={searchQuery}
+          currentMatchIndex={currentMatchIndex}
+          matchIndexOffset={matchIndexOffset}
+          suppressArrayHeader
+        />
+        <MessageMetadataStrip metadata={[...group.metadata, ...group.detectedMessage.metadata]} isDarkTheme={isDarkTheme} />
+      </PrettyShell>
+    );
+  }
+
+  return null;
 };
 
 function isInlineSimpleValue(
@@ -673,29 +1175,12 @@ const InlineValueRow: React.FC<{
   );
 };
 
-const ArrayIndexLabel: React.FC<{ index: number; isDarkTheme: boolean }> = ({ index, isDarkTheme }) => (
-  <span
-    style={{
-      display: 'inline-block',
-      minWidth: '16px',
-      fontFamily: 'var(--vscode-editor-font-family, monospace)',
-      fontSize: '11px',
-      lineHeight: 1,
-      color: getViewerColors(isDarkTheme).mutedText,
-      opacity: 0.72,
-      textAlign: 'right',
-    }}
-  >
-    {index}
-  </span>
-);
-
 const ArrayItemBox: React.FC<{
-  index: number;
   isDarkTheme: boolean;
   children: React.ReactNode;
+  headerAddon?: React.ReactNode;
   onJumpToRaw?: () => void;
-}> = ({ index, isDarkTheme, children, onJumpToRaw }) => {
+}> = ({ isDarkTheme, children, headerAddon, onJumpToRaw }) => {
   const [isHovered, setIsHovered] = useState(false);
 
   return (
@@ -714,7 +1199,7 @@ const ArrayItemBox: React.FC<{
       } : undefined}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
-        <ArrayIndexLabel index={index} isDarkTheme={isDarkTheme} />
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>{headerAddon}</div>
         {onJumpToRaw && (
           <HoverActionSlot visible={isHovered}>
             <ActionIconButton
@@ -732,14 +1217,13 @@ const ArrayItemBox: React.FC<{
 };
 
 const InlineArrayItemRow: React.FC<{
-  index: number;
   value: unknown;
   isDarkTheme: boolean;
   onJumpToRaw?: () => void;
   searchQuery?: string;
   currentMatchIndex?: number;
   matchIndexOffset?: number;
-}> = ({ index, value, isDarkTheme, onJumpToRaw, searchQuery, currentMatchIndex, matchIndexOffset = 0 }) => {
+}> = ({ value, isDarkTheme, onJumpToRaw, searchQuery, currentMatchIndex, matchIndexOffset = 0 }) => {
   const colors = getViewerColors(isDarkTheme);
   const isString = typeof value === 'string';
   const [isHovered, setIsHovered] = useState(false);
@@ -765,7 +1249,6 @@ const InlineArrayItemRow: React.FC<{
         onJumpToRaw();
       } : undefined}
     >
-      <ArrayIndexLabel index={index} isDarkTheme={isDarkTheme} />
       <div style={{ minWidth: 0, flex: 1 }}>
         {isString ? (
           <div
@@ -965,10 +1448,12 @@ const CodeBlock: React.FC<{
   code: string;
   language: string;
   isDarkTheme: boolean;
+  onJumpToRaw?: () => void;
+  headerActions?: React.ReactNode;
   searchQuery?: string;
   currentMatchIndex?: number;
   matchIndexOffset?: number;
-}> = ({ code, language, isDarkTheme, searchQuery, currentMatchIndex, matchIndexOffset = 0 }) => {
+}> = ({ code, language, isDarkTheme, onJumpToRaw, headerActions, searchQuery, currentMatchIndex, matchIndexOffset = 0 }) => {
   const colors = getViewerColors(isDarkTheme);
   const highlighted = renderSyntaxHighlightedCode(
     code,
@@ -979,38 +1464,19 @@ const CodeBlock: React.FC<{
     matchIndexOffset,
   );
   const prismTheme = isDarkTheme ? oneDark : oneLight;
-  const syntaxTheme = {
-    ...prismTheme,
-    'pre[class*="language-"]': {
-      ...(prismTheme['pre[class*="language-"]'] || {}),
-      background: 'transparent',
-      margin: 0,
-      padding: 0,
-      textShadow: 'none',
-    },
-    'code[class*="language-"]': {
-      ...(prismTheme['code[class*="language-"]'] || {}),
-      background: 'transparent',
-      fontFamily: 'var(--vscode-editor-font-family, monospace)',
-      fontSize: '12px',
-      lineHeight: '1.6',
-      textShadow: 'none',
-    },
-  };
+  const syntaxTheme = withTransparentPrismTheme(prismTheme as unknown as PrismStyleMap);
 
   return (
-    <div>
-      <div style={{ marginBottom: '8px' }}>
-        <TypeBadge label={`code · ${language}`} isDarkTheme={isDarkTheme} />
-      </div>
+    <FramedContentPanel
+      label={language.toUpperCase()}
+      isDarkTheme={isDarkTheme}
+      onJumpToRaw={onJumpToRaw}
+      headerActions={headerActions}
+    >
       {searchQuery ? (
         <pre
           style={{
             margin: 0,
-            padding: '12px',
-            borderRadius: '8px',
-            backgroundColor: colors.nestedBackground,
-            border: `1px solid ${colors.inputBorder}`,
             overflowX: 'auto',
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
@@ -1028,12 +1494,9 @@ const CodeBlock: React.FC<{
           style={syntaxTheme}
           customStyle={{
             margin: 0,
-            padding: '12px',
-            borderRadius: '8px',
-            background: colors.nestedBackground,
-            border: `1px solid ${colors.inputBorder}`,
-            fontFamily: 'var(--vscode-editor-font-family, monospace)',
-            fontSize: '12px',
+            padding: 0,
+            borderRadius: 0,
+            background: 'transparent',
             lineHeight: '1.5',
           }}
           codeTagProps={{ style: { background: 'transparent' } }}
@@ -1042,7 +1505,7 @@ const CodeBlock: React.FC<{
           {code}
         </SyntaxHighlighter>
       )}
-    </div>
+    </FramedContentPanel>
   );
 };
 
@@ -1330,25 +1793,31 @@ const MarkdownRenderer: React.FC<{
   );
 };
 
-const PrettyStringNode: React.FC<BaseNodeProps> = ({
+const PrettyStringNode: React.FC<BaseNodeProps & {
+  expandPlainText?: boolean;
+}> = ({
   keyName,
   value,
   isDarkTheme,
   depth,
   path,
   siblingData,
+  onReplaceDocument,
   onJumpToRaw,
   onOpenDocument,
   searchQuery,
   currentMatchIndex,
   matchIndexOffset = 0,
+  expandPlainText = false,
 }) => {
   const colors = getViewerColors(isDarkTheme);
-  const [isExpanded, setIsExpanded] = useState(!shouldCollapseLongText(value));
+  const shouldCollapse = shouldCollapseLongText(value);
+  const [isExpanded, setIsExpanded] = useState(expandPlainText || !shouldCollapse);
+  const [showMarkdownRaw, setShowMarkdownRaw] = useState(false);
   const detectedDoc = onOpenDocument ? detectDocument(value, siblingData) : null;
   const doc = detectedDoc;
   const classification = classifyStringContent(value);
-  const canCollapseVisibleText = shouldCollapseLongText(value) && classification.kind === 'plain';
+  const canCollapseVisibleText = !expandPlainText && shouldCollapse && classification.kind === 'plain';
   const collapseAction = canCollapseVisibleText ? (
     <ActionIconButton
       title={isExpanded ? 'Collapse' : 'Expand'}
@@ -1369,7 +1838,12 @@ const PrettyStringNode: React.FC<BaseNodeProps> = ({
         onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
         compact
       >
-        <DocumentButton doc={doc} isDarkTheme={isDarkTheme} onOpenDocument={onOpenDocument} />
+        <DocumentButton
+          doc={doc}
+          isDarkTheme={isDarkTheme}
+          onOpenDocument={onOpenDocument}
+          onReplaceDocument={onReplaceDocument ? () => onReplaceDocument(path, doc) : undefined}
+        />
       </PrettyShell>
     );
   }
@@ -1401,37 +1875,57 @@ const PrettyStringNode: React.FC<BaseNodeProps> = ({
 
   if (classification.kind === 'markdown') {
     return (
-      <PrettyShell
-        label={keyName}
-        badge="markdown"
-        isDarkTheme={isDarkTheme}
-        depth={depth}
-        onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
-      >
-        <MarkdownRenderer
-          markdown={value}
+      <PrettyShell label={keyName} isDarkTheme={isDarkTheme} depth={depth}>
+        <FramedContentPanel
+          label="MARKDOWN"
           isDarkTheme={isDarkTheme}
-          searchQuery={searchQuery}
-          currentMatchIndex={currentMatchIndex}
-          matchIndexOffset={matchIndexOffset}
-        />
+          onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
+          headerActions={
+            <ActionIconButton
+              title={showMarkdownRaw ? 'Show rendered markdown' : 'Show raw markdown'}
+              icon={<span style={{ fontFamily: 'var(--vscode-editor-font-family, monospace)', fontSize: '11px' }}>{'{}'}</span>}
+              isDarkTheme={isDarkTheme}
+              active={showMarkdownRaw}
+              onClick={() => setShowMarkdownRaw((current) => !current)}
+            />
+          }
+        >
+          {showMarkdownRaw ? (
+            <pre
+              style={{
+                margin: 0,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                fontFamily: 'var(--vscode-editor-font-family, monospace)',
+                fontSize: '13px',
+                lineHeight: '1.5',
+                color: colors.string,
+              }}
+            >
+              {value}
+            </pre>
+          ) : (
+            <MarkdownRenderer
+              markdown={value}
+              isDarkTheme={isDarkTheme}
+              searchQuery={searchQuery}
+              currentMatchIndex={currentMatchIndex}
+              matchIndexOffset={matchIndexOffset}
+            />
+          )}
+        </FramedContentPanel>
       </PrettyShell>
     );
   }
 
   if (classification.kind === 'xml') {
     return (
-      <PrettyShell
-        label={keyName}
-        badge="xml"
-        isDarkTheme={isDarkTheme}
-        depth={depth}
-        onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
-      >
+      <PrettyShell label={keyName} isDarkTheme={isDarkTheme} depth={depth}>
         <CodeBlock
           code={value}
           language="xml"
           isDarkTheme={isDarkTheme}
+          onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
           searchQuery={searchQuery}
           currentMatchIndex={currentMatchIndex}
           matchIndexOffset={matchIndexOffset}
@@ -1443,17 +1937,12 @@ const PrettyStringNode: React.FC<BaseNodeProps> = ({
   if (classification.kind === 'code') {
     const code = classification.fenced ? unwrapFencedCode(value)?.code || value : value;
     return (
-      <PrettyShell
-        label={keyName}
-        badge={classification.fenced ? 'fenced code' : 'code'}
-        isDarkTheme={isDarkTheme}
-        depth={depth}
-        onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
-      >
+      <PrettyShell label={keyName} isDarkTheme={isDarkTheme} depth={depth}>
         <CodeBlock
           code={code}
           language={classification.language}
           isDarkTheme={isDarkTheme}
+          onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
           searchQuery={searchQuery}
           currentMatchIndex={currentMatchIndex}
           matchIndexOffset={matchIndexOffset}
@@ -1467,7 +1956,6 @@ const PrettyStringNode: React.FC<BaseNodeProps> = ({
   return (
     <PrettyShell
       label={keyName}
-      badge="string"
       isDarkTheme={isDarkTheme}
       depth={depth}
       actions={plainStringActions}
@@ -1490,22 +1978,28 @@ const PrettyStringNode: React.FC<BaseNodeProps> = ({
   );
 };
 
-const PrettyArrayNode: React.FC<BaseNodeProps> = ({
+const PrettyArrayNode: React.FC<BaseNodeProps & {
+  suppressArrayHeader?: boolean;
+}> = ({
   keyName,
   value,
   isDarkTheme,
   depth,
   path,
+  onReplaceDocument,
   onJumpToRaw,
   onOpenDocument,
   searchQuery,
   currentMatchIndex,
   matchIndexOffset = 0,
+  suppressArrayHeader = false,
 }) => {
   const colors = getViewerColors(isDarkTheme);
   const [isExpanded, setIsExpanded] = useState(true);
   const arrayValue = value as unknown[];
+  const detectedMessages = detectMessageLikeArray(arrayValue);
   const columns = getUniformObjectArrayColumns(arrayValue);
+  const singleItem = arrayValue[0];
 
   const content = !isExpanded ? (
     <div
@@ -1517,6 +2011,68 @@ const PrettyArrayNode: React.FC<BaseNodeProps> = ({
     >
       {`${arrayValue.length} items`}
     </div>
+  ) : detectedMessages ? (
+    arrayValue.length === 1 ? (
+      <div style={{ display: 'grid', gap: '8px' }}>
+        <MessageBubbleBody
+          value={detectedMessages[0].content}
+          isDarkTheme={isDarkTheme}
+          depth={depth + 1}
+          path={[...path, '0', ...detectedMessages[0].contentPath]}
+          onReplaceDocument={onReplaceDocument}
+          onJumpToRaw={onJumpToRaw}
+          onOpenDocument={onOpenDocument}
+          searchQuery={searchQuery}
+          currentMatchIndex={currentMatchIndex}
+          matchIndexOffset={matchIndexOffset}
+          suppressArrayHeader
+        />
+        <MessageMetadataStrip metadata={detectedMessages[0].metadata} isDarkTheme={isDarkTheme} />
+      </div>
+    ) : (
+      <div style={{ display: 'grid', gap: '10px' }}>
+        {detectedMessages.map((message, index) => (
+        <ArrayItemBox
+          key={`message-${index}`}
+          isDarkTheme={isDarkTheme}
+          headerAddon={<MessageRoleBadge roleStyle={message.roleStyle} isDarkTheme={isDarkTheme} />}
+          >
+            <div style={{ display: 'grid', gap: '8px' }}>
+              <MessageBubbleBody
+                value={message.content}
+                isDarkTheme={isDarkTheme}
+                depth={depth + 1}
+                path={[...path, String(index), ...message.contentPath]}
+                onReplaceDocument={onReplaceDocument}
+                onJumpToRaw={onJumpToRaw}
+                onOpenDocument={onOpenDocument}
+                searchQuery={searchQuery}
+                currentMatchIndex={currentMatchIndex}
+                matchIndexOffset={matchIndexOffset}
+                suppressArrayHeader
+              />
+              <MessageMetadataStrip metadata={message.metadata} isDarkTheme={isDarkTheme} />
+            </div>
+          </ArrayItemBox>
+        ))}
+      </div>
+    )
+  ) : arrayValue.length === 1 ? (
+    <PrettyJSONNode
+      keyName={null}
+      value={singleItem}
+      isDarkTheme={isDarkTheme}
+      depth={depth + 1}
+      path={[...path, '0']}
+      siblingData={isRecord(singleItem) ? singleItem : undefined}
+      onReplaceDocument={onReplaceDocument}
+      onJumpToRaw={onJumpToRaw}
+      onOpenDocument={onOpenDocument}
+      searchQuery={searchQuery}
+      currentMatchIndex={currentMatchIndex}
+      matchIndexOffset={matchIndexOffset}
+      suppressArrayHeader={suppressArrayHeader}
+    />
   ) : columns ? (
     <div style={{ overflowX: 'auto' }}>
       <table
@@ -1575,7 +2131,6 @@ const PrettyArrayNode: React.FC<BaseNodeProps> = ({
         isInlineSimpleValue(item, isRecord(item) ? item : undefined, Boolean(onOpenDocument)) ? (
           <InlineArrayItemRow
             key={`array-${index}`}
-            index={index}
             value={item}
             isDarkTheme={isDarkTheme}
             onJumpToRaw={onJumpToRaw ? () => onJumpToRaw([...path, String(index)]) : undefined}
@@ -1586,9 +2141,7 @@ const PrettyArrayNode: React.FC<BaseNodeProps> = ({
         ) : (
           <ArrayItemBox
             key={`array-${index}`}
-            index={index}
             isDarkTheme={isDarkTheme}
-            onJumpToRaw={onJumpToRaw ? () => onJumpToRaw([...path, String(index)]) : undefined}
           >
             <PrettyJSONNode
               keyName={null}
@@ -1597,11 +2150,13 @@ const PrettyArrayNode: React.FC<BaseNodeProps> = ({
               depth={depth + 1}
               path={[...path, String(index)]}
               siblingData={isRecord(item) ? item : undefined}
+              onReplaceDocument={onReplaceDocument}
               onJumpToRaw={onJumpToRaw}
               onOpenDocument={onOpenDocument}
               searchQuery={searchQuery}
               currentMatchIndex={currentMatchIndex}
               matchIndexOffset={matchIndexOffset}
+              suppressArrayHeader={suppressArrayHeader}
             />
           </ArrayItemBox>
         )
@@ -1609,13 +2164,21 @@ const PrettyArrayNode: React.FC<BaseNodeProps> = ({
     </div>
   );
 
+  if (suppressArrayHeader && keyName === null) {
+    return <>{content}</>;
+  }
+
   return (
     <PrettyShell
       label={keyName}
       badge={`list · ${arrayValue.length}`}
+      headerAddon={
+        detectedMessages && arrayValue.length === 1
+          ? <MessageRoleBadge roleStyle={detectedMessages[0].roleStyle} isDarkTheme={isDarkTheme} />
+          : undefined
+      }
       isDarkTheme={isDarkTheme}
       depth={depth}
-      onJumpToRaw={onJumpToRaw && path.length > 0 ? () => onJumpToRaw(path) : undefined}
       actions={<ActionIconButton title={isExpanded ? 'Collapse' : 'Expand'} icon={isExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'} isDarkTheme={isDarkTheme} onClick={() => setIsExpanded((current) => !current)} />}
     >
       {content}
@@ -1623,24 +2186,78 @@ const PrettyArrayNode: React.FC<BaseNodeProps> = ({
   );
 };
 
-const PrettyObjectNode: React.FC<BaseNodeProps> = ({
+const PrettyObjectNode: React.FC<BaseNodeProps & {
+  suppressArrayHeader?: boolean;
+}> = ({
   keyName,
   value,
   isDarkTheme,
   depth,
   path,
+  onReplaceDocument,
   onJumpToRaw,
   onOpenDocument,
   searchQuery,
   currentMatchIndex,
   matchIndexOffset = 0,
+  suppressArrayHeader = false,
 }) => {
   const entries = Object.entries(value as Record<string, unknown>);
+  const detectedMessage = detectMessageLikeObject(value);
+  const flattenedGroups = detectFlattenedMessageGroups(value as Record<string, unknown>);
+  const groupByMessageKey = new Map(flattenedGroups.map((group) => [group.messageKey, group]));
+  const consumedKeys = new Set(flattenedGroups.flatMap((group) => group.consumedKeys));
+
+  if (detectedMessage) {
+    return (
+      <MessageObjectNode
+        keyName={keyName}
+        value={value}
+        isDarkTheme={isDarkTheme}
+        depth={depth}
+        path={path}
+        siblingData={siblingData}
+        onReplaceDocument={onReplaceDocument}
+        onJumpToRaw={onJumpToRaw}
+        onOpenDocument={onOpenDocument}
+        searchQuery={searchQuery}
+        currentMatchIndex={currentMatchIndex}
+        matchIndexOffset={matchIndexOffset}
+        detectedMessage={detectedMessage}
+      />
+    );
+  }
 
   const objectContent = (
     <div style={{ display: 'grid', gap: '10px' }}>
-      {entries.map(([childKey, childValue]) => (
-        isInlineSimpleValue(childValue, value as Record<string, unknown>, Boolean(onOpenDocument)) ? (
+      {entries.map(([childKey, childValue]) => {
+        const group = groupByMessageKey.get(childKey);
+        if (group) {
+          return (
+            <FlattenedMessageGroupNode
+              key={childKey}
+              keyName={childKey}
+              value={childValue}
+              isDarkTheme={isDarkTheme}
+              depth={depth + 1}
+              path={[...path, childKey]}
+              siblingData={value as Record<string, unknown>}
+              onReplaceDocument={onReplaceDocument}
+              onJumpToRaw={onJumpToRaw}
+              onOpenDocument={onOpenDocument}
+              searchQuery={searchQuery}
+              currentMatchIndex={currentMatchIndex}
+              matchIndexOffset={matchIndexOffset}
+              group={group}
+            />
+          );
+        }
+
+        if (consumedKeys.has(childKey)) {
+          return null;
+        }
+
+        return isInlineSimpleValue(childValue, value as Record<string, unknown>, Boolean(onOpenDocument)) ? (
           <InlineValueRow
             key={childKey}
             label={childKey}
@@ -1652,22 +2269,24 @@ const PrettyObjectNode: React.FC<BaseNodeProps> = ({
             matchIndexOffset={matchIndexOffset}
           />
         ) : (
-          <PrettyJSONNode
-            key={childKey}
-            keyName={childKey}
-            value={childValue}
+            <PrettyJSONNode
+              key={childKey}
+              keyName={childKey}
+              value={childValue}
             isDarkTheme={isDarkTheme}
             depth={depth + 1}
             path={[...path, childKey]}
             siblingData={value as Record<string, unknown>}
+            onReplaceDocument={onReplaceDocument}
             onJumpToRaw={onJumpToRaw}
-            onOpenDocument={onOpenDocument}
-            searchQuery={searchQuery}
-            currentMatchIndex={currentMatchIndex}
-            matchIndexOffset={matchIndexOffset}
-          />
-        )
-      ))}
+              onOpenDocument={onOpenDocument}
+              searchQuery={searchQuery}
+              currentMatchIndex={currentMatchIndex}
+              matchIndexOffset={matchIndexOffset}
+              suppressArrayHeader={suppressArrayHeader}
+            />
+          );
+      })}
     </div>
   );
 
@@ -1681,25 +2300,28 @@ const PrettyObjectNode: React.FC<BaseNodeProps> = ({
       badge={`object · ${entries.length}`}
       isDarkTheme={isDarkTheme}
       depth={depth}
-      onJumpToRaw={onJumpToRaw && path.length > 0 ? () => onJumpToRaw(path) : undefined}
     >
       {objectContent}
     </PrettyShell>
   );
 };
 
-const PrettyJSONNode: React.FC<BaseNodeProps> = ({
+const PrettyJSONNode: React.FC<BaseNodeProps & {
+  suppressArrayHeader?: boolean;
+}> = ({
   keyName,
   value,
   isDarkTheme,
   depth,
   path,
   siblingData,
+  onReplaceDocument,
   onJumpToRaw,
   onOpenDocument,
   searchQuery,
   currentMatchIndex,
   matchIndexOffset = 0,
+  suppressArrayHeader = false,
 }) => {
   if (depth > MAX_PRETTY_DEPTH) {
     return (
@@ -1738,11 +2360,13 @@ const PrettyJSONNode: React.FC<BaseNodeProps> = ({
         depth={depth}
         path={path}
         siblingData={siblingData}
+        onReplaceDocument={onReplaceDocument}
         onJumpToRaw={onJumpToRaw}
         onOpenDocument={onOpenDocument}
         searchQuery={searchQuery}
         currentMatchIndex={currentMatchIndex}
         matchIndexOffset={matchIndexOffset}
+        suppressArrayHeader={suppressArrayHeader}
       />
     );
   }
@@ -1755,11 +2379,13 @@ const PrettyJSONNode: React.FC<BaseNodeProps> = ({
         isDarkTheme={isDarkTheme}
         depth={depth}
         path={path}
+        onReplaceDocument={onReplaceDocument}
         onJumpToRaw={onJumpToRaw}
         onOpenDocument={onOpenDocument}
         searchQuery={searchQuery}
         currentMatchIndex={currentMatchIndex}
         matchIndexOffset={matchIndexOffset}
+        suppressArrayHeader={suppressArrayHeader}
       />
     );
   }
@@ -1773,6 +2399,7 @@ const PrettyJSONNode: React.FC<BaseNodeProps> = ({
         depth={depth}
         path={path}
         siblingData={siblingData}
+        onReplaceDocument={onReplaceDocument}
         onJumpToRaw={onJumpToRaw}
         onOpenDocument={onOpenDocument}
         searchQuery={searchQuery}
@@ -1813,6 +2440,7 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
   const colors = getViewerColors(isDarkTheme);
   const headerRef = React.useRef<HTMLDivElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const selectionRestoreTimerRef = React.useRef<number | null>(null);
 
   const indent = depth * 15;
 
@@ -2124,6 +2752,15 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
     }
   };
 
+  const clearSelectionRestoreTimer = React.useCallback(() => {
+    if (selectionRestoreTimerRef.current !== null) {
+      window.clearTimeout(selectionRestoreTimerRef.current);
+      selectionRestoreTimerRef.current = null;
+    }
+  }, []);
+
+  React.useEffect(() => clearSelectionRestoreTimer, [clearSelectionRestoreTimer]);
+
   React.useEffect(() => {
     if (!focusRequest || !isExpandable(value)) {
       return;
@@ -2172,14 +2809,38 @@ const RawJSONNode: React.FC<BaseNodeProps> = ({
 
       requestAnimationFrame(() => {
         try {
-          target.setSelectionRange(0, 0);
+          clearSelectionRestoreTimer();
+          const { start, end, caret } = getTransientSelectionRange(target.value, focusRequest.cursorOffset, focusRequest.selectedText);
+          target.setSelectionRange(start, end);
+          if (start !== end) {
+            const initialSelectionStart = start;
+            const initialSelectionEnd = end;
+            selectionRestoreTimerRef.current = window.setTimeout(() => {
+              if (document.activeElement !== target) {
+                selectionRestoreTimerRef.current = null;
+                return;
+              }
+
+              if (target.selectionStart !== initialSelectionStart || target.selectionEnd !== initialSelectionEnd) {
+                selectionRestoreTimerRef.current = null;
+                return;
+              }
+
+              try {
+                target.setSelectionRange(caret, caret);
+              } catch {
+                // Ignore transient host selection failures.
+              }
+              selectionRestoreTimerRef.current = null;
+            }, 900);
+          }
         } catch {
           // Some hosts can reject programmatic selection changes transiently.
         }
         onFocusHandled?.(focusRequest.nonce);
       });
     });
-  }, [focusRequest, onFocusHandled, path, value]);
+  }, [clearSelectionRestoreTimer, focusRequest, onFocusHandled, path, value]);
 
   if (!isExpandable(value)) {
     return (
@@ -2294,13 +2955,32 @@ export const JSONViewer: React.FC<JSONViewerProps> = ({
   currentMatchIndex,
   onMatchCountChange,
   defaultViewMode = 'pretty',
+  viewMode: controlledViewMode,
+  onViewModeChange,
   hideViewToggle = false,
   containerPadding = '12px',
   containerBackgroundColor = 'var(--vscode-editor-background)',
+  scrollMode = 'internal',
 }) => {
   const containerRef = React.useRef<HTMLDivElement>(null);
-  const [viewMode, setViewMode] = React.useState<ViewMode>(defaultViewMode);
+  const lastSelectionRef = React.useRef<SelectionSnapshot>({ cursorOffset: null, selectedText: null });
+  const [internalViewMode, setInternalViewMode] = React.useState<ViewMode>(defaultViewMode);
   const [focusRequest, setFocusRequest] = React.useState<FocusRequest | null>(null);
+  const viewMode = controlledViewMode ?? internalViewMode;
+
+  const setViewMode = React.useCallback((next: ViewMode) => {
+    if (controlledViewMode === undefined) {
+      setInternalViewMode(next);
+    }
+    onViewModeChange?.(next);
+  }, [controlledViewMode, onViewModeChange]);
+
+  const captureSelectionSnapshot = React.useCallback(() => {
+    lastSelectionRef.current = {
+      cursorOffset: getSelectionLeafOffset(),
+      selectedText: getSelectionLeafText(),
+    };
+  }, []);
 
   const handleChange = (path: string[], newValue: any) => {
     if (!onChange) {
@@ -2323,17 +3003,89 @@ export const JSONViewer: React.FC<JSONViewerProps> = ({
     onChange(newData);
   };
 
+  const requestReplacementDocumentFromHost = React.useCallback(async (doc: DetectedDocument): Promise<ReplacementDocumentFile | null> => {
+    if (!window.vscode) {
+      return pickReplacementDocumentFromBrowser(doc.type);
+    }
+
+    const requestId = `replace-doc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return new Promise((resolve) => {
+      const handleMessage = (event: MessageEvent) => {
+        const message = event.data;
+        if (message?.type !== 'replacementDocumentPicked' || message?.payload?.requestId !== requestId) {
+          return;
+        }
+
+        window.removeEventListener('message', handleMessage);
+        const payload = message.payload as {
+          cancelled?: boolean;
+          data?: string;
+          fileName?: string;
+          mimeType?: string;
+        };
+
+        if (payload.cancelled || !payload.data || !payload.fileName) {
+          resolve(null);
+          return;
+        }
+
+        const mimeType = payload.mimeType || '';
+        resolve({
+          data: payload.data,
+          name: payload.fileName,
+          mimeType,
+          type: inferDocumentTypeFromMimeOrName(mimeType, payload.fileName),
+        });
+      };
+
+      window.addEventListener('message', handleMessage);
+      window.vscode?.postMessage({
+        type: 'pickReplacementDocument',
+        payload: {
+          requestId,
+          expectedType: doc.type,
+        },
+      });
+    });
+  }, []);
+
+  const handleReplaceDocument = React.useCallback(async (path: string[], doc: DetectedDocument) => {
+    if (!onChange) {
+      return;
+    }
+
+    const replacement = await requestReplacementDocumentFromHost(doc);
+    if (!replacement) {
+      return;
+    }
+
+    try {
+      const newData = applyDocumentReplacement(data, path, replacement);
+      onChange(newData);
+    } catch (error) {
+      console.warn('[JSONViewer] Failed to replace document', error);
+    }
+  }, [data, onChange, requestReplacementDocumentFromHost]);
+
   const handleJumpToRaw = React.useCallback((path: string[]) => {
+    const liveCursorOffset = getSelectionLeafOffset();
+    const liveSelectedText = getSelectionLeafText();
+    const cursorOffset = liveCursorOffset ?? lastSelectionRef.current.cursorOffset;
+    const selectedText = liveSelectedText ?? lastSelectionRef.current.selectedText;
     console.info('[JSONViewer] jump to raw requested', {
       path,
+      cursorOffset,
+      selectedText,
       dataType: Array.isArray(data) ? 'array' : data === null ? 'null' : typeof data,
     });
     setViewMode('raw');
     setFocusRequest({
       path,
       nonce: Date.now() + Math.random(),
+      cursorOffset,
+      selectedText,
     });
-  }, []);
+  }, [data]);
 
   const handleFocusHandled = React.useCallback((nonce: number) => {
     setFocusRequest((current) => (current?.nonce === nonce ? null : current));
@@ -2367,6 +3119,7 @@ export const JSONViewer: React.FC<JSONViewerProps> = ({
       depth={depth}
       path={[]}
       siblingData={isRecord(data) ? data : undefined}
+      onReplaceDocument={onChange ? handleReplaceDocument : undefined}
       onJumpToRaw={onChange ? handleJumpToRaw : undefined}
       onOpenDocument={onOpenDocument}
       searchQuery={searchQuery}
@@ -2423,22 +3176,43 @@ export const JSONViewer: React.FC<JSONViewerProps> = ({
   return (
     <div
       ref={containerRef}
+      onMouseUpCapture={captureSelectionSnapshot}
+      onKeyUpCapture={captureSelectionSnapshot}
       style={{
         display: 'flex',
         flexDirection: 'column',
-        height: '100%',
-        overflow: 'auto',
+        height: scrollMode === 'internal' ? '100%' : 'auto',
+        minHeight: 0,
+        overflow: scrollMode === 'internal' ? 'auto' : 'visible',
         padding: containerPadding,
         backgroundColor: containerBackgroundColor,
       }}
     >
       {!hideViewToggle && (
-        <ViewerToggle
-          viewMode={viewMode}
-          onChange={setViewMode}
-          isDarkTheme={isDarkTheme}
-          editable={onChange !== undefined}
-        />
+        <div
+          style={{
+            position: 'sticky',
+            top: '8px',
+            zIndex: 2,
+            alignSelf: 'flex-end',
+            marginLeft: 'auto',
+            marginBottom: '8px',
+            padding: '4px',
+            borderRadius: '10px',
+            backgroundColor: isDarkTheme ? 'rgba(30, 30, 30, 0.82)' : 'rgba(255, 255, 255, 0.88)',
+            boxShadow: isDarkTheme
+              ? '0 4px 14px rgba(0, 0, 0, 0.22)'
+              : '0 4px 14px rgba(15, 23, 42, 0.08)',
+            backdropFilter: 'blur(8px)',
+          }}
+        >
+          <ViewerToggle
+            viewMode={viewMode}
+            onChange={setViewMode}
+            isDarkTheme={isDarkTheme}
+            editable={onChange !== undefined}
+          />
+        </div>
       )}
       {viewMode === 'pretty' ? renderPrettyRoot() : renderRawRoot()}
     </div>

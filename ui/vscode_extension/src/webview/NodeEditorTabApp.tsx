@@ -1,8 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { NodeEditorView } from '@sovara/shared-components/components/editor/NodeEditorView';
+import { DocumentPreviewModal } from '@sovara/shared-components/components/common/DocumentPreviewModal';
 import { useIsVsCodeDarkTheme } from '@sovara/shared-components/utils/themeUtils';
 import { parse, stringify } from 'lossless-json';
-import { DetectedDocument } from '@sovara/shared-components/utils/documentDetection';
+import {
+  DetectedDocument,
+  getDocumentKey,
+  getFileExtension,
+  isPreviewableDocument,
+} from '@sovara/shared-components/utils/documentDetection';
 
 declare global {
   interface Window {
@@ -72,6 +78,7 @@ export const NodeEditorTabApp: React.FC = () => {
   });
   const [activeTab, setActiveTab] = useState<'input' | 'output'>(() => window.nodeEditorContext?.field || 'input');
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<DetectedDocument | null>(null);
 
   // Listen for messages from extension
   useEffect(() => {
@@ -167,12 +174,39 @@ export const NodeEditorTabApp: React.FC = () => {
 
   // Handle document open
   const handleOpenDocument = useCallback((doc: DetectedDocument) => {
+    if (isPreviewableDocument(doc)) {
+      setPreviewDoc(doc);
+      return;
+    }
+
     if (window.vscode) {
       window.vscode.postMessage({
         type: 'openDocument',
-        document: doc
+        payload: {
+          data: doc.data,
+          fileType: getFileExtension(doc.type),
+          mimeType: doc.mimeType,
+          documentKey: getDocumentKey(doc.data),
+          fileName: doc.name,
+        },
       });
     }
+  }, []);
+
+  const handleDownloadDocument = useCallback((doc: DetectedDocument) => {
+    if (!window.vscode) {
+      return;
+    }
+
+    window.vscode.postMessage({
+      type: 'saveDocument',
+      payload: {
+        data: doc.data,
+        fileType: getFileExtension(doc.type),
+        mimeType: doc.mimeType,
+        fileName: doc.name,
+      },
+    });
   }, []);
 
   if (!context) {
@@ -193,18 +227,28 @@ export const NodeEditorTabApp: React.FC = () => {
   }
 
   return (
-    <NodeEditorView
-      inputData={inputData}
-      outputData={outputData}
-      activeTab={activeTab}
-      hasUnsavedChanges={hasUnsavedChanges}
-      isDarkTheme={isDarkTheme}
-      nodeLabel={context.label}
-      onTabChange={setActiveTab}
-      onInputChange={setInputData}
-      onOutputChange={setOutputData}
-      onSave={handleSave}
-      onOpenDocument={handleOpenDocument}
-    />
+    <>
+      <NodeEditorView
+        inputData={inputData}
+        outputData={outputData}
+        activeTab={activeTab}
+        hasUnsavedChanges={hasUnsavedChanges}
+        isDarkTheme={isDarkTheme}
+        nodeLabel={context.label}
+        onTabChange={setActiveTab}
+        onInputChange={setInputData}
+        onOutputChange={setOutputData}
+        onSave={handleSave}
+        onOpenDocument={handleOpenDocument}
+      />
+      {previewDoc && (
+        <DocumentPreviewModal
+          doc={previewDoc}
+          isDarkTheme={isDarkTheme}
+          onClose={() => setPreviewDoc(null)}
+          onDownloadDocument={handleDownloadDocument}
+        />
+      )}
+    </>
   );
 };

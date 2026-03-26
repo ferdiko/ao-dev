@@ -23,6 +23,9 @@ const STRONG_MARKDOWN_PATTERNS = [
   /\|.+\|/,
   /\[[^\]]+\]\([^)]+\)/,
   /```[\s\S]*```/,
+  /(^|[\s(])\*\*[^*\n][^*\n]*\*\*(?=$|[\s).,:;!?])/m,
+  /(^|[\s(])__[^_\n][^_\n]*__(?=$|[\s).,:;!?])/m,
+  /~~[^~\n][^~\n]*~~/m,
 ];
 
 export function isLosslessNumberValue(value: unknown): value is LosslessNumberLike {
@@ -190,6 +193,10 @@ function looksLikeMarkdown(value: string): boolean {
 
   const inlineCodeMatches = value.match(/`[^`\n]+`/g) || [];
   if (inlineCodeMatches.length >= 2 && value.includes('\n')) {
+    return true;
+  }
+
+  if (inlineCodeMatches.length >= 1 && value.includes('\n')) {
     return true;
   }
 

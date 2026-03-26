@@ -4,14 +4,26 @@ import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AttachmentStrip } from "./AttachmentPreview";
-import { extractAttachments } from "../attachmentUtils";
-import { Sparkles, Pencil, Loader2, Copy, ChevronDown, ChevronRight } from "lucide-react";
+import { extractAttachments, type Attachment } from "../attachmentUtils";
+import { DocumentPreviewModal } from "./DocumentPreviewModal";
+import { Pencil, Copy, ChevronDown, ChevronRight, Upload } from "lucide-react";
 import {
   detectDocument,
   formatFileSize,
-  getFileExtension,
+  isPreviewableDocument,
   type DetectedDocument,
 } from "@sovara/shared-components/utils/documentDetection";
+import { saveDocument } from "@sovara/shared-components/utils/documentDownload";
+import { applyDocumentReplacement, pickReplacementDocumentFromBrowser } from "@sovara/shared-components/utils/documentReplacement";
+import {
+  detectFlattenedMessageGroups,
+  detectMessageLikeArray,
+  detectMessageLikeObject,
+  type FlattenedMessageGroup,
+  type MessageMetadataEntry,
+  type MessageRoleStyle,
+} from "@sovara/shared-components/utils/messageLike";
+import { type PrismStyleMap, withTransparentPrismTheme } from "@sovara/shared-components/utils/prismTheme";
 import type { EditKey, GraphEdge, GraphNode } from "../hooks/useRunSessionState";
 
 function topoSortNodes(graphNodes: GraphNode[], graphEdges: GraphEdge[]): GraphNode[] {
@@ -42,25 +54,6 @@ function topoSortNodes(graphNodes: GraphNode[], graphEdges: GraphEdge[]): GraphN
   return order.map((id) => idToNode.get(id)!).filter(Boolean);
 }
 
-const syntaxTheme: Record<string, React.CSSProperties> = {
-  ...oneLight,
-  'pre[class*="language-"]': {
-    ...(oneLight['pre[class*="language-"]'] || {}),
-    background: "transparent",
-    margin: 0,
-    padding: 0,
-    textShadow: "none",
-  },
-  'code[class*="language-"]': {
-    ...(oneLight['code[class*="language-"]'] || {}),
-    background: "transparent",
-    fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
-    fontSize: "12.5px",
-    lineHeight: "1.6",
-    textShadow: "none",
-  },
-};
-
 const LANG_DISPLAY: Record<string, string> = {
   sql: "SQL",
   json: "JSON",
@@ -78,6 +71,12 @@ const LANG_DISPLAY: Record<string, string> = {
   text: "Text",
 };
 
+const syntaxTheme = withTransparentPrismTheme(oneLight as unknown as PrismStyleMap, {
+  fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+  fontSize: "12.5px",
+  lineHeight: "1.6",
+});
+
 const MAX_PRETTY_DEPTH = 4;
 const FENCED_CODE_RE = /^```([a-zA-Z0-9_+-]+)?\n([\s\S]*?)\n```$/;
 const XML_RE = /^<([A-Za-z_][\w:.-]*)(\s+[^<>]*)?>[\s\S]*<\/\1>$|^<([A-Za-z_][\w:.-]*)(\s+[^<>]*)?\/>$/;
@@ -89,6 +88,9 @@ const STRONG_MARKDOWN_PATTERNS = [
   /\|.+\|/,
   /\[[^\]]+\]\([^)]+\)/,
   /```[\s\S]*```/,
+  /(^|[\s(])\*\*[^*\n][^*\n]*\*\*(?=$|[\s).,:;!?])/m,
+  /(^|[\s(])__[^_\n][^_\n]*__(?=$|[\s).,:;!?])/m,
+  /~~[^~\n][^~\n]*~~/m,
 ];
 
 type StringClassification =
@@ -99,6 +101,7 @@ type StringClassification =
   | { kind: "plain" };
 
 type JsonPath = string[];
+type JumpTarget = { path: JsonPath; cursorOffset: number | null; selectedText: string | null };
 type MarkdownCodeProps = {
   children?: React.ReactNode;
   className?: string;
@@ -139,7 +142,15 @@ function looksLikeMarkdown(value: string): boolean {
   }
 
   const inlineCodeMatches = value.match(/`[^`\n]+`/g) || [];
-  return inlineCodeMatches.length >= 2 && value.includes("\n");
+  if (inlineCodeMatches.length >= 2 && value.includes("\n")) {
+    return true;
+  }
+
+  if (inlineCodeMatches.length >= 1 && value.includes("\n")) {
+    return true;
+  }
+
+  return false;
 }
 
 function inferCodeLanguage(value: string): string {
@@ -310,6 +321,131 @@ function stringifyScalar(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function getSelectionLeafOffset(): number | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) {
+    return null;
+  }
+
+  return Math.max(0, selection.getRangeAt(0).startOffset);
+}
+
+function getSelectionLeafText(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const selection = window.getSelection();
+  if (!selection) {
+    return null;
+  }
+
+  const text = selection.toString().trim();
+  if (!text) {
+    return null;
+  }
+
+  return text.length <= 120 ? text : text.slice(0, 120);
+}
+
+function getSerializedValueOffset(value: unknown, cursorOffset: number | null): number {
+  if (cursorOffset === null) {
+    return 0;
+  }
+
+  const safeOffset = Math.max(0, cursorOffset);
+  if (typeof value === "string") {
+    const prefix = value.slice(0, safeOffset);
+    return Math.max(0, JSON.stringify(prefix).length - 1);
+  }
+
+  const scalarText = stringifyScalar(value);
+  return Math.min(safeOffset, scalarText.length);
+}
+
+function getTransientSelectionRange(text: string, cursorOffset: number | null, selectedText: string | null): { start: number; end: number; caret: number } {
+  const caret = Math.max(0, Math.min(cursorOffset ?? 0, text.length));
+  if (text.length === 0) {
+    return { start: caret, end: caret, caret };
+  }
+
+  const needle = selectedText?.trim();
+  if (!needle) {
+    return { start: caret, end: caret, caret };
+  }
+
+  let bestStart = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let searchIndex = 0;
+  while (searchIndex <= text.length) {
+    const matchIndex = text.indexOf(needle, searchIndex);
+    if (matchIndex === -1) {
+      break;
+    }
+
+    const distance = Math.abs(matchIndex - caret);
+    if (distance < bestDistance) {
+      bestStart = matchIndex;
+      bestDistance = distance;
+    }
+    searchIndex = matchIndex + 1;
+  }
+
+  if (bestStart === -1) {
+    return { start: caret, end: caret, caret };
+  }
+
+  return { start: bestStart, end: bestStart + needle.length, caret: bestStart };
+}
+
+function scrollTextareaOffsetIntoView(textarea: HTMLTextAreaElement, offset: number): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  const clampedOffset = Math.max(0, Math.min(offset, textarea.value.length));
+  const styles = window.getComputedStyle(textarea);
+  const mirror = document.createElement("div");
+  const marker = document.createElement("span");
+
+  mirror.style.position = "absolute";
+  mirror.style.visibility = "hidden";
+  mirror.style.pointerEvents = "none";
+  mirror.style.zIndex = "-1";
+  mirror.style.whiteSpace = "pre-wrap";
+  mirror.style.overflowWrap = "break-word";
+  mirror.style.wordBreak = "break-word";
+  mirror.style.boxSizing = "border-box";
+  mirror.style.width = `${textarea.clientWidth}px`;
+  mirror.style.padding = styles.padding;
+  mirror.style.border = styles.border;
+  mirror.style.font = styles.font;
+  mirror.style.fontFamily = styles.fontFamily;
+  mirror.style.fontSize = styles.fontSize;
+  mirror.style.fontWeight = styles.fontWeight;
+  mirror.style.fontStyle = styles.fontStyle;
+  mirror.style.letterSpacing = styles.letterSpacing;
+  mirror.style.lineHeight = styles.lineHeight;
+  mirror.style.textTransform = styles.textTransform;
+  mirror.style.textIndent = styles.textIndent;
+  mirror.style.tabSize = styles.tabSize;
+
+  mirror.textContent = textarea.value.slice(0, clampedOffset);
+  marker.textContent = textarea.value.slice(clampedOffset, clampedOffset + 1) || "\u200b";
+  mirror.appendChild(marker);
+  document.body.appendChild(mirror);
+
+  const markerTop = marker.offsetTop;
+  const lineHeight = Number.parseFloat(styles.lineHeight) || Number.parseFloat(styles.fontSize) * 1.6 || 20;
+  textarea.scrollTop = Math.max(0, markerTop - textarea.clientHeight / 3 + lineHeight);
+
+  mirror.remove();
+}
+
 function normalizeJsonText(value: string): string {
   try {
     return JSON.stringify(JSON.parse(value));
@@ -326,7 +462,7 @@ function pathsEqual(left: JsonPath | null, right: JsonPath | null): boolean {
   return left.every((segment, index) => segment === right[index]);
 }
 
-function stringifyJsonWithOffset(value: unknown, targetPath: JsonPath | null): { text: string; offset: number | null } {
+function stringifyJsonWithOffset(value: unknown, targetPath: JsonPath | null, targetCursorOffset: number | null = null): { text: string; offset: number | null } {
   const indentUnit = "  ";
 
   const matchesTarget = (path: JsonPath) => pathsEqual(path, targetPath);
@@ -400,15 +536,30 @@ function stringifyJsonWithOffset(value: unknown, targetPath: JsonPath | null): {
 
     return {
       text: JSON.stringify(currentValue),
-      offset: matchesTarget(currentPath) ? 0 : null,
+      offset: matchesTarget(currentPath) ? getSerializedValueOffset(currentValue, targetCursorOffset) : null,
     };
   };
 
   return serialize(value, [], 0);
 }
 
-function CodeBlock({ code, language }: { code: string; language: string }) {
+function CodeBlock({
+  code,
+  language,
+  onEdit,
+  editDisabled = false,
+  editTitle = "Edit this field",
+  headerActions,
+}: {
+  code: string;
+  language: string;
+  onEdit?: () => void;
+  editDisabled?: boolean;
+  editTitle?: string;
+  headerActions?: React.ReactNode;
+}) {
   const [copied, setCopied] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(code).then(() => {
@@ -418,27 +569,42 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
   }, [code]);
 
   return (
-    <div className="code-block">
+    <div
+      className="code-block"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onDoubleClick={onEdit && !editDisabled ? (event) => {
+        event.stopPropagation();
+        onEdit();
+      } : undefined}
+    >
       <div className="code-block-header">
         <span className="code-block-lang">{LANG_DISPLAY[language] ?? language}</span>
-        <button
-          className="code-block-copy"
-          onClick={(event) => {
-            event.stopPropagation();
-            handleCopy();
-          }}
-          onDoubleClick={(event) => {
-            event.stopPropagation();
-          }}
-        >
-          {copied ? "Copied" : "Copy"}
-        </button>
+        <div className="code-block-actions">
+          {headerActions}
+          {onEdit ? (
+            <HoverAction visible={isHovered}>
+              <EditIconButton onClick={onEdit} disabled={editDisabled} title={editTitle} />
+            </HoverAction>
+          ) : null}
+          <button
+            className="code-block-copy"
+            onClick={(event) => {
+              event.stopPropagation();
+              handleCopy();
+            }}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
       </div>
       <SyntaxHighlighter
         language={language}
         style={syntaxTheme}
         customStyle={{
-          margin: 0,
           padding: "12px 14px",
           borderRadius: 0,
           background: "transparent",
@@ -580,9 +746,51 @@ function EditIconButton({
   );
 }
 
+function InlineHeaderIconButton({
+  onClick,
+  title,
+  active = false,
+  children,
+}: {
+  onClick: () => void;
+  title: string;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+      }}
+      title={title}
+      aria-label={title}
+      className="code-block-copy"
+      style={{
+        borderRadius: "999px",
+        border: active ? "1px solid rgba(67, 136, 78, 0.22)" : "1px solid transparent",
+        background: active ? "rgba(67, 136, 78, 0.08)" : "none",
+        minWidth: "20px",
+        height: "20px",
+        padding: "0 6px",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        lineHeight: 1,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 function PrettyCard({
   label,
   badge,
+  headerAddon,
   actions,
   onEdit,
   editDisabled = false,
@@ -593,6 +801,7 @@ function PrettyCard({
 }: {
   label: string | null;
   badge?: string;
+  headerAddon?: React.ReactNode;
   actions?: React.ReactNode;
   onEdit?: () => void;
   editDisabled?: boolean;
@@ -601,6 +810,7 @@ function PrettyCard({
   compact?: boolean;
   children: React.ReactNode;
 }) {
+  const hasLeadingHeader = Boolean(label || badge || headerAddon);
   const [isHovered, setIsHovered] = useState(false);
   const editAction = onEdit ? (
     <HoverAction visible={isHovered}>
@@ -616,7 +826,7 @@ function PrettyCard({
 
   return (
     <div
-      style={{ marginBottom: "10px", marginLeft: depth > 0 ? "12px" : 0 }}
+      style={{ marginBottom: "10px", marginLeft: depth > 0 ? "12px" : 0, position: "relative" }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onDoubleClick={onEdit && !editDisabled ? (event) => {
@@ -624,7 +834,7 @@ function PrettyCard({
         onEdit();
       } : undefined}
     >
-      {(label || badge || actionGroup) && (
+      {hasLeadingHeader && (
         <div
           style={{
             display: "flex",
@@ -650,7 +860,20 @@ function PrettyCard({
               </span>
             )}
             {badge && <PrettyBadge label={badge} />}
+            {headerAddon}
           </div>
+          {actionGroup}
+        </div>
+      )}
+      {!hasLeadingHeader && actionGroup && (
+        <div
+          style={{
+            position: "absolute",
+            top: compact ? "6px" : "8px",
+            right: "8px",
+            zIndex: 1,
+          }}
+        >
           {actionGroup}
         </div>
       )}
@@ -664,6 +887,50 @@ function PrettyCard({
       >
         {children}
       </div>
+    </div>
+  );
+}
+
+function FramedContentBlock({
+  label,
+  onEdit,
+  editDisabled = false,
+  editTitle = "Edit this field",
+  headerActions,
+  children,
+}: {
+  label: string;
+  onEdit?: () => void;
+  editDisabled?: boolean;
+  editTitle?: string;
+  headerActions?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const [isHovered, setIsHovered] = useState(false);
+  const editAction = onEdit ? (
+    <HoverAction visible={isHovered}>
+      <EditIconButton onClick={onEdit} disabled={editDisabled} title={editTitle} />
+    </HoverAction>
+  ) : null;
+
+  return (
+    <div
+      className="code-block"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onDoubleClick={onEdit && !editDisabled ? (event) => {
+        event.stopPropagation();
+        onEdit();
+      } : undefined}
+    >
+      <div className="code-block-header">
+        <span className="code-block-lang">{label}</span>
+        <div className="code-block-actions">
+          {headerActions}
+          {editAction}
+        </div>
+      </div>
+      <div style={{ padding: "12px 14px" }}>{children}</div>
     </div>
   );
 }
@@ -696,6 +963,71 @@ function CompactScalarValue({
       }}
     >
       {scalarText}
+    </div>
+  );
+}
+
+function MessageRolePill({ roleStyle }: { roleStyle: MessageRoleStyle }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "1px 7px",
+        borderRadius: "999px",
+        border: `1px solid ${roleStyle.light.border}`,
+        background: roleStyle.light.background,
+        color: roleStyle.light.text,
+        fontSize: "10px",
+        lineHeight: "14px",
+        fontWeight: 600,
+        letterSpacing: "0.01em",
+        textTransform: "lowercase",
+      }}
+    >
+      {roleStyle.label}
+    </span>
+  );
+}
+
+function formatMessageMetadataValue(value: unknown): string | null {
+  if (value === null) return "null";
+  if (typeof value === "string") return shouldCollapseLongText(value) ? getStringPreview(value, 72) : value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return null;
+}
+
+function MessageMetadataStrip({ metadata }: { metadata: MessageMetadataEntry[] }) {
+  const visibleMetadata = metadata
+    .map((entry) => ({ ...entry, text: formatMessageMetadataValue(entry.value) }))
+    .filter((entry): entry is MessageMetadataEntry & { text: string } => Boolean(entry.text));
+
+  if (visibleMetadata.length === 0) {
+    return null;
+  }
+
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "10px" }}>
+      {visibleMetadata.map((entry) => (
+        <span
+          key={entry.path.join(".")}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            padding: "2px 7px",
+            borderRadius: "999px",
+            border: "1px solid rgba(138, 138, 126, 0.12)",
+            background: "rgba(138, 138, 126, 0.05)",
+            color: "var(--color-text-muted)",
+            fontSize: "11px",
+            lineHeight: "16px",
+          }}
+        >
+          <span style={{ fontWeight: 600 }}>{entry.key}</span>
+          <span>{entry.text}</span>
+        </span>
+      ))}
     </div>
   );
 }
@@ -825,33 +1157,14 @@ function InlineValueRow({
   );
 }
 
-function ArrayIndexLabel({ index }: { index: number }) {
-  return (
-    <span
-      style={{
-        display: "inline-block",
-        minWidth: "16px",
-        fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
-        fontSize: "11px",
-        lineHeight: 1,
-        color: "var(--color-text-muted)",
-        opacity: 0.7,
-        textAlign: "right",
-      }}
-    >
-      {index}
-    </span>
-  );
-}
-
 function ArrayItemBox({
-  index,
+  headerAddon,
   children,
   onEdit,
   editDisabled = false,
   editTitle = "Edit this field",
 }: {
-  index: number;
+  headerAddon?: React.ReactNode;
   children: React.ReactNode;
   onEdit?: () => void;
   editDisabled?: boolean;
@@ -874,7 +1187,7 @@ function ArrayItemBox({
       } : undefined}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "6px" }}>
-        <ArrayIndexLabel index={index} />
+        <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", minWidth: 0 }}>{headerAddon}</div>
         {onEdit && (
           <HoverAction visible={isHovered}>
             <EditIconButton onClick={onEdit} disabled={editDisabled} title={editTitle} />
@@ -887,13 +1200,11 @@ function ArrayItemBox({
 }
 
 function InlineArrayItemRow({
-  index,
   value,
   onEdit,
   editDisabled = false,
   editTitle = "Edit this field",
 }: {
-  index: number;
   value: unknown;
   onEdit?: () => void;
   editDisabled?: boolean;
@@ -920,7 +1231,6 @@ function InlineArrayItemRow({
         onEdit();
       } : undefined}
     >
-      <ArrayIndexLabel index={index} />
       <div style={{ minWidth: 0, flex: 1 }}>
         {isString ? (
           <div
@@ -971,6 +1281,165 @@ function MarkdownContent({ markdown }: { markdown: string }) {
   );
 }
 
+function MessageBubbleBody({
+  value,
+  depth,
+  path,
+  onJumpToEdit,
+  onReplaceDocument,
+  editDisabled,
+  editTitle,
+  onOpenDocument,
+  expandPlainText = true,
+  suppressArrayHeader = false,
+}: {
+  value: unknown;
+  depth: number;
+  path: JsonPath;
+  onJumpToEdit?: (path: JsonPath) => void;
+  onReplaceDocument?: (path: JsonPath, doc: DetectedDocument) => void;
+  editDisabled?: boolean;
+  editTitle?: string;
+  onOpenDocument: (doc: DetectedDocument) => void;
+  expandPlainText?: boolean;
+  suppressArrayHeader?: boolean;
+}) {
+  if (typeof value === "string") {
+    return (
+      <PrettyStringValue
+        label={null}
+        value={value}
+        depth={depth}
+        path={path}
+        onJumpToEdit={onJumpToEdit}
+        onReplaceDocument={onReplaceDocument}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
+        onOpenDocument={onOpenDocument}
+        expandPlainText={expandPlainText}
+      />
+    );
+  }
+
+  return (
+    <PrettyValue
+      label={null}
+      value={value}
+      depth={depth}
+      path={path}
+      siblingData={isRecord(value) ? value : undefined}
+      onJumpToEdit={onJumpToEdit}
+      onReplaceDocument={onReplaceDocument}
+      editDisabled={editDisabled}
+      editTitle={editTitle}
+      onOpenDocument={onOpenDocument}
+      suppressArrayHeader={suppressArrayHeader}
+    />
+  );
+}
+
+function FlattenedMessageGroupCard({
+  group,
+  depth,
+  onJumpToEdit,
+  onReplaceDocument,
+  editDisabled,
+  editTitle,
+  onOpenDocument,
+}: {
+  group: FlattenedMessageGroup;
+  depth: number;
+  onJumpToEdit?: (path: JsonPath) => void;
+  onReplaceDocument?: (path: JsonPath, doc: DetectedDocument) => void;
+  editDisabled?: boolean;
+  editTitle?: string;
+  onOpenDocument: (doc: DetectedDocument) => void;
+}) {
+  if (group.detectedMessages) {
+    const detectedMessages = group.detectedMessages;
+    const contentBadge = detectedMessages.length === 1 && Array.isArray(detectedMessages[0].content)
+      ? `list · ${detectedMessages[0].content.length}`
+      : `list · ${detectedMessages.length}`;
+    return (
+      <PrettyCard
+        label={group.messageKey}
+        badge={contentBadge}
+        headerAddon={detectedMessages.length === 1 ? <MessageRolePill roleStyle={detectedMessages[0].roleStyle} /> : undefined}
+        depth={depth}
+      >
+        {detectedMessages.length === 1 ? (
+          <div style={{ display: "grid", gap: "8px" }}>
+            <MessageBubbleBody
+              value={detectedMessages[0].content}
+              depth={depth + 1}
+              path={[group.messageKey, "0", ...detectedMessages[0].contentPath]}
+              onJumpToEdit={onJumpToEdit}
+              onReplaceDocument={onReplaceDocument}
+              editDisabled={editDisabled}
+              editTitle={editTitle}
+              onOpenDocument={onOpenDocument}
+              suppressArrayHeader
+            />
+            <MessageMetadataStrip metadata={[...group.metadata, ...detectedMessages[0].metadata]} />
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: "10px" }}>
+            {detectedMessages.map((message, index) => (
+              <ArrayItemBox
+                key={`group-message-${index}`}
+                headerAddon={<MessageRolePill roleStyle={message.roleStyle} />}
+              >
+                <div style={{ display: "grid", gap: "8px" }}>
+                  <MessageBubbleBody
+                    value={message.content}
+                    depth={depth + 1}
+                    path={[group.messageKey, String(index), ...message.contentPath]}
+                    onJumpToEdit={onJumpToEdit}
+                  onReplaceDocument={onReplaceDocument}
+                  editDisabled={editDisabled}
+                  editTitle={editTitle}
+                  onOpenDocument={onOpenDocument}
+                  suppressArrayHeader
+                />
+                  <MessageMetadataStrip metadata={message.metadata} />
+                </div>
+              </ArrayItemBox>
+            ))}
+            <MessageMetadataStrip metadata={group.metadata} />
+          </div>
+        )}
+      </PrettyCard>
+    );
+  }
+
+  if (group.detectedMessage) {
+    const contentBadge = Array.isArray(group.detectedMessage.content) ? `list · ${group.detectedMessage.content.length}` : undefined;
+    return (
+      <PrettyCard
+        label={group.messageKey}
+        badge={contentBadge}
+        headerAddon={<MessageRolePill roleStyle={group.detectedMessage.roleStyle} />}
+        depth={depth}
+      >
+        <MessageBubbleBody
+          value={group.detectedMessage.content}
+          depth={depth + 1}
+          path={[group.messageKey, ...group.detectedMessage.contentPath]}
+          onJumpToEdit={onJumpToEdit}
+          onReplaceDocument={onReplaceDocument}
+          editDisabled={editDisabled}
+          editTitle={editTitle}
+          onOpenDocument={onOpenDocument}
+          suppressArrayHeader
+        />
+        <MessageMetadataStrip metadata={[...group.metadata, ...group.detectedMessage.metadata]} />
+      </PrettyCard>
+    );
+  }
+
+  return null;
+}
+
 function PrettyStringValue({
   label,
   value,
@@ -978,9 +1447,11 @@ function PrettyStringValue({
   path,
   siblingData,
   onJumpToEdit,
+  onReplaceDocument,
   editDisabled,
   editTitle,
   onOpenDocument,
+  expandPlainText = false,
 }: {
   label: string | null;
   value: string;
@@ -988,14 +1459,18 @@ function PrettyStringValue({
   path: JsonPath;
   siblingData?: Record<string, unknown>;
   onJumpToEdit?: (path: JsonPath) => void;
+  onReplaceDocument?: (path: JsonPath, doc: DetectedDocument) => void;
   editDisabled?: boolean;
   editTitle?: string;
   onOpenDocument: (doc: DetectedDocument) => void;
+  expandPlainText?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(!shouldCollapseLongText(value));
+  const shouldCollapse = shouldCollapseLongText(value);
+  const [expanded, setExpanded] = useState(expandPlainText || !shouldCollapse);
+  const [showMarkdownRaw, setShowMarkdownRaw] = useState(false);
   const detectedDoc = detectDocument(value, siblingData);
   const classification = classifyStringContent(value);
-  const canCollapseVisibleText = shouldCollapseLongText(value) && classification.kind === "plain";
+  const canCollapseVisibleText = !expandPlainText && shouldCollapse && classification.kind === "plain";
   const actions = canCollapseVisibleText ? (
     <ChevronToggleButton
       expanded={expanded}
@@ -1028,17 +1503,53 @@ function PrettyStringValue({
               event.stopPropagation();
             }}
             style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
               border: "1px solid var(--color-border)",
               borderRadius: "6px",
               background: "var(--color-surface-warm)",
               color: "var(--color-text)",
-              padding: "4px 8px",
+              height: "28px",
+              boxSizing: "border-box",
+              padding: "0 8px",
               fontSize: "12px",
+              lineHeight: 1,
               cursor: "pointer",
             }}
           >
             {`Open ${detectedDoc.type.toUpperCase()}`}
           </button>
+          {onReplaceDocument && detectedDoc.type !== "unknown" && (
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                onReplaceDocument(path, detectedDoc);
+              }}
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+              }}
+              title="Replace file"
+              aria-label="Replace file"
+              style={{
+                boxSizing: "border-box",
+                border: "1px solid var(--color-border)",
+                borderRadius: "6px",
+                background: "var(--color-surface-warm)",
+                color: "var(--color-text)",
+                width: "28px",
+                height: "28px",
+                padding: 0,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                lineHeight: 1,
+                cursor: "pointer",
+              }}
+            >
+              <Upload size={13} />
+            </button>
+          )}
         </div>
       </PrettyCard>
     );
@@ -1072,32 +1583,54 @@ function PrettyStringValue({
 
   if (classification.kind === "markdown") {
     return (
-      <PrettyCard
-        label={label}
-        badge="markdown"
-        depth={depth}
-        actions={actions}
-        onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
-        editDisabled={editDisabled}
-        editTitle={editTitle}
-      >
-        <MarkdownContent markdown={value} />
+      <PrettyCard label={label} depth={depth} actions={actions}>
+        <FramedContentBlock
+          label="MARKDOWN"
+          onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
+          editDisabled={editDisabled}
+          editTitle={editTitle}
+          headerActions={
+            <InlineHeaderIconButton
+              title={showMarkdownRaw ? "Show rendered markdown" : "Show raw markdown"}
+              onClick={() => setShowMarkdownRaw((current) => !current)}
+              active={showMarkdownRaw}
+            >
+              <span style={{ fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace', fontSize: "11px" }}>{"{}"}</span>
+            </InlineHeaderIconButton>
+          }
+        >
+          {showMarkdownRaw ? (
+            <pre
+              style={{
+                margin: 0,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+                fontSize: "12.5px",
+                lineHeight: "1.55",
+                color: "#43884e",
+              }}
+            >
+              {value}
+            </pre>
+          ) : (
+            <MarkdownContent markdown={value} />
+          )}
+        </FramedContentBlock>
       </PrettyCard>
     );
   }
 
   if (classification.kind === "xml") {
     return (
-      <PrettyCard
-        label={label}
-        badge="xml"
-        depth={depth}
-        actions={actions}
-        onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
-        editDisabled={editDisabled}
-        editTitle={editTitle}
-      >
-        <CodeBlock code={value} language="xml" />
+      <PrettyCard label={label} depth={depth} actions={actions}>
+        <CodeBlock
+          code={value}
+          language="xml"
+          onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
+          editDisabled={editDisabled}
+          editTitle={editTitle}
+        />
       </PrettyCard>
     );
   }
@@ -1105,15 +1638,14 @@ function PrettyStringValue({
   if (classification.kind === "code") {
     const code = classification.fenced ? (unwrapFencedCode(value)?.code ?? value) : value;
     return (
-      <PrettyCard
-        label={label}
-        badge={classification.fenced ? `fenced · ${classification.language}` : `code · ${classification.language}`}
-        depth={depth}
-        onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
-        editDisabled={editDisabled}
-        editTitle={editTitle}
-      >
-        <CodeBlock code={code} language={classification.language} />
+      <PrettyCard label={label} depth={depth}>
+        <CodeBlock
+          code={code}
+          language={classification.language}
+          onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
+          editDisabled={editDisabled}
+          editTitle={editTitle}
+        />
       </PrettyCard>
     );
   }
@@ -1121,7 +1653,6 @@ function PrettyStringValue({
   return (
     <PrettyCard
       label={label}
-      badge="string"
       depth={depth}
       actions={actions}
       onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
@@ -1151,27 +1682,90 @@ function PrettyArrayValue({
   depth,
   path,
   onJumpToEdit,
+  onReplaceDocument,
   editDisabled,
   editTitle,
   onOpenDocument,
+  suppressHeader = false,
 }: {
   label: string | null;
   value: unknown[];
   depth: number;
   path: JsonPath;
   onJumpToEdit?: (path: JsonPath) => void;
+  onReplaceDocument?: (path: JsonPath, doc: DetectedDocument) => void;
   editDisabled?: boolean;
   editTitle?: string;
   onOpenDocument: (doc: DetectedDocument) => void;
+  suppressHeader?: boolean;
 }) {
   const [expanded, setExpanded] = useState(true);
+  const detectedMessages = detectMessageLikeArray(value);
   const columns = getUniformObjectArrayColumns(value);
+  const singleItem = value[0];
 
   let content: React.ReactNode;
   if (!expanded) {
     content = <div style={{ color: "var(--color-text-muted)", fontSize: "13px" }}>{`${value.length} items`}</div>;
   } else if (value.length === 0) {
     content = <div style={{ color: "var(--color-text-muted)", fontSize: "13px" }}>Empty array</div>;
+  } else if (detectedMessages) {
+    content = value.length === 1 ? (
+      <div style={{ display: "grid", gap: "8px" }}>
+        <MessageBubbleBody
+          value={detectedMessages[0].content}
+          depth={depth + 1}
+          path={[...path, "0", ...detectedMessages[0].contentPath]}
+          onJumpToEdit={onJumpToEdit}
+          onReplaceDocument={onReplaceDocument}
+          editDisabled={editDisabled}
+          editTitle={editTitle}
+          onOpenDocument={onOpenDocument}
+          suppressArrayHeader
+        />
+        <MessageMetadataStrip metadata={detectedMessages[0].metadata} />
+      </div>
+    ) : (
+      <div style={{ display: "grid", gap: "10px" }}>
+        {detectedMessages.map((message, index) => (
+          <ArrayItemBox
+            key={`message-${index}`}
+            headerAddon={<MessageRolePill roleStyle={message.roleStyle} />}
+          >
+            <div style={{ display: "grid", gap: "8px" }}>
+              <MessageBubbleBody
+                value={message.content}
+                depth={depth + 1}
+                path={[...path, String(index), ...message.contentPath]}
+                onJumpToEdit={onJumpToEdit}
+                onReplaceDocument={onReplaceDocument}
+                editDisabled={editDisabled}
+                editTitle={editTitle}
+                onOpenDocument={onOpenDocument}
+                suppressArrayHeader
+              />
+              <MessageMetadataStrip metadata={message.metadata} />
+            </div>
+          </ArrayItemBox>
+        ))}
+      </div>
+    );
+  } else if (value.length === 1) {
+    content = (
+      <PrettyValue
+        label={null}
+        value={singleItem}
+        depth={depth + 1}
+        path={[...path, "0"]}
+        siblingData={isRecord(singleItem) ? singleItem : undefined}
+        onJumpToEdit={onJumpToEdit}
+        onReplaceDocument={onReplaceDocument}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
+        onOpenDocument={onOpenDocument}
+        suppressArrayHeader={suppressHeader}
+      />
+    );
   } else if (columns) {
     content = (
       <div style={{ overflowX: "auto" }}>
@@ -1204,7 +1798,6 @@ function PrettyArrayValue({
           isInlineSimpleValue(item) ? (
             <InlineArrayItemRow
               key={`array-${index}`}
-              index={index}
               value={item}
               onEdit={onJumpToEdit ? () => onJumpToEdit([...path, String(index)]) : undefined}
               editDisabled={editDisabled}
@@ -1213,10 +1806,6 @@ function PrettyArrayValue({
           ) : (
             <ArrayItemBox
               key={`array-${index}`}
-              index={index}
-              onEdit={onJumpToEdit ? () => onJumpToEdit([...path, String(index)]) : undefined}
-              editDisabled={editDisabled}
-              editTitle={editTitle}
             >
               <PrettyValue
                 label={null}
@@ -1225,9 +1814,11 @@ function PrettyArrayValue({
                 path={[...path, String(index)]}
                 siblingData={isRecord(item) ? item : undefined}
                 onJumpToEdit={onJumpToEdit}
+                onReplaceDocument={onReplaceDocument}
                 editDisabled={editDisabled}
                 editTitle={editTitle}
                 onOpenDocument={onOpenDocument}
+                suppressArrayHeader={suppressHeader}
               />
             </ArrayItemBox>
           )
@@ -1236,14 +1827,16 @@ function PrettyArrayValue({
     );
   }
 
+  if (suppressHeader && label === null) {
+    return <>{content}</>;
+  }
+
   return (
     <PrettyCard
       label={label}
       badge={`list · ${value.length}`}
+      headerAddon={detectedMessages && value.length === 1 ? <MessageRolePill roleStyle={detectedMessages[0].roleStyle} /> : undefined}
       depth={depth}
-      onEdit={onJumpToEdit && path.length > 0 ? () => onJumpToEdit(path) : undefined}
-      editDisabled={editDisabled}
-      editTitle={editTitle}
       actions={<ChevronToggleButton expanded={expanded} onClick={() => setExpanded((current) => !current)} title={expanded ? "Collapse" : "Expand"} />}
     >
       {content}
@@ -1257,6 +1850,7 @@ function PrettyObjectValue({
   depth,
   path,
   onJumpToEdit,
+  onReplaceDocument,
   editDisabled,
   editTitle,
   onOpenDocument,
@@ -1266,15 +1860,65 @@ function PrettyObjectValue({
   depth: number;
   path: JsonPath;
   onJumpToEdit?: (path: JsonPath) => void;
+  onReplaceDocument?: (path: JsonPath, doc: DetectedDocument) => void;
   editDisabled?: boolean;
   editTitle?: string;
   onOpenDocument: (doc: DetectedDocument) => void;
 }) {
+  const detectedMessage = detectMessageLikeObject(value);
+  const flattenedGroups = detectFlattenedMessageGroups(value);
+  const groupByMessageKey = new Map(flattenedGroups.map((group) => [group.messageKey, group]));
+  const consumedKeys = new Set(flattenedGroups.flatMap((group) => group.consumedKeys));
+  if (detectedMessage) {
+    const contentBadge = Array.isArray(detectedMessage.content) ? `list · ${detectedMessage.content.length}` : undefined;
+    return (
+      <PrettyCard
+        label={label}
+        badge={contentBadge}
+        headerAddon={<MessageRolePill roleStyle={detectedMessage.roleStyle} />}
+        depth={depth}
+      >
+        <MessageBubbleBody
+          value={detectedMessage.content}
+          depth={depth + 1}
+          path={[...path, ...detectedMessage.contentPath]}
+          onJumpToEdit={onJumpToEdit}
+          onReplaceDocument={onReplaceDocument}
+          editDisabled={editDisabled}
+          editTitle={editTitle}
+          onOpenDocument={onOpenDocument}
+          suppressArrayHeader
+        />
+        <MessageMetadataStrip metadata={detectedMessage.metadata} />
+      </PrettyCard>
+    );
+  }
+
   const entries = Object.entries(value);
   const content = (
     <div style={{ display: "grid", gap: "10px" }}>
-      {entries.map(([childKey, childValue]) => (
-        isInlineSimpleValue(childValue, value) ? (
+      {entries.map(([childKey, childValue]) => {
+        const group = groupByMessageKey.get(childKey);
+        if (group) {
+          return (
+            <FlattenedMessageGroupCard
+              key={childKey}
+              group={group}
+              depth={depth + 1}
+              onJumpToEdit={onJumpToEdit}
+              onReplaceDocument={onReplaceDocument}
+              editDisabled={editDisabled}
+              editTitle={editTitle}
+              onOpenDocument={onOpenDocument}
+            />
+          );
+        }
+
+        if (consumedKeys.has(childKey)) {
+          return null;
+        }
+
+        return isInlineSimpleValue(childValue, value) ? (
           <InlineValueRow
             key={childKey}
             label={childKey}
@@ -1292,12 +1936,13 @@ function PrettyObjectValue({
             path={[...path, childKey]}
             siblingData={value}
             onJumpToEdit={onJumpToEdit}
+            onReplaceDocument={onReplaceDocument}
             editDisabled={editDisabled}
             editTitle={editTitle}
             onOpenDocument={onOpenDocument}
           />
-        )
-      ))}
+        );
+      })}
     </div>
   );
 
@@ -1310,9 +1955,6 @@ function PrettyObjectValue({
       label={label}
       badge={`object · ${entries.length}`}
       depth={depth}
-      onEdit={onJumpToEdit && path.length > 0 ? () => onJumpToEdit(path) : undefined}
-      editDisabled={editDisabled}
-      editTitle={editTitle}
     >
       {entries.length > 0 ? content : <div style={{ color: "var(--color-text-muted)", fontSize: "13px" }}>Empty object</div>}
     </PrettyCard>
@@ -1326,9 +1968,11 @@ function PrettyValue({
   path,
   siblingData,
   onJumpToEdit,
+  onReplaceDocument,
   editDisabled,
   editTitle,
   onOpenDocument,
+  suppressArrayHeader = false,
 }: {
   label: string | null;
   value: unknown;
@@ -1336,9 +1980,11 @@ function PrettyValue({
   path: JsonPath;
   siblingData?: Record<string, unknown>;
   onJumpToEdit?: (path: JsonPath) => void;
+  onReplaceDocument?: (path: JsonPath, doc: DetectedDocument) => void;
   editDisabled?: boolean;
   editTitle?: string;
   onOpenDocument: (doc: DetectedDocument) => void;
+  suppressArrayHeader?: boolean;
 }) {
   if (depth > MAX_PRETTY_DEPTH) {
     return (
@@ -1378,6 +2024,7 @@ function PrettyValue({
         path={path}
         siblingData={siblingData}
         onJumpToEdit={onJumpToEdit}
+        onReplaceDocument={onReplaceDocument}
         editDisabled={editDisabled}
         editTitle={editTitle}
         onOpenDocument={onOpenDocument}
@@ -1393,9 +2040,11 @@ function PrettyValue({
         depth={depth}
         path={path}
         onJumpToEdit={onJumpToEdit}
+        onReplaceDocument={onReplaceDocument}
         editDisabled={editDisabled}
         editTitle={editTitle}
         onOpenDocument={onOpenDocument}
+        suppressHeader={suppressArrayHeader}
       />
     );
   }
@@ -1408,6 +2057,7 @@ function PrettyValue({
         depth={depth}
         path={path}
         onJumpToEdit={onJumpToEdit}
+        onReplaceDocument={onReplaceDocument}
         editDisabled={editDisabled}
         editTitle={editTitle}
         onOpenDocument={onOpenDocument}
@@ -1430,12 +2080,14 @@ function PrettyValue({
 function PrettyContent({
   data,
   onJumpToEdit,
+  onReplaceDocument,
   editDisabled,
   editTitle,
   onOpenDocument,
 }: {
   data: Record<string, unknown>;
   onJumpToEdit?: (path: JsonPath) => void;
+  onReplaceDocument?: (path: JsonPath, doc: DetectedDocument) => void;
   editDisabled?: boolean;
   editTitle?: string;
   onOpenDocument: (doc: DetectedDocument) => void;
@@ -1449,6 +2101,7 @@ function PrettyContent({
         path={[]}
         siblingData={data}
         onJumpToEdit={onJumpToEdit}
+        onReplaceDocument={onReplaceDocument}
         editDisabled={editDisabled}
         editTitle={editTitle}
         onOpenDocument={onOpenDocument}
@@ -1483,39 +2136,92 @@ function IOPanel({
   onCancelEdit: () => void;
 }) {
   const jsonStr = useMemo(() => stringifyJsonWithOffset(data, null).text, [data]);
-  const attachments = useMemo(() => extractAttachments(data), [data]);
   const [editValue, setEditValue] = useState("");
-  const [suggesting, setSuggesting] = useState(false);
+  const [prettyDraftData, setPrettyDraftData] = useState<Record<string, unknown> | null>(null);
+  const [editPresentation, setEditPresentation] = useState<"raw" | "pretty">("raw");
   const [ghost, setGhost] = useState("");
-  const [pendingJumpPath, setPendingJumpPath] = useState<JsonPath | null>(null);
+  const [pendingJumpTarget, setPendingJumpTarget] = useState<JumpTarget | null>(null);
+  const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const ghostTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const selectionRestoreTimerRef = useRef<number | null>(null);
 
   const myKey: EditKey = `${nodeId}:${label as "Input" | "Output"}`;
   const isActiveEdit = editLock === myKey;
   const isLocked = (editLock !== null && !isActiveEdit) || (hasAnyEdit && !isEdited);
   const editTitle = isLocked ? "Finish the current edit before editing another field" : `Edit ${label.toLowerCase()} field`;
+  const displayData = isActiveEdit && editPresentation === "pretty" && prettyDraftData ? prettyDraftData : data;
+  const attachments = useMemo(() => extractAttachments(displayData), [displayData]);
+  const currentEditJson = useMemo(() => {
+    if (!isActiveEdit) {
+      return "";
+    }
+
+    if (editPresentation === "pretty") {
+      return stringifyJsonWithOffset(prettyDraftData ?? data, null).text;
+    }
+
+    return editValue;
+  }, [data, editPresentation, editValue, isActiveEdit, prettyDraftData]);
   const hasMeaningfulDiff = useMemo(() => {
     if (!isActiveEdit) {
       return false;
     }
 
-    return normalizeJsonText(editValue) !== normalizeJsonText(jsonStr);
-  }, [editValue, isActiveEdit, jsonStr]);
+    return normalizeJsonText(currentEditJson) !== normalizeJsonText(jsonStr);
+  }, [currentEditJson, isActiveEdit, jsonStr]);
   const handleOpenDocument = useCallback((doc: DetectedDocument) => {
-    const binary = atob(doc.data);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
+    if (isPreviewableDocument(doc)) {
+      setPreviewAttachment({
+        id: `preview-${doc.data.slice(0, 24)}`,
+        name: doc.name || "document",
+        mimeType: doc.mimeType,
+        data: doc.data,
+      });
+      return;
     }
-    const blob = new Blob([bytes], { type: doc.mimeType });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `document.${getFileExtension(doc.type)}`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+
+    void saveDocument(doc);
   }, []);
+
+  const handleReplaceDocument = useCallback(async (path: JsonPath, doc: DetectedDocument) => {
+    if (!nodeId || isLocked || doc.type === "unknown") {
+      return;
+    }
+
+    const replacement = await pickReplacementDocumentFromBrowser(doc.type);
+    if (!replacement) {
+      return;
+    }
+
+    let sourceData: unknown = data;
+    if (isActiveEdit && editPresentation === "pretty" && prettyDraftData) {
+      sourceData = prettyDraftData;
+    } else if (isActiveEdit) {
+      try {
+        sourceData = JSON.parse(editValue);
+      } catch {
+        return;
+      }
+    }
+
+    try {
+      const updatedData = applyDocumentReplacement(sourceData, path, replacement) as Record<string, unknown>;
+      const nextJson = stringifyJsonWithOffset(updatedData, null).text;
+      setPendingJumpTarget(null);
+      setGhost("");
+      setPrettyDraftData(updatedData);
+      setEditPresentation("pretty");
+
+      if (!isActiveEdit) {
+        onStartEdit(nodeId, label as "Input" | "Output");
+      }
+      setEditValue(nextJson);
+    } catch (error) {
+      console.warn("[RunTraceFlow] Failed to replace document", error);
+    }
+  }, [data, editPresentation, editValue, isActiveEdit, isLocked, label, nodeId, onStartEdit, prettyDraftData]);
 
   const generateGhost = useCallback((value: string) => {
     if (ghostTimer.current) clearTimeout(ghostTimer.current);
@@ -1554,13 +2260,54 @@ function IOPanel({
     }, 400);
   }, []);
 
+  const clearSelectionRestoreTimer = useCallback(() => {
+    if (selectionRestoreTimerRef.current !== null) {
+      window.clearTimeout(selectionRestoreTimerRef.current);
+      selectionRestoreTimerRef.current = null;
+    }
+  }, []);
+
+  const resizeEditTextarea = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    textarea.style.height = "auto";
+    const maxHeight = Math.max(260, Math.floor(window.innerHeight * 0.72));
+    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+  }, []);
+
   const handleEditChange = useCallback((event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    clearSelectionRestoreTimer();
     const value = event.target.value;
     setEditValue(value);
     generateGhost(value);
-  }, [generateGhost]);
+  }, [clearSelectionRestoreTimer, generateGhost]);
+
+  const requestCloseEdit = useCallback(() => {
+    clearSelectionRestoreTimer();
+    setGhost("");
+    if (hasMeaningfulDiff) {
+      setShowCloseConfirm(true);
+      return;
+    }
+
+    setShowCloseConfirm(false);
+    setEditValue("");
+    setPrettyDraftData(null);
+    setEditPresentation("raw");
+    setPendingJumpTarget(null);
+    onCancelEdit();
+  }, [clearSelectionRestoreTimer, hasMeaningfulDiff, onCancelEdit]);
 
   const handleEditKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    clearSelectionRestoreTimer();
+    if (event.key === "Escape") {
+      event.preventDefault();
+      requestCloseEdit();
+      return;
+    }
     if (event.key === "Tab" && ghost) {
       event.preventDefault();
       const nextValue = editValue + ghost;
@@ -1568,86 +2315,167 @@ function IOPanel({
       setGhost("");
       generateGhost(nextValue);
     }
-    if (event.key === "Escape" && ghost) {
-      setGhost("");
-    }
-  }, [editValue, generateGhost, ghost]);
+  }, [clearSelectionRestoreTimer, editValue, generateGhost, ghost, requestCloseEdit]);
 
   const startEdit = useCallback(() => {
     if (!nodeId || isLocked) return;
     setEditValue(jsonStr);
+    setPrettyDraftData(null);
+    setEditPresentation("raw");
+    setPendingJumpTarget(null);
+    setShowCloseConfirm(false);
     setGhost("");
     onStartEdit(nodeId, label as "Input" | "Output");
   }, [isLocked, jsonStr, label, nodeId, onStartEdit]);
 
   const jumpToEdit = useCallback((path: JsonPath) => {
     if (!nodeId || isLocked) return;
-    setPendingJumpPath(path);
+    const sourceData = isActiveEdit && editPresentation === "pretty" && prettyDraftData ? prettyDraftData : data;
+    setPendingJumpTarget({ path, cursorOffset: getSelectionLeafOffset(), selectedText: getSelectionLeafText() });
+    setShowCloseConfirm(false);
     setGhost("");
+    setEditValue(stringifyJsonWithOffset(sourceData, path).text);
+    setEditPresentation("raw");
     if (!isActiveEdit) {
-      setEditValue(jsonStr);
       onStartEdit(nodeId, label as "Input" | "Output");
     }
-  }, [isActiveEdit, isLocked, jsonStr, label, nodeId, onStartEdit]);
+  }, [data, editPresentation, isActiveEdit, isLocked, label, nodeId, onStartEdit, prettyDraftData]);
 
   const cancelEdit = useCallback(() => {
     setEditValue("");
+    setPrettyDraftData(null);
+    setEditPresentation("raw");
+    setPendingJumpTarget(null);
+    setShowCloseConfirm(false);
+    setGhost("");
     onCancelEdit();
   }, [onCancelEdit]);
 
   const saveEdit = useCallback(() => {
     if (nodeId && hasMeaningfulDiff) {
-      onSaveEdit(nodeId, label as "Input" | "Output", editValue);
+      onSaveEdit(nodeId, label as "Input" | "Output", currentEditJson);
+      setPrettyDraftData(null);
+      setEditPresentation("raw");
+      setShowCloseConfirm(false);
     }
-  }, [editValue, hasMeaningfulDiff, label, nodeId, onSaveEdit]);
+  }, [currentEditJson, hasMeaningfulDiff, label, nodeId, onSaveEdit]);
 
   const saveAndRerun = useCallback(() => {
     if (nodeId && hasMeaningfulDiff) {
-      onSaveAndRerun(nodeId, label as "Input" | "Output", editValue);
+      onSaveAndRerun(nodeId, label as "Input" | "Output", currentEditJson);
+      setPrettyDraftData(null);
+      setEditPresentation("raw");
+      setShowCloseConfirm(false);
     }
-  }, [editValue, hasMeaningfulDiff, label, nodeId, onSaveAndRerun]);
+  }, [currentEditJson, hasMeaningfulDiff, label, nodeId, onSaveAndRerun]);
 
-  const handleSuggest = useCallback(() => {
-    setSuggesting(true);
-    setTimeout(() => {
-      try {
-        const parsed = JSON.parse(editValue || jsonStr);
-        setEditValue(JSON.stringify(parsed, null, 2));
-      } catch {
-        // Keep current value.
-      }
-      setSuggesting(false);
-    }, 1200);
-  }, [editValue, jsonStr]);
+  const switchToRawEdit = useCallback(() => {
+    setEditValue(currentEditJson);
+    setEditPresentation("raw");
+    setPendingJumpTarget(null);
+    setShowCloseConfirm(false);
+    setGhost("");
+  }, [currentEditJson]);
 
-  const focusEditorAtPath = useCallback((path: JsonPath) => {
+  const focusEditorAtPath = useCallback((target: JumpTarget) => {
     const textarea = textareaRef.current;
     if (!textarea) {
       return;
     }
 
-    const { offset } = stringifyJsonWithOffset(data, path);
-    const selectionStart = Math.max(0, offset ?? 0);
-    const lineIndex = jsonStr.slice(0, selectionStart).split("\n").length - 1;
-    const lineHeight = Number.parseFloat(window.getComputedStyle(textarea).lineHeight) || 20;
+    clearSelectionRestoreTimer();
+    resizeEditTextarea();
 
-    textarea.focus();
-    textarea.setSelectionRange(selectionStart, selectionStart);
-    textarea.scrollTop = Math.max(0, lineIndex * lineHeight - textarea.clientHeight / 3);
-  }, [data, jsonStr]);
+    requestAnimationFrame(() => {
+      const activeTextarea = textareaRef.current;
+      if (!activeTextarea) {
+        return;
+      }
+
+      const sourceData = isActiveEdit && editPresentation === "pretty" && prettyDraftData ? prettyDraftData : data;
+      const { offset } = stringifyJsonWithOffset(sourceData, target.path, target.cursorOffset);
+      const { start, end, caret } = getTransientSelectionRange(activeTextarea.value, offset, target.selectedText);
+
+      activeTextarea.focus();
+      activeTextarea.setSelectionRange(start, end);
+      scrollTextareaOffsetIntoView(activeTextarea, caret);
+
+      if (start !== end) {
+        const initialSelectionStart = start;
+        const initialSelectionEnd = end;
+        selectionRestoreTimerRef.current = window.setTimeout(() => {
+          if (document.activeElement !== activeTextarea) {
+            selectionRestoreTimerRef.current = null;
+            return;
+          }
+
+          if (activeTextarea.selectionStart !== initialSelectionStart || activeTextarea.selectionEnd !== initialSelectionEnd) {
+            selectionRestoreTimerRef.current = null;
+            return;
+          }
+
+          activeTextarea.setSelectionRange(caret, caret);
+          selectionRestoreTimerRef.current = null;
+        }, 900);
+      }
+    });
+  }, [clearSelectionRestoreTimer, data, editPresentation, isActiveEdit, prettyDraftData, resizeEditTextarea]);
 
   useEffect(() => {
-    if (!isActiveEdit || !pendingJumpPath) {
+    if (!isActiveEdit || !pendingJumpTarget) {
       return;
     }
 
     const frame = requestAnimationFrame(() => {
-      focusEditorAtPath(pendingJumpPath);
-      setPendingJumpPath(null);
+      focusEditorAtPath(pendingJumpTarget);
+      setPendingJumpTarget(null);
     });
 
     return () => cancelAnimationFrame(frame);
-  }, [focusEditorAtPath, isActiveEdit, pendingJumpPath]);
+  }, [focusEditorAtPath, isActiveEdit, pendingJumpTarget]);
+
+  useEffect(() => {
+    return () => {
+      clearSelectionRestoreTimer();
+    };
+  }, [clearSelectionRestoreTimer]);
+
+  useEffect(() => {
+    if (!isActiveEdit && !showCloseConfirm) {
+      return;
+    }
+
+    const handleWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      event.preventDefault();
+      if (showCloseConfirm) {
+        setShowCloseConfirm(false);
+        return;
+      }
+
+      if (isActiveEdit) {
+        requestCloseEdit();
+      }
+    };
+
+    window.addEventListener("keydown", handleWindowKeyDown);
+    return () => window.removeEventListener("keydown", handleWindowKeyDown);
+  }, [isActiveEdit, requestCloseEdit, showCloseConfirm]);
+
+  useEffect(() => {
+    if (!isActiveEdit || editPresentation !== "raw") {
+      return;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      resizeEditTextarea();
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [editPresentation, editValue, isActiveEdit, resizeEditTextarea]);
 
   return (
     <div className={`io-panel${isEdited ? " io-panel-edited" : ""}`} onClick={(event) => event.stopPropagation()}>
@@ -1668,24 +2496,15 @@ function IOPanel({
               </button>
             </div>
           )}
-          {isActiveEdit && (
-            <button
-              className="io-suggest-btn"
-              onClick={handleSuggest}
-              disabled={suggesting}
-              title="Get AI suggestion"
-            >
-              {suggesting ? (
-                <><Loader2 size={11} className="fa-spinner" /> Suggesting…</>
-              ) : (
-                <><Sparkles size={11} /> Suggest Edit</>
-              )}
+          {isActiveEdit && editPresentation === "pretty" && (
+            <button className="io-edit-btn" onClick={switchToRawEdit}>
+              <Pencil size={11} /> Edit JSON
             </button>
           )}
         </div>
       </div>
       <div className="io-panel-content">
-        {isActiveEdit ? (
+        {isActiveEdit && editPresentation === "raw" ? (
           <div className="io-edit-area">
             <div className="io-edit-wrapper">
               <div className="io-edit-ghost" aria-hidden>
@@ -1698,6 +2517,7 @@ function IOPanel({
                 value={editValue}
                 onChange={handleEditChange}
                 onKeyDown={handleEditKeyDown}
+                onMouseDown={clearSelectionRestoreTimer}
                 spellCheck={false}
                 style={{ background: "transparent", position: "relative", zIndex: 1 }}
               />
@@ -1706,25 +2526,57 @@ function IOPanel({
             <div className="io-edit-toolbar">
               <button className="io-edit-save-rerun" onClick={saveAndRerun} disabled={!hasMeaningfulDiff}>Save and Rerun</button>
               <button className="io-edit-save" onClick={saveEdit} disabled={!hasMeaningfulDiff}>Save</button>
-              <button className="io-edit-cancel" onClick={cancelEdit}>Cancel</button>
+              <button className="io-edit-cancel" onClick={requestCloseEdit}>Cancel</button>
             </div>
           </div>
-        ) : viewMode === "json" ? (
+        ) : !isActiveEdit && viewMode === "json" ? (
           <CodeBlock code={jsonStr} language="json" />
         ) : (
-          <PrettyContent
-            data={data}
-            onJumpToEdit={jumpToEdit}
-            editDisabled={isLocked}
-            editTitle={editTitle}
-            onOpenDocument={handleOpenDocument}
-          />
+          <>
+            <PrettyContent
+              data={displayData}
+              onJumpToEdit={jumpToEdit}
+              onReplaceDocument={handleReplaceDocument}
+              editDisabled={isLocked}
+              editTitle={editTitle}
+              onOpenDocument={handleOpenDocument}
+            />
+            {isActiveEdit && (
+              <div className="io-edit-toolbar">
+                <button className="io-edit-save-rerun" onClick={saveAndRerun} disabled={!hasMeaningfulDiff}>Save and Rerun</button>
+                <button className="io-edit-save" onClick={saveEdit} disabled={!hasMeaningfulDiff}>Save</button>
+                <button className="io-edit-cancel" onClick={requestCloseEdit}>Cancel</button>
+              </div>
+            )}
+          </>
         )}
         {attachments.length > 0 && (
           <>
             <div className="io-attachments-header">Files in this message</div>
             <AttachmentStrip attachments={attachments} />
           </>
+        )}
+        {previewAttachment && (
+          <DocumentPreviewModal
+            attachment={previewAttachment}
+            onClose={() => setPreviewAttachment(null)}
+          />
+        )}
+        {showCloseConfirm && (
+          <div className="modal-overlay" onClick={() => setShowCloseConfirm(false)}>
+            <div className="modal io-exit-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="modal-header">
+                <h2 className="modal-title">Unsaved changes</h2>
+                <button className="modal-close" onClick={() => setShowCloseConfirm(false)}>✕</button>
+              </div>
+              <p className="modal-subtitle">Choose how to leave this edit.</p>
+              <div className="modal-actions">
+                <button className="io-edit-save-rerun" onClick={saveAndRerun}>Save and Rerun</button>
+                <button className="io-edit-save" onClick={saveEdit}>Save</button>
+                <button className="io-edit-cancel" onClick={cancelEdit}>Close</button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

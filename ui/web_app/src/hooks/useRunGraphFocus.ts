@@ -23,17 +23,14 @@ export function useRunGraphFocus({
     focusedRef.current = focusedNodeId;
   }, [focusedNodeId]);
 
-  const scrollToNode = useCallback((nodeId: string, behavior: ScrollBehavior = "smooth") => {
+  const scrollToNode = useCallback((nodeId: string) => {
     const element = nodeRefs.current.get(nodeId);
     if (!element) return;
     const scrollParent = element.closest(".run-detail-io-scroll") as HTMLElement | null;
     if (!scrollParent) return;
 
     const marginTop = parseInt(getComputedStyle(element).marginTop, 10) || 0;
-    scrollParent.scrollTo({
-      top: element.offsetTop - scrollParent.offsetTop - marginTop,
-      behavior,
-    });
+    scrollParent.scrollTop = element.offsetTop - scrollParent.offsetTop - marginTop;
   }, []);
 
   const focusNodeByIndex = useCallback((index: number) => {
@@ -47,7 +44,7 @@ export function useRunGraphFocus({
 
     api.setCenter(position.x + NODE_W / 2, position.y + NODE_H / 2, { zoom: 1, duration: 300 });
     setFocusedNodeId(nodeId);
-    scrollToNode(nodeId, "smooth");
+    scrollToNode(nodeId);
   }, [graphLayout, scrollToNode, sortedNodeIds]);
 
   const focusNodeById = useCallback((nodeId: string) => {

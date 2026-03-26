@@ -4,8 +4,10 @@ import { GraphData, ProcessInfo } from '../types';
 import { MessageSender } from '../types/MessageSender';
 import { WorkflowRunDetailsPanel } from './experiment/WorkflowRunDetailsPanel';
 import { NodeEditorView } from './editor/NodeEditorView';
-import { DetectedDocument, getFileExtension, getDocumentKey } from '../utils/documentDetection';
+import { DetectedDocument, getFileExtension, getDocumentKey, isPreviewableDocument } from '../utils/documentDetection';
 import { parse, stringify } from 'lossless-json';
+import { saveDocument } from '../utils/documentDownload';
+import { DocumentPreviewModal } from './common/DocumentPreviewModal';
 
 interface GraphTabAppProps {
   experiment: ProcessInfo | null;
@@ -39,6 +41,7 @@ export const GraphTabApp: React.FC<GraphTabAppProps> = ({
   const [outputData, setOutputData] = useState<any>(null);
   const [originalInputData, setOriginalInputData] = useState<any>(null);
   const [originalOutputData, setOriginalOutputData] = useState<any>(null);
+  const [previewDoc, setPreviewDoc] = useState<DetectedDocument | null>(null);
 
   // Check if there are unsaved changes
   const hasUnsavedChanges =
@@ -108,6 +111,11 @@ export const GraphTabApp: React.FC<GraphTabAppProps> = ({
 
   // Handle opening base64-encoded documents (PDF, images, etc.)
   const handleOpenDocument = useCallback((doc: DetectedDocument) => {
+    if (isPreviewableDocument(doc)) {
+      setPreviewDoc(doc);
+      return;
+    }
+
     // Check if we're in VS Code environment
     if ((window as any).vscode) {
       (window as any).vscode.postMessage({
@@ -117,24 +125,29 @@ export const GraphTabApp: React.FC<GraphTabAppProps> = ({
           fileType: getFileExtension(doc.type),
           mimeType: doc.mimeType,
           documentKey: getDocumentKey(doc.data),
+          fileName: doc.name,
         },
       });
     } else {
-      // Fallback for web app: trigger download
-      const binary = atob(doc.data);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      const blob = new Blob([bytes], { type: doc.mimeType });
-      const url = URL.createObjectURL(blob);
-
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `document.${getFileExtension(doc.type)}`;
-      a.click();
-      URL.revokeObjectURL(url);
+      void saveDocument(doc);
     }
+  }, []);
+
+  const handleDownloadDocument = useCallback((doc: DetectedDocument) => {
+    if ((window as any).vscode) {
+      (window as any).vscode.postMessage({
+        type: 'saveDocument',
+        payload: {
+          data: doc.data,
+          fileType: getFileExtension(doc.type),
+          mimeType: doc.mimeType,
+          fileName: doc.name,
+        },
+      });
+      return;
+    }
+
+    void saveDocument(doc);
   }, []);
 
   if (!experiment || !sessionId) {
@@ -282,6 +295,14 @@ export const GraphTabApp: React.FC<GraphTabAppProps> = ({
             />
           </div>
         </div>
+      )}
+      {previewDoc && (
+        <DocumentPreviewModal
+          doc={previewDoc}
+          isDarkTheme={isDarkTheme}
+          onClose={() => setPreviewDoc(null)}
+          onDownloadDocument={handleDownloadDocument}
+        />
       )}
     </div>
   );
