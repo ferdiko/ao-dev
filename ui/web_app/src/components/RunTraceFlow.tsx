@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
-import Markdown from "react-markdown";
+import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AttachmentStrip } from "./AttachmentPreview";
 import { extractAttachments } from "../attachmentUtils";
@@ -99,6 +99,7 @@ type StringClassification =
   | { kind: "plain" };
 
 type JsonPath = string[];
+type MarkdownCodeProps = Parameters<NonNullable<Components["code"]>>[0];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -153,7 +154,7 @@ function inferCodeLanguage(value: string): string {
     return "go";
   }
 
-  if (/^\s*#\!\/bin\/(ba)?sh/m.test(trimmed) || /(^|\n)\s*(echo|export|cd|grep|uv|python3?)\b/.test(trimmed)) {
+  if (/^\s*#!\/bin\/(ba)?sh/m.test(trimmed) || /(^|\n)\s*(echo|export|cd|grep|uv|python3?)\b/.test(trimmed)) {
     return "bash";
   }
 
@@ -949,7 +950,7 @@ function MarkdownContent({ markdown }: { markdown: string }) {
     <Markdown
       remarkPlugins={[remarkGfm]}
       components={{
-        code(props: any) {
+        code(props: MarkdownCodeProps) {
           const text = String(props.children ?? "").replace(/\n$/, "");
           const languageMatch = /language-([\w+-]+)/.exec(props.className || "");
           const isBlock = Boolean(languageMatch) || text.includes("\n");
