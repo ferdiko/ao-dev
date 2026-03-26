@@ -72,7 +72,7 @@ def write_prompt_edit(trace: Trace, prompt_id: str) -> str:
             failed.append(str(r.index))
 
     if failed:
-        return f"\n\nFailed to write turns: {', '.join(failed)}."
+        return f"\n\nFailed to write steps: {', '.join(failed)}."
     return RERUN_MSG
 
 
@@ -97,7 +97,7 @@ def write_input_sections_edit(trace: Trace, turn_index: int) -> str:
 
     from collections import defaultdict
 
-    ps = trace.prompt_sections_cache[f"turn:{turn_index}"]
+    ps = trace.prompt_sections_cache[f"step:{turn_index}"]
     original_msgs = trace.diffed[turn_index].new_messages
 
     # Group message sections (msg_index >= 0) by their source message
@@ -115,7 +115,7 @@ def write_input_sections_edit(trace: Trace, turn_index: int) -> str:
 
     record = trace.records[turn_index]
     if not record.node_id:
-        return "\n\nError: turn has no DB node reference."
+        return "\n\nError: step has no DB node reference."
 
     to_show = _read_to_show(trace.session_id, record.node_id)
     if to_show is None:

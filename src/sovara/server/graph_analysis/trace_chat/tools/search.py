@@ -27,9 +27,11 @@ def search(trace: Trace, **params) -> str:
     results = []
 
     for rec in trace.records:
+        step_num = rec.index + 1  # 1-based for display
+
         # Search system prompt
         if rec.system_prompt and query_lower in rec.system_prompt.lower():
-            results.append(f"Turn {rec.index} [system_prompt]: {_snippet(rec.system_prompt, query_lower)}")
+            results.append(f"Step {step_num} [system_prompt]: {_snippet(rec.system_prompt, query_lower)}")
 
         # Search input messages
         for j, msg in enumerate(rec.input if isinstance(rec.input, list) else [rec.input]):
@@ -40,12 +42,12 @@ def search(trace: Trace, **params) -> str:
                 text = str(msg)
                 role = "?"
             if query_lower in text.lower():
-                results.append(f"Turn {rec.index} [input/{role} msg {j}]: {_snippet(text, query_lower)}")
+                results.append(f"Step {step_num} [input/{role} msg {j}]: {_snippet(text, query_lower)}")
 
         # Search output
         out_text = rec.output if isinstance(rec.output, str) else json.dumps(rec.output)
         if query_lower in out_text.lower():
-            results.append(f"Turn {rec.index} [output]: {_snippet(out_text, query_lower)}")
+            results.append(f"Step {step_num} [output]: {_snippet(out_text, query_lower)}")
 
         if len(results) >= MAX_RESULTS:
             break

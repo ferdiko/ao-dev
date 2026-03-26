@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Sparkles, Send, PanelRight, Loader2, RotateCcw } from "lucide-react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { chatWithTrace, restartRun } from "../api";
 
 interface ChatMessage {
@@ -60,16 +62,21 @@ export function TraceChat({ sessionId, onCollapse }: { sessionId: string; onColl
       </div>
       <div className="trace-chat-body">
         <div className="trace-chat-messages" ref={scrollRef}>
-          {messages.map((m) => (
-            <div key={m.id} className={`trace-chat-msg trace-chat-msg-${m.role}`}>
-              <div className="trace-chat-msg-content">{m.content}</div>
-              {m.editsApplied && (
-                <button className="trace-chat-rerun-btn" onClick={() => void handleRerun(m.id)}>
-                  <RotateCcw size={12} /> Re-run
-                </button>
-              )}
-            </div>
-          ))}
+          {messages.map((m, i) => {
+            const isLastAssistant = m.role === "assistant" && !messages.slice(i + 1).some((n) => n.role === "assistant");
+            return (
+              <div key={m.id} className={`trace-chat-msg trace-chat-msg-${m.role}`}>
+                <div className="trace-chat-msg-content">
+                  {m.role === "assistant" ? <Markdown remarkPlugins={[remarkGfm]}>{m.content}</Markdown> : m.content}
+                  {m.editsApplied && isLastAssistant && (
+                    <button className="trace-chat-rerun-btn" onClick={() => void handleRerun(m.id)}>
+                      <RotateCcw size={12} /> Re-run with changes
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
           {isLoading && (
             <div className="trace-chat-msg trace-chat-msg-assistant">
               <div className="trace-chat-msg-content trace-chat-thinking">

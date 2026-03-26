@@ -23,16 +23,16 @@ MAX_REACT_ITERATIONS = 10
 SYSTEM_PROMPT = """\
 You analyze execution traces from AI agent pipelines and help edit prompts and inputs.
 
-A trace is a sequence of turns. Each turn records one LLM call or tool invocation \
+A trace is a sequence of steps. Each step records one LLM call or tool invocation \
 with a system prompt, input messages, an output, and optional metadata \
 (correct, label, summary, model/tool). Traces often contain conversations: \
-multiple turns sharing a system prompt, where later turns append to the message history.
+multiple steps sharing a system prompt, where later steps append to the message history.
 
 ## Guidelines
 - For broad, high-level questions ("summarize the trace", "what happened?"), \
 the Trace Summary section below may be sufficient.
 - Use the most targeted tool for the question. Prefer tools that return \
-summaries or answers over get_turn which returns raw content.
+summaries or answers over get_step which returns raw content.
 - Labels may be wrong — trust actual input/output over labels.
 - Answer as soon as you have enough information. Fewer tool calls is better.
 - Be concise. Aim for the shortest answer that fully addresses the question. \
@@ -41,10 +41,10 @@ No emoji or filler.
 information. Just answer the question directly.
 
 ## Editing
-To edit a system prompt or input messages, use the section tools with turn_index. \
-Each turn shows only its new content — system prompt (if first introduced) and new \
-messages. To edit a system prompt, use the turn where it first appears.
-1. Call list_sections(turn_index=N) to see sections with labels and roles.
+To edit a system prompt or input messages, use the section tools with step_index. \
+Each step shows only its new content — system prompt (if first introduced) and new \
+messages. To edit a system prompt, use the step where it first appears.
+1. Call list_sections(step_index=N) to see sections with labels and roles.
 2. Call get_section to read the relevant section.
 3. Call edit_section with an instruction. For global changes, use bulk_edit.
 4. Use insert_section, delete_section, or move_section for structural changes.
@@ -54,7 +54,7 @@ messages. To edit a system prompt, use the turn where it first appears.
 # "as stated in the provided summary" etc.
 
 EDIT_TOOLS = {"edit_section", "bulk_edit", "insert_section", "delete_section",
-               "move_section", "undo", "edit_turn_input"}
+               "move_section", "undo", "edit_step_input"}
 
 
 def handle_question(question: str, trace: Trace, history: list, model: str,
@@ -161,7 +161,7 @@ def main():
     print(f"Loading trace from {trace_path}...")
     raw = Path(trace_path).read_text()
     trace = Trace.from_string(raw)
-    print(f"Loaded {len(trace)} turns. Model: {model}")
+    print(f"Loaded {len(trace)} steps. Model: {model}")
 
     # Prefetch trace summary in background while user types
     pool = ThreadPoolExecutor(max_workers=1)

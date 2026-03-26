@@ -16,7 +16,7 @@ COMPACTED_MARKER = "[Compacted]"
 
 COMPACT_SYSTEM = (
     "Summarize the following tool result in 1-2 sentences. "
-    "Preserve specific turn numbers, verdicts, error messages, and key findings. "
+    "Preserve specific step numbers, verdicts, error messages, and key findings. "
     "Be concise."
 )
 

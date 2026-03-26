@@ -1,19 +1,19 @@
-"""verify tool — checks whether turns have correct output."""
+"""verify tool — checks whether steps have correct output."""
 
 from concurrent.futures import ThreadPoolExecutor
 
 from ..utils.llm_backend import infer
 from ..utils.trace import Trace, extract_tag, format_messages, stringify_field
 
-VERIFY_TURN_SYSTEM = """\
-You verify whether a single turn's output is correct given its instructions and input.
+VERIFY_STEP_SYSTEM = """\
+You verify whether a single step's output is correct given its instructions and input.
 
 Consider:
-- What this turn is supposed to do (based on its system prompt)
+- What this step is supposed to do (based on its system prompt)
 - Whether the output faithfully follows the instructions, regardless of whether \
 the prompt itself is well-designed
 - If the input appears malformed or from a failed upstream step, note this — the \
-turn may have produced the best possible output given bad input
+step may have produced the best possible output given bad input
 
 Respond with exactly this format:
 <summary>2-3 sentence assessment</summary>
@@ -34,7 +34,7 @@ def _parse_verdict(raw: str) -> tuple:
 
 
 def _verify_one(trace: Trace, index: int, record, model: str):
-    """Verify a single turn via LLM. Returns (index, verdict, justification)."""
+    """Verify a single step via LLM. Returns (index, verdict, justification)."""
     if index in trace.verdict_cache:
         return (index, *trace.verdict_cache[index])
 
@@ -43,7 +43,7 @@ def _verify_one(trace: Trace, index: int, record, model: str):
     user_msg = f"{content}\n\n## Output\n{output}"
 
     response = infer(
-        [{"role": "system", "content": VERIFY_TURN_SYSTEM},
+        [{"role": "system", "content": VERIFY_STEP_SYSTEM},
          {"role": "user", "content": user_msg}],
         model=model,
         tier="cheap",
@@ -68,28 +68,29 @@ def _resolve_cached(trace: Trace, record, idx: int):
 
 
 def verify(trace: Trace, **params) -> str:
-    turn_id = params.get("turn_id")
+    step_id = params.get("step_id")
     model = params.get("model", "anthropic/claude-sonnet-4-6")
 
-    # Single-turn mode
-    if turn_id is not None:
+    # Single-step mode
+    if step_id is not None:
         try:
-            turn_id = int(turn_id)
+            step_id = int(step_id)
         except (TypeError, ValueError):
-            return f"Error: 'turn_id' must be an integer, got '{turn_id}'."
-        if turn_id < 0 or turn_id >= len(trace):
-            return f"Error: turn_id {turn_id} out of range (0–{len(trace) - 1})."
+            return f"Error: 'step_id' must be an integer, got '{step_id}'."
+        if step_id < 1 or step_id > len(trace):
+            return f"Error: step_id {step_id} out of range (1–{len(trace)})."
 
-        record = trace.get(turn_id)
-        cached = _resolve_cached(trace, record, turn_id)
+        index = step_id - 1  # Convert to 0-based internal index
+        record = trace.get(index)
+        cached = _resolve_cached(trace, record, index)
         if cached:
             verdict, justification = cached
         else:
-            _, verdict, justification = _verify_one(trace, turn_id, record, model)
+            _, verdict, justification = _verify_one(trace, index, record, model)
 
-        return f"Turn {turn_id}: {verdict}\n  {justification}"
+        return f"Step {step_id}: {verdict}\n  {justification}"
 
-    # All-turns mode
+    # All-steps mode
     results = []
     to_verify = []
 
@@ -118,19 +119,19 @@ def verify(trace: Trace, **params) -> str:
         marker = ""
         if verdict == "WRONG":
             marker = " ← ERROR"
-            wrong.append(idx)
+            wrong.append(idx + 1)
         elif verdict == "UNCERTAIN":
             marker = " ← UNCERTAIN"
-            uncertain.append(idx)
-        lines.append(f"Turn {idx}: {verdict}{marker}")
+            uncertain.append(idx + 1)
+        lines.append(f"Step {idx + 1}: {verdict}{marker}")
         if justification:
             lines.append(f"  {justification}")
 
-    header_parts = [f"{len(trace)} turns verified"]
+    header_parts = [f"{len(trace)} steps verified"]
     if wrong:
-        header_parts.append(f"{len(wrong)} error(s) at turn(s) {wrong}")
+        header_parts.append(f"{len(wrong)} error(s) at step(s) {wrong}")
     if uncertain:
-        header_parts.append(f"{len(uncertain)} uncertain at turn(s) {uncertain}")
+        header_parts.append(f"{len(uncertain)} uncertain at step(s) {uncertain}")
     if not wrong and not uncertain:
         header_parts.append("all correct")
 

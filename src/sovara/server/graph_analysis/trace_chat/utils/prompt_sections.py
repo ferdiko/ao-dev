@@ -97,7 +97,7 @@ class PromptSections:
 
     def to_table(self) -> str:
         """Format sections as an index + label + preview table."""
-        lines = [f"Turn [{self.prompt_id}] — {len(self.sections)} sections:"]
+        lines = [f"Step [{self.prompt_id}] — {len(self.sections)} sections:"]
         for i, s in enumerate(self.sections):
             first_line = s.text.split("\n")[0]
             preview = first_line[:60] + ("..." if len(first_line) > 60 else "")

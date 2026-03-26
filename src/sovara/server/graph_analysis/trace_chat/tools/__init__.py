@@ -6,9 +6,9 @@ Provides both:
 """
 
 from .get_overview import get_overview
-from .get_turn import get_turn
+from .get_step import get_step
 from .verify import verify
-from .ask_turn import ask_turn
+from .ask_step import ask_step
 from .search import search
 from .prompt_edit import (
     list_sections, get_section, edit_section, bulk_edit,
@@ -19,9 +19,9 @@ from .prompt_edit import (
 # function signature: f(trace: Trace, **params) -> str
 TOOL_FUNCTIONS = {
     "get_overview": get_overview,
-    "get_turn": get_turn,
+    "get_step": get_step,
     "verify": verify,
-    "ask_turn": ask_turn,
+    "ask_step": ask_step,
     "search": search,
     "list_sections": list_sections,
     "get_section": get_section,
@@ -41,9 +41,9 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "get_overview",
             "description": (
-                "Returns a high-level overview: turn count, conversation structure "
-                "(which turns share system prompts and how message history grows), "
-                "and per-turn metadata (model/tool, message count, output size)."
+                "Returns a high-level overview: step count, conversation structure "
+                "(which steps share system prompts and how message history grows), "
+                "and per-step metadata (model/tool, message count, output size)."
             ),
             "parameters": {
                 "type": "object",
@@ -55,18 +55,18 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
-            "name": "get_turn",
+            "name": "get_step",
             "description": (
-                "Returns content for a specific turn. Use view='diff' to see only "
-                "new messages since the last turn in the same conversation — much "
-                "shorter for later turns."
+                "Returns content for a specific step. Use view='diff' to see only "
+                "new messages since the last step in the same conversation — much "
+                "shorter for later steps."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "turn_id": {
+                    "step_id": {
                         "type": "integer",
-                        "description": "The 0-based index of the turn to inspect.",
+                        "description": "The 1-based index of the step to inspect.",
                     },
                     "view": {
                         "type": "string",
@@ -74,7 +74,7 @@ TOOLS_SCHEMA = [
                         "description": "Level of detail. Default: 'full'.",
                     },
                 },
-                "required": ["turn_id"],
+                "required": ["step_id"],
             },
         },
     },
@@ -83,16 +83,16 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "verify",
             "description": (
-                "Checks whether a turn's output is correct given its instructions. "
+                "Checks whether a step's output is correct given its instructions. "
                 "Returns CORRECT/WRONG/UNCERTAIN with explanation. "
-                "If turn_id is omitted, verifies ALL turns (may be slow)."
+                "If step_id is omitted, verifies ALL steps (may be slow)."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "turn_id": {
+                    "step_id": {
                         "type": "integer",
-                        "description": "The 0-based index of the turn to verify. Omit to verify all.",
+                        "description": "The 1-based index of the step to verify. Omit to verify all.",
                     },
                 },
                 "required": [],
@@ -102,24 +102,24 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
-            "name": "ask_turn",
+            "name": "ask_step",
             "description": (
-                "Asks a specific question about a turn and returns only the answer. "
-                "More context-efficient than get_turn for targeted questions."
+                "Asks a specific question about a step and returns only the answer. "
+                "More context-efficient than get_step for targeted questions."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "turn_id": {
+                    "step_id": {
                         "type": "integer",
-                        "description": "The 0-based index of the turn.",
+                        "description": "The 1-based index of the step.",
                     },
                     "question": {
                         "type": "string",
-                        "description": "The question to answer about this turn.",
+                        "description": "The question to answer about this step.",
                     },
                 },
-                "required": ["turn_id", "question"],
+                "required": ["step_id", "question"],
             },
         },
     },
@@ -129,7 +129,7 @@ TOOLS_SCHEMA = [
             "name": "search",
             "description": (
                 "Searches trace content (system prompts, inputs, outputs) for a "
-                "substring. Returns matching turns with context snippets."
+                "substring. Returns matching steps with context snippets."
             ),
             "parameters": {
                 "type": "object",
@@ -149,18 +149,18 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "list_sections",
             "description": (
-                "Lists editable sections for a turn's new content — system prompt "
-                "(if first introduced in this turn) and new messages. Each section "
+                "Lists editable sections for a step's new content — system prompt "
+                "(if first introduced in this step) and new messages. Each section "
                 "shows its role ([system], [user], [assistant]), label, and preview."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "turn_index": {
+                    "step_index": {
                         "type": "integer",
                         "description": (
-                            "0-based turn index. If omitted and only one prompt exists, "
-                            "defaults to the turn that introduced it."
+                            "1-based step index. If omitted and only one prompt exists, "
+                            "defaults to the step that introduced it."
                         ),
                     },
                 },
@@ -176,9 +176,9 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "turn_index": {
+                    "step_index": {
                         "type": "integer",
-                        "description": "0-based turn index.",
+                        "description": "1-based step index.",
                     },
                     "index": {
                         "type": "integer",
@@ -200,9 +200,9 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "turn_index": {
+                    "step_index": {
                         "type": "integer",
-                        "description": "0-based turn index.",
+                        "description": "1-based step index.",
                     },
                     "index": {
                         "type": "integer",
@@ -228,9 +228,9 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "turn_index": {
+                    "step_index": {
                         "type": "integer",
-                        "description": "0-based turn index.",
+                        "description": "1-based step index.",
                     },
                     "instruction": {
                         "type": "string",
@@ -249,9 +249,9 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "turn_index": {
+                    "step_index": {
                         "type": "integer",
-                        "description": "0-based turn index.",
+                        "description": "1-based step index.",
                     },
                     "after_index": {
                         "type": "integer",
@@ -274,9 +274,9 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "turn_index": {
+                    "step_index": {
                         "type": "integer",
-                        "description": "0-based turn index.",
+                        "description": "1-based step index.",
                     },
                     "index": {
                         "type": "integer",
@@ -295,9 +295,9 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "turn_index": {
+                    "step_index": {
                         "type": "integer",
-                        "description": "0-based turn index.",
+                        "description": "1-based step index.",
                     },
                     "from_index": {
                         "type": "integer",
@@ -316,13 +316,13 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "undo",
-            "description": "Reverts the last edit to a turn's sections. Can be called repeatedly.",
+            "description": "Reverts the last edit to a step's sections. Can be called repeatedly.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "turn_index": {
+                    "step_index": {
                         "type": "integer",
-                        "description": "0-based turn index.",
+                        "description": "1-based step index.",
                     },
                 },
                 "required": [],

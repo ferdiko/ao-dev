@@ -11,10 +11,10 @@ from ..utils.trace import Trace
 
 SYNTHESIZE_SYSTEM = (
     "You summarize AI agent execution traces. You receive a structural overview "
-    "and per-turn summaries. Write a short summary that covers:\n"
+    "and per-step summaries. Write a short summary that covers:\n"
     "1. The task/goal and key inputs.\n"
-    "2. A structural walkthrough grouping turns into phases (e.g. 'Turns 0-2: "
-    "orchestrator delegated search. Turns 3-5: worker queried Google News, found "
+    "2. A structural walkthrough grouping steps into phases (e.g. 'Steps 1-3: "
+    "orchestrator delegated search. Steps 4-6: worker queried Google News, found "
     "7 articles about X and Y.'). Include specific results, decisions, and errors "
     "— not just which agent ran.\n"
     "3. The outcome and why it succeeded or failed.\n"
@@ -26,18 +26,18 @@ logger = logging.getLogger("sovara_agent")
 
 
 def _generate_summary(trace: Trace, model: str) -> str:
-    """Do the actual work: overview + per-turn summaries + synthesis."""
+    """Do the actual work: overview + per-step summaries + synthesis."""
     t0 = time.monotonic()
     overview = get_overview(trace)
 
     def _get_one(tid):
-        return get_summary(trace, turn_id=tid, model=model)
+        return get_summary(trace, step_id=tid + 1, model=model)
 
     with ThreadPoolExecutor() as pool:
         summaries = list(pool.map(_get_one, range(len(trace))))
     t_summaries = time.monotonic()
 
-    combined = f"## Overview\n{overview}\n\n## Turn Summaries\n"
+    combined = f"## Overview\n{overview}\n\n## Step Summaries\n"
     combined += "\n".join(summaries)
 
     result = infer_text(
@@ -48,7 +48,7 @@ def _generate_summary(trace: Trace, model: str) -> str:
     )
     t_synth = time.monotonic()
 
-    logger.info("Summary profiling: per-turn summaries %.1fs, synthesis %.1fs, total %.1fs",
+    logger.info("Summary profiling: per-step summaries %.1fs, synthesis %.1fs, total %.1fs",
                 t_summaries - t0, t_synth - t_summaries, t_synth - t0)
     return result
 

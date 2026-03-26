@@ -260,12 +260,12 @@ class Trace:
 
     def get(self, index: int) -> TraceRecord:
         if index < 0 or index >= len(self.records):
-            raise IndexError(f"Turn {index} out of range (0–{len(self.records) - 1})")
+            raise IndexError(f"Step {index + 1} out of range (1–{len(self.records)})")
         return self.records[index]
 
     def get_diffed(self, index: int) -> DiffedRecord:
         if index < 0 or index >= len(self.diffed):
-            raise IndexError(f"Turn {index} out of range (0–{len(self.diffed) - 1})")
+            raise IndexError(f"Step {index + 1} out of range (1–{len(self.diffed)})")
         return self.diffed[index]
 
     def prompt_turns(self) -> Dict[str, List[int]]:

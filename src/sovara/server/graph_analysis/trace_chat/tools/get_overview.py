@@ -11,27 +11,27 @@ def get_overview(trace: Trace, **_params) -> str:
     registry = trace.prompt_registry
     prompt_turns = trace.prompt_turns()
 
-    num_turns = len(records)
+    num_steps = len(records)
     num_conversations = len(prompt_turns)
     num_standalone = sum(1 for d in diffed if d.prompt_id is None)
 
-    lines = [f"Trace: {num_turns} turns, {num_conversations} conversation(s), {num_standalone} standalone"]
+    lines = [f"Trace: {num_steps} steps, {num_conversations} conversation(s), {num_standalone} standalone"]
 
     # System prompt registry
     if registry:
         lines.append("")
         lines.append("System prompts:")
         for pid, text in registry.items():
-            turns = prompt_turns.get(pid, [])
+            steps = [t + 1 for t in prompt_turns.get(pid, [])]
             preview = text[:100].replace("\n", " ")
             if len(text) > 100:
                 preview += "..."
-            lines.append(f'  [{pid}] ({len(text)} chars) "{preview}" — turns {turns}')
+            lines.append(f'  [{pid}] ({len(text)} chars) "{preview}" — steps {steps}')
 
-    # Per-turn breakdown
+    # Per-step breakdown
     lines.append("")
     for dr in diffed:
-        parts = [f"Turn {dr.index}:"]
+        parts = [f"Step {dr.index + 1}:"]
 
         # Model/tool
         parts.append(dr.model_or_tool or "unspecified")
