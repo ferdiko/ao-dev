@@ -720,16 +720,23 @@ def restart(req: RestartRequest, state: ServerState = Depends(get_state)):
     # Capture status before start_session_attempt mutates the shared Session object
     # (session_id == parent_session_id for normal runs, so they share the same object)
     parent_was_running = parent_session.status == "running" if parent_session else False
+    parent_had_live_runner = parent_was_running and parent_session_id in state.runner_event_queues
 
     state.start_session_attempt(session_id)
 
     # Clear UI state and schedule broadcasts
     state.clear_session_ui_and_schedule_broadcast(session_id)
 
-    if parent_was_running:
+    if parent_had_live_runner:
         # Send restart to running runner via SSE
         state.schedule_runner_event(parent_session_id, {"type": "restart"})
     elif parent_session:
+        # Distinct parent sessions can remain stale "running" in memory after their
+        # runner transport disappears. Reconcile that state before spawning directly.
+        if parent_was_running and parent_session_id != session_id:
+            state.checkpoint_interrupted_session_runtime(parent_session_id)
+            parent_session.status = "finished"
+            state.notify_experiment_list_changed()
         # Spawn a new process directly
         state.spawn_session_process(parent_session_id, session_id)
 
