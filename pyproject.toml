@@ -41,7 +41,7 @@ dependencies = [
     "fastapi",
     "uvicorn[standard]",
     "httpx",
-    "litellm<=1.82.6",
+    "litellm",
     "flatten_dict",
     "flatten_json"
 ]
