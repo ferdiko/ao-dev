@@ -56,34 +56,6 @@ const BAND_ENTRY_STAGGER_STEP = 4;
 const BAND_ENTRY_STAGGER_CLAMP = 8;
 
 
-// ── Topological sort ─────────────────────────────────────
-
-function topoSort<T extends { id: string }>(
-  nodes: T[],
-  edges: Array<{ source: string; target: string }>,
-): T[] {
-  const inDeg = new Map<string, number>();
-  const children = new Map<string, string[]>();
-  for (const n of nodes) { inDeg.set(n.id, 0); children.set(n.id, []); }
-  for (const e of edges) {
-    inDeg.set(e.target, (inDeg.get(e.target) ?? 0) + 1);
-    children.get(e.source)?.push(e.target);
-  }
-  const queue = nodes.filter((n) => (inDeg.get(n.id) ?? 0) === 0).map((n) => n.id);
-  const order: string[] = [];
-  let i = 0;
-  while (i < queue.length) {
-    const id = queue[i++];
-    order.push(id);
-    for (const childId of children.get(id) ?? []) {
-      inDeg.set(childId, (inDeg.get(childId) ?? 0) - 1);
-      if (inDeg.get(childId) === 0) queue.push(childId);
-    }
-  }
-  const idToNode = new Map(nodes.map((n) => [n.id, n]));
-  return order.map((id) => idToNode.get(id)!).filter(Boolean);
-}
-
 // ── Band calculation ─────────────────────────────────────
 
 type BandSegment = { startY: number; endY: number };
@@ -305,20 +277,20 @@ export function layoutGraph(
     return { positions: new Map(), edges: [], width: 0, height: 0, sortedIds: [] };
   }
 
-  // 1. Topo sort
-  const sorted = topoSort(graphNodes, graphEdges);
+  // 1. Use the server-provided step ordering as-is.
+  const ordered = graphNodes;
 
   // 2. Build parent/child maps
   const parentMap = new Map<string, string[]>();
   const childMap = new Map<string, string[]>();
-  for (const n of sorted) { parentMap.set(n.id, []); childMap.set(n.id, []); }
+  for (const n of ordered) { parentMap.set(n.id, []); childMap.set(n.id, []); }
   for (const e of graphEdges) {
     parentMap.get(e.target)?.push(e.source);
     childMap.get(e.source)?.push(e.target);
   }
 
   // 3. Position nodes in a column starting at x=0
-  const layoutNodes: LayoutNode[] = sorted.map((n, i) => ({
+  const layoutNodes: LayoutNode[] = ordered.map((n, i) => ({
     id: n.id,
     parents: parentMap.get(n.id) || [],
     children: childMap.get(n.id) || [],
@@ -355,5 +327,5 @@ export function layoutGraph(
   const positions = new Map<string, { x: number; y: number }>();
   for (const n of layoutNodes) positions.set(n.id, { x: n.x, y: n.y });
 
-  return { positions, edges: routedEdges, width, height, sortedIds: sorted.map((n) => n.id) };
+  return { positions, edges: routedEdges, width, height, sortedIds: ordered.map((n) => n.id) };
 }

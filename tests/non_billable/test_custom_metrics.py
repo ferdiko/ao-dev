@@ -115,7 +115,9 @@ def test_add_node_runtime_checkpoint_does_not_deadlock(metric_project):
     node_message = {
         "session_id": session_id,
         "node": {
-            "id": "node-1",
+            "uuid": "node-1",
+            "input": "{}",
+            "output": "{}",
             "label": "Node 1",
             "border_color": "#43884e",
         },

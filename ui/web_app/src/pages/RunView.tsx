@@ -587,8 +587,7 @@ function RunViewContent({
           <div className="run-detail-body">
             {hasGraph ? (
               <RunTraceFlow
-                nodes={graphNodes}
-                edges={graphEdges}
+                nodes={orderedGraphNodes}
                 viewMode={viewMode}
                 focusedNodeId={focusedNodeId}
                 nodeRefs={nodeRefs}

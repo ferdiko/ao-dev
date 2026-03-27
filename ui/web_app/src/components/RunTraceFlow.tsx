@@ -25,35 +25,7 @@ import {
   type MessageRoleStyle,
 } from "@sovara/shared-components/utils/messageLike";
 import { type PrismStyleMap, withTransparentPrismTheme } from "@sovara/shared-components/utils/prismTheme";
-import type { EditKey, GraphEdge, GraphNode } from "../hooks/useRunSessionState";
-
-function topoSortNodes(graphNodes: GraphNode[], graphEdges: GraphEdge[]): GraphNode[] {
-  const inDeg = new Map<string, number>();
-  const children = new Map<string, string[]>();
-  for (const node of graphNodes) {
-    inDeg.set(node.id, 0);
-    children.set(node.id, []);
-  }
-  for (const edge of graphEdges) {
-    inDeg.set(edge.target, (inDeg.get(edge.target) ?? 0) + 1);
-    children.get(edge.source)?.push(edge.target);
-  }
-
-  const queue = graphNodes.filter((node) => (inDeg.get(node.id) ?? 0) === 0).map((node) => node.id);
-  const order: string[] = [];
-  let index = 0;
-  while (index < queue.length) {
-    const id = queue[index++];
-    order.push(id);
-    for (const childId of children.get(id) ?? []) {
-      inDeg.set(childId, (inDeg.get(childId) ?? 0) - 1);
-      if (inDeg.get(childId) === 0) queue.push(childId);
-    }
-  }
-
-  const idToNode = new Map(graphNodes.map((node) => [node.id, node]));
-  return order.map((id) => idToNode.get(id)!).filter(Boolean);
-}
+import type { EditKey, GraphNode } from "../hooks/useRunSessionState";
 
 const LANG_DISPLAY: Record<string, string> = {
   sql: "SQL",
@@ -2738,7 +2710,6 @@ function NodeHeader({ node }: { node: GraphNode }) {
 
 export function RunTraceFlow({
   nodes,
-  edges,
   viewMode,
   focusedNodeId,
   nodeRefs,
@@ -2751,7 +2722,6 @@ export function RunTraceFlow({
   onCancelEdit,
 }: {
   nodes: GraphNode[];
-  edges: GraphEdge[];
   viewMode: "pretty" | "json";
   focusedNodeId: string | null;
   nodeRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
@@ -2763,12 +2733,11 @@ export function RunTraceFlow({
   onSaveAndRerun: (nodeId: string, label: "Input" | "Output", newData: string) => void;
   onCancelEdit: () => void;
 }) {
-  const sortedNodes = useMemo(() => topoSortNodes(nodes, edges), [nodes, edges]);
   const hasAnyEdit = editedFields.size > 0;
 
   return (
     <div className="run-detail-io-scroll">
-      {sortedNodes.map((node) => {
+      {nodes.map((node) => {
         const hasEdit = editedFields.has(`${node.id}:Input`) || editedFields.has(`${node.id}:Output`);
         return (
           <div
