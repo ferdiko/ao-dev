@@ -28,15 +28,15 @@ export interface Project {
   location_warning: boolean;
 }
 
-export interface Experiment {
-  session_id: string;
+export interface Run {
+  run_id: string;
   status: "running" | "finished";
   timestamp: string;
   runtime_seconds: number | null;
   active_runtime_seconds: number | null;
   color_preview: string[];
   version_date: string | null;
-  run_name: string;
+  name: string;
   custom_metrics: Record<string, boolean | number>;
   thumb_label: boolean | null;
   tags: Tag[];
@@ -196,9 +196,9 @@ export async function deleteProject(
   });
 }
 
-export async function deleteRuns(sessionIds: string[]): Promise<{ deleted: number }> {
+export async function deleteRuns(runIds: string[]): Promise<{ deleted: number }> {
   return post("/ui/delete-runs", {
-    session_ids: sessionIds,
+    run_ids: runIds,
   });
 }
 
@@ -218,16 +218,16 @@ export async function fetchProject(
 }
 
 // ============================================================
-// Experiment endpoints (project-scoped)
+// Run endpoints (project-scoped)
 // ============================================================
 
-export interface ExperimentQueryParams {
+export interface RunQueryParams {
   limit?: number;
   offset?: number;
   sort?: string;
   dir?: string;
   name?: string;
-  session_id?: string;
+  run_id?: string;
   label?: string[];
   tag_id?: string[];
   version?: string[];
@@ -249,10 +249,10 @@ export interface CustomMetricColumn {
   values?: boolean[];
 }
 
-interface ProjectExperimentsResponse {
+interface ProjectRunsResponse {
   type: string;
-  running: Experiment[];
-  finished: Experiment[];
+  running: Run[];
+  finished: Run[];
   finished_total: number;
   distinct_versions: string[];
   custom_metric_columns: CustomMetricColumn[];
@@ -262,11 +262,11 @@ interface ProjectTagsResponse {
   tags: Tag[];
 }
 
-export async function fetchProjectExperiments(
+export async function fetchProjectRuns(
   projectId: string,
-  params?: ExperimentQueryParams,
+  params?: RunQueryParams,
   signal?: AbortSignal,
-): Promise<ProjectExperimentsResponse> {
+): Promise<ProjectRunsResponse> {
   const qs = new URLSearchParams();
   if (params) {
     if (params.limit !== undefined) qs.set("limit", String(params.limit));
@@ -274,7 +274,7 @@ export async function fetchProjectExperiments(
     if (params.sort) qs.set("sort", params.sort);
     if (params.dir) qs.set("dir", params.dir);
     if (params.name) qs.set("name", params.name);
-    if (params.session_id) qs.set("session_id", params.session_id);
+    if (params.run_id) qs.set("run_id", params.run_id);
     if (params.time_from) qs.set("time_from", params.time_from);
     if (params.time_to) qs.set("time_to", params.time_to);
     if (params.label) for (const v of params.label) qs.append("label", v);
@@ -285,7 +285,7 @@ export async function fetchProjectExperiments(
     }
   }
   const query = qs.toString();
-  const url = `/ui/projects/${projectId}/experiments${query ? `?${query}` : ""}`;
+  const url = `/ui/projects/${projectId}/runs${query ? `?${query}` : ""}`;
   const resp = await fetch(url, { signal });
   if (!resp.ok) throw new Error(`GET ${url} failed: ${resp.status}`);
   return resp.json();
@@ -306,12 +306,12 @@ export async function deleteProjectTag(projectId: string, tagId: string): Promis
 }
 
 // ============================================================
-// Experiment detail endpoints
+// Run detail endpoints
 // ============================================================
 
-export interface ExperimentDetail {
-  session_id: string;
-  run_name: string;
+export interface RunDetail {
+  run_id: string;
+  name: string;
   timestamp: string;
   runtime_seconds: number | null;
   active_runtime_seconds: number | null;
@@ -324,8 +324,8 @@ export interface ExperimentDetail {
   status: "running" | "finished";
 }
 
-export async function fetchExperimentDetail(sessionId: string): Promise<ExperimentDetail> {
-  return get(`/ui/experiment/${sessionId}`);
+export async function fetchRunDetail(runId: string): Promise<RunDetail> {
+  return get(`/ui/run/${runId}`);
 }
 
 // ============================================================
@@ -357,14 +357,14 @@ export interface GraphPayload {
 
 export interface GraphResponse {
   type: string;
-  session_id: string;
+  run_id: string;
   payload: GraphPayload;
   active_runtime_seconds?: number | null;
 }
 
-export async function fetchGraph(sessionId: string) {
+export async function fetchGraph(runId: string) {
   return get<GraphResponse>(
-    `/ui/graph/${sessionId}`
+    `/ui/graph/${runId}`
   );
 }
 
@@ -372,48 +372,48 @@ export async function fetchGraph(sessionId: string) {
 // Run action endpoints
 // ============================================================
 
-export async function editInput(sessionId: string, nodeId: string, value: string): Promise<void> {
-  await post("/ui/edit-input", { session_id: sessionId, node_uuid: nodeId, value });
+export async function editInput(runId: string, nodeId: string, value: string): Promise<void> {
+  await post("/ui/edit-input", { run_id: runId, node_uuid: nodeId, value });
 }
 
-export async function editOutput(sessionId: string, nodeId: string, value: string): Promise<void> {
-  await post("/ui/edit-output", { session_id: sessionId, node_uuid: nodeId, value });
+export async function editOutput(runId: string, nodeId: string, value: string): Promise<void> {
+  await post("/ui/edit-output", { run_id: runId, node_uuid: nodeId, value });
 }
 
-export async function restartRun(sessionId: string): Promise<void> {
-  await post("/ui/restart", { session_id: sessionId });
+export async function restartRun(runId: string): Promise<void> {
+  await post("/ui/restart", { run_id: runId });
 }
 
-export async function eraseRun(sessionId: string): Promise<void> {
-  await post("/ui/erase", { session_id: sessionId });
+export async function eraseRun(runId: string): Promise<void> {
+  await post("/ui/erase", { run_id: runId });
 }
 
-export async function updateThumbLabel(sessionId: string, thumbLabel: boolean | null): Promise<void> {
-  await post("/ui/update-thumb-label", { session_id: sessionId, thumb_label: thumbLabel });
+export async function updateThumbLabel(runId: string, thumbLabel: boolean | null): Promise<void> {
+  await post("/ui/update-thumb-label", { run_id: runId, thumb_label: thumbLabel });
 }
 
-export async function updateRunName(sessionId: string, runName: string): Promise<void> {
-  await post("/ui/update-run-name", { session_id: sessionId, run_name: runName });
+export async function updateRunName(runId: string, runName: string): Promise<void> {
+  await post("/ui/update-run-name", { run_id: runId, name: runName });
 }
 
-export async function updateRunTags(sessionId: string, tagIds: string[]): Promise<Tag[]> {
-  const data = await post<{ tags: Tag[] }>("/ui/update-run-tags", { session_id: sessionId, tag_ids: tagIds });
+export async function updateRunTags(runId: string, tagIds: string[]): Promise<Tag[]> {
+  const data = await post<{ tags: Tag[] }>("/ui/update-run-tags", { run_id: runId, tag_ids: tagIds });
   return data.tags;
 }
 
-export function prefetchTrace(sessionId: string): void {
-  post(`/ui/prefetch/${sessionId}`, {}).catch(() => {});
+export function prefetchTrace(runId: string): void {
+  post(`/ui/prefetch/${runId}`, {}).catch(() => {});
 }
 
 export async function chatWithTrace(
-  sessionId: string,
+  runId: string,
   message: string,
   history: { role: string; content: string }[],
 ): Promise<{ answer: string; edits_applied?: boolean }> {
   try {
-    return await post(`/ui/chat/${sessionId}`, { message, history });
+    return await post(`/ui/chat/${runId}`, { message, history });
   } catch {
     await ensureBackendRunning();
-    return post(`/ui/chat/${sessionId}`, { message, history });
+    return post(`/ui/chat/${runId}`, { message, history });
   }
 }

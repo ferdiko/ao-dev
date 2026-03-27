@@ -14,7 +14,7 @@ declare global {
     vscode?: {
       postMessage: (message: any) => void;
     };
-    sessionId?: string;
+    runId?: string;
     isGraphTab?: boolean;
   }
 }
@@ -46,9 +46,9 @@ function normalizeGraphPayload(payload: any): GraphData {
 
 // Inner component that uses the document context
 const GraphTabAppInner: React.FC = () => {
-  const [experiment, setExperiment] = useState<ProcessInfo | null>(null);
+  const [run, setRun] = useState<ProcessInfo | null>(null);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [appliedLessonIds, setAppliedLessonIds] = useState<Set<string>>(new Set());
   const [showAppliedLessons, setShowAppliedLessons] = useState(false);
@@ -73,14 +73,14 @@ const GraphTabAppInner: React.FC = () => {
     }
   };
 
-  // Track if we've initialized to avoid re-init on sessionId change (use ref to avoid stale closure)
+  // Track if we've initialized to avoid re-init on runId change (use ref to avoid stale closure)
   const hasInitializedRef = useRef(false);
 
   // Initialize and listen for messages
   useEffect(() => {
-    // Get session ID from window only on first mount (not when sessionId changes)
-    if (window.sessionId && !hasInitializedRef.current) {
-      setSessionId(window.sessionId);
+    // Get run ID from window only on first mount (not when runId changes)
+    if (window.runId && !hasInitializedRef.current) {
+      setRunId(window.runId);
     }
 
     const handleMessage = (event: MessageEvent) => {
@@ -92,20 +92,15 @@ const GraphTabAppInner: React.FC = () => {
           if (hasInitializedRef.current) {
             break;
           }
-          // Initialize the tab with experiment data
-          const initExperiment = message.payload.experiment;
-          // Handle transition from title to run_name for backwards compatibility
-          const normalizedExperiment = {
-            ...initExperiment,
-            run_name: initExperiment.run_name || initExperiment.title || '',
-          };
-          setExperiment(normalizedExperiment);
-          setSessionId(message.payload.sessionId);
+          // Initialize the tab with run data
+          const initialRun = message.payload.run;
+          setRun({ ...initialRun, name: initialRun.name || "" });
+          setRunId(message.payload.runId);
           hasInitializedRef.current = true;
           break;
         case 'graph_update':
-          // Always accept graph updates - the provider already filters by session
-          // This avoids stale closure issues when switching experiments
+          // Always accept graph updates - the provider already filters by run
+          // This avoids stale closure issues when switching runs
           setGraphData(normalizeGraphPayload(message.payload));
           break;
         case 'configUpdate':
@@ -115,26 +110,26 @@ const GraphTabAppInner: React.FC = () => {
         case 'updateNode':
           // Handle node updates from edit dialogs
           if (message.payload && graphData) {
-            const { nodeId, field, value, session_id } = message.payload;
-            if (session_id === sessionId) {
-              handleNodeUpdate(nodeId, field, value, session_id);
+            const { nodeId, field, value, run_id } = message.payload;
+            if (run_id === runId) {
+              handleNodeUpdate(nodeId, field, value, run_id);
             }
           }
           break;
-        case 'experiment_update':
-          // Update experiment data if it matches our session
-          if (message.session_id === sessionId && message.experiment) {
-            setExperiment(message.experiment);
+        case 'run_update':
+          // Update run data if it matches our run
+          if (message.run_id === runId && message.run) {
+            setRun(message.run);
           }
           break;
-        case 'experiment_detail':
-          // Update experiment with notes/log fetched on demand
-          if (message.session_id === sessionId) {
-            setExperiment(prev => prev ? { ...prev, notes: message.notes, log: message.log } : prev);
+        case 'run_detail':
+          // Update run with notes/log fetched on demand
+          if (message.run_id === runId) {
+            setRun(prev => prev ? { ...prev, notes: message.notes, log: message.log } : prev);
           }
           break;
-        case 'experiment_list':
-          // Experiment list is handled by the sidebar, not the graph tab
+        case 'run_list':
+          // Run list is handled by the sidebar, not the graph tab
           break;
         case 'vscode-theme-change':
           // Theme changes are handled by the useIsVsCodeDarkTheme hook
@@ -144,8 +139,8 @@ const GraphTabAppInner: React.FC = () => {
           setLessons(message.lessons || []);
           break;
         case 'lessons_applied':
-          // Track lesson IDs applied to this session
-          if (message.session_id === sessionId) {
+          // Track lesson IDs applied to this run
+          if (message.run_id === runId) {
             const ids = new Set<string>((message.records || []).map((r: any) => r.lesson_id));
             setAppliedLessonIds(ids);
           }
@@ -180,7 +175,7 @@ const GraphTabAppInner: React.FC = () => {
     return () => {
       window.removeEventListener('message', handleMessage);
     };
-  }, [sessionId, setDocumentOpened]);
+  }, [runId, setDocumentOpened]);
 
   const handleNodeUpdate = (
     nodeId: string,
@@ -189,10 +184,10 @@ const GraphTabAppInner: React.FC = () => {
     sessionIdParam?: string,
     attachments?: any
   ) => {
-    const currentSessionId = sessionIdParam || sessionId;
-    if (currentSessionId && window.vscode) {
+    const currentRunId = sessionIdParam || runId;
+    if (currentRunId && window.vscode) {
       const baseMsg = {
-        session_id: currentSessionId,
+        run_id: currentRunId,
         node_uuid: nodeId,
         value,
         ...(attachments && { attachments }),
@@ -205,7 +200,7 @@ const GraphTabAppInner: React.FC = () => {
       } else {
         window.vscode.postMessage({
           type: "updateNode",
-          session_id: currentSessionId,
+          run_id: currentRunId,
           nodeId,
           field,
           value,
@@ -253,17 +248,17 @@ const GraphTabAppInner: React.FC = () => {
           />
         ) : (
           <SharedGraphTabApp
-            experiment={experiment}
+            run={run}
             graphData={graphData}
-            sessionId={sessionId}
+            runId={runId}
             messageSender={messageSender}
             isDarkTheme={isDarkTheme}
             onNodeUpdate={handleNodeUpdate}
-            headerContent={experiment ? (
+            headerContent={run ? (
               <GraphHeader
-                runName={experiment.run_name || ''}
+                runName={run.name || ''}
                 isDarkTheme={isDarkTheme}
-                sessionId={sessionId || undefined}
+                runId={runId || undefined}
                 lessons={lessons}
                 lessonsAppliedCount={appliedLessonIds.size}
                 onNavigateToLessons={handleNavigateToLessons}

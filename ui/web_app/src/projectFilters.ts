@@ -30,7 +30,7 @@ export type MetricFilterState = BoolMetricFilterState | NumberMetricFilterState;
 
 export interface Filters {
   name: TextFilter;
-  sessionId: string;
+  runId: string;
   version: Set<string>;
   tags: Set<string>;
   label: Set<string>;
@@ -75,7 +75,7 @@ export function computeDataBounds(runs: Array<{ latency: string }>): DataBounds 
 export function emptyFilters(bounds?: DataBounds): Filters {
   return {
     name: { value: "", isRegex: false },
-    sessionId: "",
+    runId: "",
     version: new Set(),
     tags: new Set(),
     label: new Set(),
@@ -106,7 +106,7 @@ export function serializeFilters(filters: Filters): string {
 
   return JSON.stringify({
     name: filters.name,
-    sessionId: filters.sessionId,
+    runId: filters.runId,
     version: Array.from(filters.version).sort(),
     tags: Array.from(filters.tags).sort(),
     label: Array.from(filters.label).sort(),

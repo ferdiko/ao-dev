@@ -32,12 +32,12 @@ def print_graph(graph: dict, label: str) -> None:
 
 def _run_script_with_ao_record(script_path: str, env: dict) -> tuple[int, str]:
     """
-    Run a script using so-record via uv and return (return_code, session_id).
+    Run a script using so-record via uv and return (return_code, run_id).
 
     Uses `uv run --directory <provider_dir> so-record <script_name>` to run
     the script in its provider-specific uv environment.
 
-    Parses the session_id from the runner's output.
+    Parses the run_id from the runner's output.
     """
     env["SOVARA_NO_DEBUG_MODE"] = "True"
     env["PYTHONUNBUFFERED"] = "1"  # Ensure output isn't buffered
@@ -55,22 +55,22 @@ def _run_script_with_ao_record(script_path: str, env: dict) -> tuple[int, str]:
     )
 
     output_lines = []
-    session_id = None
+    run_id = None
 
-    # Read output and look for session_id
+    # Read output and look for run_id
     for line in proc.stdout:
         output_lines.append(line)
         # Print all output for debugging
         print(line, end="", flush=True)
-        # Look for session_id in log output
-        if "session_id:" in line or "Registered with session_id:" in line:
-            # Extract session_id from line like "Registered with session_id: abc123"
-            match = re.search(r"session_id[:\s]+([a-f0-9-]+)", line, re.IGNORECASE)
+        # Look for run_id in log output
+        if "run_id:" in line or "Registered with run_id:" in line:
+            # Extract run_id from line like "Registered with run_id: abc123"
+            match = re.search(r"run_id[:\s]+([a-f0-9-]+)", line, re.IGNORECASE)
             if match:
-                session_id = match.group(1)
+                run_id = match.group(1)
 
     proc.wait()
-    return proc.returncode, session_id
+    return proc.returncode, run_id
 
 
 async def run_test(script_path: str):
@@ -94,19 +94,19 @@ async def run_test(script_path: str):
     print("\n" + "=" * 60)
     print("STARTING FIRST RUN")
     print("=" * 60)
-    return_code, session_id = _run_script_with_ao_record(script_path, env)
+    return_code, run_id = _run_script_with_ao_record(script_path, env)
     assert return_code == 0, f"First run failed with return_code {return_code}"
-    assert session_id is not None, "Could not extract session_id from first run output"
+    assert run_id is not None, "Could not extract run_id from first run output"
 
     # Query results from first run
     rows = DB.query_all(
-        "SELECT node_uuid, input_overwrite, output FROM llm_calls WHERE session_id=?",
-        (session_id,),
+        "SELECT node_uuid, input_overwrite, output FROM llm_calls WHERE run_id=?",
+        (run_id,),
     )
 
     graph_topology = DB.query_one(
-        "SELECT log, success, graph_topology FROM experiments WHERE session_id=?",
-        (session_id,),
+        "SELECT log, success, graph_topology FROM runs WHERE run_id=?",
+        (run_id,),
     )
     graph = json.loads(graph_topology["graph_topology"])
     print_graph(graph, "FIRST RUN GRAPH")
@@ -115,23 +115,23 @@ async def run_test(script_path: str):
     time.sleep(1)
 
     # Second run (should use cached results)
-    # Pass the same session_id so it reuses the cache
+    # Pass the same run_id so it reuses the cache
     print("\n" + "=" * 60)
     print("STARTING SECOND RUN (should use cache)")
     print("=" * 60)
-    env["SOVARA_SESSION_ID"] = session_id
+    env["SOVARA_RUN_ID"] = run_id
     returncode_rerun, _ = _run_script_with_ao_record(script_path, env)
     assert returncode_rerun == 0, f"Re-run failed with return_code {returncode_rerun}"
 
     # Query results from second run
     new_rows = DB.query_all(
-        "SELECT node_uuid, input_overwrite, output FROM llm_calls WHERE session_id=?",
-        (session_id,),
+        "SELECT node_uuid, input_overwrite, output FROM llm_calls WHERE run_id=?",
+        (run_id,),
     )
 
     new_graph_topology = DB.query_one(
-        "SELECT log, success, graph_topology FROM experiments WHERE session_id=?",
-        (session_id,),
+        "SELECT log, success, graph_topology FROM runs WHERE run_id=?",
+        (run_id,),
     )
     new_graph = json.loads(new_graph_topology["graph_topology"])
     print_graph(new_graph, "SECOND RUN GRAPH")

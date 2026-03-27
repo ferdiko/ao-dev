@@ -21,7 +21,7 @@ interface GraphViewProps {
   nodes: GraphNode[];
   edges: GraphEdge[];
   onNodeUpdate: (nodeId: string, field: keyof GraphNode, value: string) => void;
-  session_id?: string;
+  run_id?: string;
   messageSender: MessageSender;
   isDarkTheme?: boolean;
   metadataPanel?: React.ReactNode;
@@ -89,7 +89,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
   nodes: initialNodes,
   edges: initialEdges,
   onNodeUpdate,
-  session_id,
+  run_id,
   messageSender,
   isDarkTheme = false,
   metadataPanel,
@@ -161,11 +161,11 @@ export const GraphView: React.FC<GraphViewProps> = ({
         node_uuid: nodeId,
         field,
         value,
-        session_id
+        run_id
       });
       messageSender.send({ type: 'reset', id: Math.floor(Math.random() * 100000) });
     },
-    [onNodeUpdate, session_id, messageSender]
+    [onNodeUpdate, run_id, messageSender]
   );
 
   // Calculate the graph layout (node and edge positions) - should only change when nodes/edges change
@@ -206,7 +206,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
         data: {
           ...node,
           onUpdate: handleNodeUpdate,
-          session_id,
+          run_id,
           messageSender,
           isDarkTheme,
           onHover: setHoveredNodeId,
@@ -269,7 +269,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
     handleNodeUpdate,
     setNodes,
     setEdges,
-    session_id,
+    run_id,
     messageSender,
     isDarkTheme,
     layoutEngine,
@@ -317,7 +317,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
               ...node.data,
               ...updatedData,
               onUpdate: handleNodeUpdate,
-              session_id,
+              run_id,
               messageSender,
               isDarkTheme,
             },
@@ -326,7 +326,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
         return node;
       }));
     }
-  }, [orderedNodes, initialEdges, calculateLayout, setNodes, handleNodeUpdate, session_id, messageSender, isDarkTheme, containerWidth]);
+  }, [orderedNodes, initialEdges, calculateLayout, setNodes, handleNodeUpdate, run_id, messageSender, isDarkTheme, containerWidth]);
 
   // Update viewport when container width changes (metadata panel opens/closes)
   useEffect(() => {
@@ -560,11 +560,11 @@ export const GraphView: React.FC<GraphViewProps> = ({
                 border: `1px solid ${isDarkTheme ? "#555" : "#ddd"}`,
               }}
               onClick={() => {
-                if (!session_id) {
-                  alert("No session_id available for erase! This is a bug.");
-                  throw new Error("No session_id available for erase!");
+                if (!run_id) {
+                  alert("No run_id available for erase! This is a bug.");
+                  throw new Error("No run_id available for erase!");
                 }
-                messageSender.send({ type: "erase", session_id });
+                messageSender.send({ type: "erase", run_id });
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.background = isDarkTheme ? "rgba(80, 80, 80, 0.8)" : "rgba(255, 255, 255, 1)";
@@ -588,11 +588,11 @@ export const GraphView: React.FC<GraphViewProps> = ({
                 border: `1px solid ${isDarkTheme ? "#555" : "#ddd"}`,
               }}
               onClick={() => {
-                if (!session_id) {
-                  alert("No session_id available for restart! This is a bug.");
-                  throw new Error("No session_id available for restart!");
+                if (!run_id) {
+                  alert("No run_id available for restart! This is a bug.");
+                  throw new Error("No run_id available for restart!");
                 }
-                messageSender.send({ type: "restart", session_id });
+                messageSender.send({ type: "restart", run_id });
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.background = isDarkTheme ? "rgba(80, 80, 80, 0.8)" : "rgba(255, 255, 255, 1)";

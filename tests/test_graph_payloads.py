@@ -1,4 +1,4 @@
-from sovara.server.graph_models import IncomingNode, SessionGraph
+from sovara.server.graph_models import IncomingNode, RunGraph
 
 
 def _incoming(uuid: str, label: str) -> IncomingNode:
@@ -12,7 +12,7 @@ def _incoming(uuid: str, label: str) -> IncomingNode:
 
 
 def test_session_graph_assigns_monotonic_step_ids():
-    graph = SessionGraph.empty()
+    graph = RunGraph.empty()
 
     graph.add_node(_incoming("a", "A"), [])
     graph.add_node(_incoming("b", "B"), ["a"])
@@ -23,7 +23,7 @@ def test_session_graph_assigns_monotonic_step_ids():
 
 
 def test_session_graph_preserves_arrival_order_for_parallel_nodes():
-    graph = SessionGraph.empty()
+    graph = RunGraph.empty()
 
     graph.add_node(_incoming("root", "Root"), [])
     graph.add_node(_incoming("right", "Right"), ["root"])
@@ -37,11 +37,11 @@ def test_session_graph_preserves_arrival_order_for_parallel_nodes():
 
 
 def test_session_graph_serialization_round_trip():
-    graph = SessionGraph.empty()
+    graph = RunGraph.empty()
     graph.add_node(_incoming("a", "A"), [])
     graph.add_node(_incoming("b", "B"), ["a"])
 
-    restored = SessionGraph.from_dict(graph.to_dict())
+    restored = RunGraph.from_dict(graph.to_dict())
 
     assert restored.to_dict() == graph.to_dict()
     assert restored.edges[0].source_uuid == "a"

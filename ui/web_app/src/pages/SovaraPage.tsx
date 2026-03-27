@@ -99,7 +99,7 @@ export function SovaraPage() {
     setTimeout(() => {
       const responses = [
         "I analyzed your recent runs and noticed a pattern: the SQL generation step tends to produce longer queries when the user question mentions aggregations. This might explain the increased latency in runs 45–49.",
-        "Looking at the failure patterns across your experiments, the most common issue is that the Answer Synthesis node receives truncated query results. I'd recommend checking the token limit on the Execute Query output.",
+        "Looking at the failure patterns across your runs, the most common issue is that the Answer Synthesis node receives truncated query results. I'd recommend checking the token limit on the Execute Query output.",
         "Based on the priors you've configured, I can see that the schema retrieval step is performing well — it consistently returns the right tables. The bottleneck appears to be in SQL validation, where about 15% of generated queries fail the first check.",
         "I've reviewed the dataflow across your last 10 runs. The edge detection shows strong content propagation from Schema Retrieval through to Answer Synthesis. No orphaned nodes or broken chains detected.",
       ];

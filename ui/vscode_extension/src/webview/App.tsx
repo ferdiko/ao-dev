@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { ExperimentsView } from '@sovara/shared-components/components/experiment/ExperimentsView';
+import { RunsView } from '@sovara/shared-components/components/run/RunsView';
 import { GraphView } from '@sovara/shared-components/components/graph/GraphView';
-import { WorkflowRunDetailsPanel } from '@sovara/shared-components/components/experiment/WorkflowRunDetailsPanel';
+import { WorkflowRunDetailsPanel } from '@sovara/shared-components/components/run/WorkflowRunDetailsPanel';
 import { GraphNode, GraphEdge, GraphData, ProcessInfo } from '@sovara/shared-components/types';
 import { MessageSender } from '@sovara/shared-components/types/MessageSender';
 import { useIsVsCodeDarkTheme } from '@sovara/shared-components/utils/themeUtils';
@@ -18,8 +18,8 @@ declare global {
 export const App: React.FC = () => {
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
   const [hasMoreFinished, setHasMoreFinished] = useState(false);
-  const [activeTab, setActiveTab] = useState<'experiments' | 'experiment-graph'>('experiments');
-  const [selectedExperiment, setSelectedExperiment] = useState<ProcessInfo | null>(null);
+  const [activeTab, setActiveTab] = useState<'runs' | 'run-graph'>('runs');
+  const [selectedRun, setSelectedRun] = useState<ProcessInfo | null>(null);
   const [showDetailsPanel, setShowDetailsPanel] = useState(false);
   const [allGraphs, setAllGraphs] = useState<Record<string, GraphData>>({});
   const isDarkTheme = useIsVsCodeDarkTheme();
@@ -29,7 +29,7 @@ export const App: React.FC = () => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
       switch (message.type) {
-        case "session_id":
+        case "run_id":
           break;
         case "configUpdate":
           // Config changed - forward to config bridge
@@ -40,12 +40,12 @@ export const App: React.FC = () => {
           // Graph updates are now handled by individual graph tabs
           break;
         case "color_preview_update": {
-          const sid = message.session_id;
+          const sid = message.run_id;
           const color_preview = message.color_preview;
           console.log(`Color preview update for ${sid}:`, color_preview);
           setProcesses((prev) => {
             const updated = prev.map(process =>
-              process.session_id === sid
+              process.run_id === sid
                 ? { ...process, color_preview }
                 : process
             );
@@ -57,29 +57,29 @@ export const App: React.FC = () => {
         case "updateNode":
           // Node updates are now handled by individual graph tabs
           break;
-        case "experiment_list": {
-          console.log('[App] Received experiment_list:', message.experiments);
-          const broadcastExperiments = message.experiments || [];
-          const broadcastIds = new Set(broadcastExperiments.map((e: ProcessInfo) => e.session_id));
-          // Merge: use broadcast data for first page, keep previously paginated experiments.
-          // The broadcast is authoritative for ALL running experiments, so any extras
+        case "run_list": {
+          console.log('[App] Received run_list:', message.runs);
+          const broadcastRuns = message.runs || [];
+          const broadcastIds = new Set(broadcastRuns.map((run: ProcessInfo) => run.run_id));
+          // Merge: use broadcast data for first page, keep previously paginated runs.
+          // The broadcast is authoritative for ALL running runs, so any extras
           // not in the broadcast are necessarily finished.
           setProcesses(prev => {
             const paginatedExtras = prev
-              .filter((e: ProcessInfo) => !broadcastIds.has(e.session_id))
-              .map((e: ProcessInfo) => e.status === 'running' ? { ...e, status: 'finished' } : e);
-            return [...broadcastExperiments, ...paginatedExtras];
+              .filter((run: ProcessInfo) => !broadcastIds.has(run.run_id))
+              .map((run: ProcessInfo) => run.status === 'running' ? { ...run, status: 'finished' } : run);
+            return [...broadcastRuns, ...paginatedExtras];
           });
           setHasMoreFinished(!!message.has_more);
           break;
         }
-        case "more_experiments":
+        case "more_runs":
           setProcesses(prev => {
-            const existingIds = new Set(prev.map(p => p.session_id));
-            const newExperiments = (message.experiments || []).filter(
-              (e: ProcessInfo) => !existingIds.has(e.session_id)
+            const existingIds = new Set(prev.map(p => p.run_id));
+            const newRuns = (message.runs || []).filter(
+              (run: ProcessInfo) => !existingIds.has(run.run_id)
             );
-            return [...prev, ...newExperiments];
+            return [...prev, ...newRuns];
           });
           setHasMoreFinished(!!message.has_more);
           break;
@@ -96,13 +96,13 @@ export const App: React.FC = () => {
   }, []);
 
 
-  const handleExperimentCardClick = (process: ProcessInfo) => {
+  const handleRunCardClick = (process: ProcessInfo) => {
     // Instead of switching tabs in the sidebar, open a new graph tab
     if (window.vscode) {
       window.vscode.postMessage({
         type: 'openGraphTab',
         payload: {
-          experiment: process
+          run: process
         }
       });
     }
@@ -116,23 +116,23 @@ export const App: React.FC = () => {
   };
 
   const handleRefresh = () => {
-    // Refresh experiments from backend
+    // Refresh runs from backend
     if (window.vscode) {
-      window.vscode.postMessage({ type: 'requestExperimentRefresh' });
+      window.vscode.postMessage({ type: 'requestRunRefresh' });
     }
   };
 
   const handleLoadMoreFinished = () => {
     if (window.vscode) {
-      // Offset is total experiments loaded (DB query includes both running and finished)
-      window.vscode.postMessage({ type: 'get_more_experiments', offset: processes.length });
+      // Offset is total runs loaded (DB query includes both running and finished)
+      window.vscode.postMessage({ type: 'get_more_runs', offset: processes.length });
     }
   };
 
-  const handleNodeUpdate = (nodeId: string, field: string, value: string, sessionId: string, attachments?: any) => {
+  const handleNodeUpdate = (nodeId: string, field: string, value: string, runId: string, attachments?: any) => {
     if (window.vscode) {
       const baseMsg = {
-        session_id: sessionId,
+        run_id: runId,
         node_uuid: nodeId,
         value,
         ...(attachments && { attachments }),
@@ -161,13 +161,13 @@ export const App: React.FC = () => {
     },
   };
 
-  // Use experiments in the order sent by server (already sorted by name ascending)
+  // Use runs in the order sent by server (already sorted by name ascending)
   const sortedProcesses = processes;
 
-  // const similarExperiments = sortedProcesses.filter(p => p.status === 'similar');
-  const similarExperiments = sortedProcesses[0];
-  const runningExperiments = sortedProcesses.filter(p => p.status === 'running');
-  const finishedExperiments = sortedProcesses.filter(p => p.status === 'finished');
+  // const similarRuns = sortedProcesses.filter(p => p.status === 'similar');
+  const similarRuns = sortedProcesses[0];
+  const runningRuns = sortedProcesses.filter(p => p.status === 'running');
+  const finishedRuns = sortedProcesses.filter(p => p.status === 'finished');
 
   return (
     <div
@@ -190,12 +190,12 @@ export const App: React.FC = () => {
             : { flex: 1, overflow: "hidden" }
         }
       >
-        {activeTab === "experiments" ? (
-          <ExperimentsView
-            similarProcesses={similarExperiments ? [similarExperiments] : []}
-            runningProcesses={runningExperiments}
-            finishedProcesses={finishedExperiments}
-            onCardClick={handleExperimentCardClick}
+        {activeTab === "runs" ? (
+          <RunsView
+            similarProcesses={similarRuns ? [similarRuns] : []}
+            runningProcesses={runningRuns}
+            finishedProcesses={finishedRuns}
+            onCardClick={handleRunCardClick}
             isDarkTheme={isDarkTheme}
             showHeader={true}
             onLessonsClick={handleLessonsClick}
@@ -203,36 +203,36 @@ export const App: React.FC = () => {
             hasMoreFinished={hasMoreFinished}
             onLoadMoreFinished={handleLoadMoreFinished}
           />
-        ) : activeTab === "experiment-graph" && selectedExperiment && !showDetailsPanel ? (
+        ) : activeTab === "run-graph" && selectedRun && !showDetailsPanel ? (
           <GraphView
-            nodes={allGraphs[selectedExperiment.session_id]?.nodes || []}
-            edges={allGraphs[selectedExperiment.session_id]?.edges || []}
+            nodes={allGraphs[selectedRun.run_id]?.nodes || []}
+            edges={allGraphs[selectedRun.run_id]?.edges || []}
             onNodeUpdate={(nodeId, field, value) => {
-              const nodes = allGraphs[selectedExperiment.session_id]?.nodes || [];
+              const nodes = allGraphs[selectedRun.run_id]?.nodes || [];
               const node = nodes.find((n: any) => n.id === nodeId);
               const attachments = node?.attachments || undefined;
               handleNodeUpdate(
                 nodeId,
                 field,
                 value,
-                selectedExperiment.session_id,
+                selectedRun.run_id,
                 attachments
               );
             }}
-            session_id={selectedExperiment.session_id}
-            experiment={selectedExperiment}
+            run_id={selectedRun.run_id}
+            run={selectedRun}
             messageSender={messageSender}
             isDarkTheme={isDarkTheme}
           />
-        ) : activeTab === "experiment-graph" && selectedExperiment && showDetailsPanel ? (
+        ) : activeTab === "run-graph" && selectedRun && showDetailsPanel ? (
           <WorkflowRunDetailsPanel
-            runName={selectedExperiment.run_name || ''}
-            result={selectedExperiment.result || ''}
-            notes={selectedExperiment.notes || ''}
-            log={selectedExperiment.log || ''}
+            runName={selectedRun.name || ''}
+            result={selectedRun.result || ''}
+            notes={selectedRun.notes || ''}
+            log={selectedRun.log || ''}
             onOpenInTab={() => {}}
             onBack={() => setShowDetailsPanel(false)}
-            sessionId={selectedExperiment.session_id}
+            runId={selectedRun.run_id}
           />
         ) : null}
       </div>

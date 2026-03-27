@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchProject, fetchProjectExperiments, fetchProjectTags } from "../api";
-import type { CustomMetricColumn, Experiment, MetricFilter } from "../api";
+import { fetchProject, fetchProjectRuns, fetchProjectTags } from "../api";
+import type { CustomMetricColumn, Run, MetricFilter } from "../api";
 import { subscribe } from "../serverEvents";
 import { buildMetricFilterPayload, toUtcFilterTimestamp, type Filters } from "../projectFilters";
 import type { Tag } from "../tags";
 
 type QuerySort = { key: string; direction: "asc" | "desc" } | null;
 
-export function useProjectExperimentsData({
+export function useProjectRunsData({
   completedPage,
   completedRowsPerPage,
   completedSort,
@@ -21,15 +21,15 @@ export function useProjectExperimentsData({
   projectId?: string;
 }) {
   const [projectName, setProjectName] = useState("");
-  const [runningExperiments, setRunningExperiments] = useState<Experiment[]>([]);
-  const [completedExperiments, setCompletedExperiments] = useState<Experiment[]>([]);
+  const [runningRuns, setRunningRuns] = useState<Run[]>([]);
+  const [completedRuns, setCompletedRuns] = useState<Run[]>([]);
   const [completedTotal, setCompletedTotal] = useState(0);
   const [distinctVersions, setDistinctVersions] = useState<string[]>([]);
   const [customMetricColumns, setCustomMetricColumns] = useState<CustomMetricColumn[]>([]);
   const [projectTags, setProjectTags] = useState<Tag[]>([]);
   const [loading, setLoading] = useState(true);
   const [completedRefreshKey, setCompletedRefreshKey] = useState(0);
-  const prevTextRef = useRef({ name: "", sessionId: "" });
+  const prevTextRef = useRef({ name: "", runId: "" });
 
   const loadProjectName = useCallback(() => {
     if (!projectId) return;
@@ -44,10 +44,10 @@ export function useProjectExperimentsData({
 
   useEffect(() => {
     if (!projectId) return;
-    return subscribe("experiment_list", (message) => {
-      const running = (message.experiments as Experiment[])
-        .filter((experiment) => experiment.status === "running" && experiment.project_id === projectId);
-      setRunningExperiments(running);
+    return subscribe("run_list", (message) => {
+      const running = (message.runs as Run[])
+        .filter((run) => run.status === "running" && run.project_id === projectId);
+      setRunningRuns(running);
       setCompletedRefreshKey((value) => value + 1);
     });
   }, [projectId]);
@@ -55,15 +55,15 @@ export function useProjectExperimentsData({
   useEffect(() => {
     if (!projectId) return;
     return subscribe("graph_update", (message) => {
-      const sessionId = typeof message.session_id === "string" ? message.session_id : "";
-      if (!sessionId || !Object.prototype.hasOwnProperty.call(message, "active_runtime_seconds")) return;
+      const runId = typeof message.run_id === "string" ? message.run_id : "";
+      if (!runId || !Object.prototype.hasOwnProperty.call(message, "active_runtime_seconds")) return;
       const activeRuntimeSeconds = typeof message.active_runtime_seconds === "number"
         ? message.active_runtime_seconds
         : null;
-      setRunningExperiments((previous) => previous.map((experiment) => (
-        experiment.session_id === sessionId
-          ? { ...experiment, active_runtime_seconds: activeRuntimeSeconds }
-          : experiment
+      setRunningRuns((previous) => previous.map((run) => (
+        run.run_id === runId
+          ? { ...run, active_runtime_seconds: activeRuntimeSeconds }
+          : run
       )));
     });
   }, [projectId]);
@@ -72,8 +72,8 @@ export function useProjectExperimentsData({
     if (!projectId) return;
 
     const previous = prevTextRef.current;
-    const textChanged = previous.name !== filters.name.value || previous.sessionId !== filters.sessionId;
-    prevTextRef.current = { name: filters.name.value, sessionId: filters.sessionId };
+    const textChanged = previous.name !== filters.name.value || previous.runId !== filters.runId;
+    prevTextRef.current = { name: filters.name.value, runId: filters.runId };
 
     const controller = new AbortController();
     const delay = textChanged ? 300 : 0;
@@ -84,7 +84,7 @@ export function useProjectExperimentsData({
       sort?: string;
       dir?: string;
       name?: string;
-      session_id?: string;
+      run_id?: string;
       label?: string[];
       tag_id?: string[];
       version?: string[];
@@ -100,7 +100,7 @@ export function useProjectExperimentsData({
       params.dir = completedSort.direction;
     }
     if (filters.name.value) params.name = filters.name.value;
-    if (filters.sessionId) params.session_id = filters.sessionId;
+    if (filters.runId) params.run_id = filters.runId;
     if (filters.label.size > 0) params.label = Array.from(filters.label);
     if (filters.tags.size > 0) params.tag_id = Array.from(filters.tags);
     if (filters.version.size > 0) params.version = Array.from(filters.version);
@@ -112,18 +112,18 @@ export function useProjectExperimentsData({
     const timer = window.setTimeout(async () => {
       try {
         const [response, tags] = await Promise.all([
-          fetchProjectExperiments(projectId, params, controller.signal),
+          fetchProjectRuns(projectId, params, controller.signal),
           fetchProjectTags(projectId),
         ]);
-        setRunningExperiments(response.running);
-        setCompletedExperiments(response.finished);
+        setRunningRuns(response.running);
+        setCompletedRuns(response.finished);
         setCompletedTotal(response.finished_total);
         setDistinctVersions(response.distinct_versions);
         setCustomMetricColumns(response.custom_metric_columns);
         setProjectTags(tags);
       } catch (error: unknown) {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        console.error("Failed to fetch experiments:", error);
+        console.error("Failed to fetch runs:", error);
       } finally {
         setLoading(false);
       }
@@ -136,13 +136,13 @@ export function useProjectExperimentsData({
   }, [projectId, completedPage, completedRowsPerPage, completedSort, filters, completedRefreshKey]);
 
   return {
-    completedExperiments,
+    completedRuns,
     completedTotal,
     customMetricColumns,
     distinctVersions,
     loading,
     projectName,
     projectTags,
-    runningExperiments,
+    runningRuns,
   };
 }

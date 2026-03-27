@@ -50,13 +50,13 @@ Click on any node to:
 
 When you edit an input or output:
 
-1. The experiment re-runs using cached LLM calls (for speed)
+1. The run re-runs using cached LLM calls (for speed)
 2. Your edits are applied at the appropriate point
 3. Downstream LLM calls are re-executed with the modified data
 
 This enables rapid iteration and debugging of your LLM pipelines.
 
-### Session History
+### Run History
 
 The extension maintains a history of runs, allowing you to:
 

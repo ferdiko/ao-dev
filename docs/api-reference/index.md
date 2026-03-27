@@ -20,12 +20,12 @@ sovara/
 │   └── so_config.py       # Configuration tool
 ├── runner/                 # Runtime execution
 │   ├── string_matching.py  # Content-based edge detection
-│   ├── context_manager.py  # Session management
+│   ├── context_manager.py  # Run management
 │   └── monkey_patching/    # API interception
 └── server/                 # Core server
     ├── app.py             # FastAPI app factory
     ├── database_manager.py # Caching and content registry
-    └── state.py           # Session state and git versioning
+    └── state.py           # Run state and git versioning
 ```
 
 ## Using the API

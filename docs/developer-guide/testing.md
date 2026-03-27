@@ -190,7 +190,7 @@ def test_edge_detection():
     response2 = llm_call(f"Add 1 to {response1}")
 
     # Verify an edge was created between the two nodes
-    # Check the graph topology in the session
+    # Check the graph topology in the run
     pass
 ```
 

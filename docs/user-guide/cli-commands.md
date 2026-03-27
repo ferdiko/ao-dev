@@ -39,7 +39,7 @@ so-record my_agent.py
 so-record -m agents.research_agent
 
 # Run with a custom run name
-so-record --run-name "experiment-v1" my_agent.py
+so-record --run-name "run-v1" my_agent.py
 
 # Pass arguments to your script
 so-record my_agent.py --model gpt-4 --temperature 0.7
@@ -126,7 +126,7 @@ Sovara respects the following environment variables:
 
 | Variable | Description |
 |----------|-------------|
-| `SOVARA_SESSION_ID` | Current session identifier |
+| `SOVARA_RUN_ID` | Current run identifier |
 | `SOVARA_SEED` | Random seed for reproducibility |
 
 ### Server Configuration

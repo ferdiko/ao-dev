@@ -6,7 +6,7 @@ import type { ProjectRun } from "../projectRuns";
 
 const baseRun: ProjectRun = {
   id: "run-1",
-  sessionId: "session-1",
+  runId: "run-1",
   name: "Run 1",
   status: "finished",
   timestamp: "2026-03-23 10:11:12",

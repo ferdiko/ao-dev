@@ -25,7 +25,7 @@ export const LessonsTabApp: React.FC = () => {
   const [lessonContentUpdate, setLessonContentUpdate] = useState<{
     id: string; content: string;
   } | null>(null);
-  const pendingAppliedResolvers = useRef<Map<string, (sessions: any[]) => void>>(new Map());
+  const pendingAppliedResolvers = useRef<Map<string, (runs: any[]) => void>>(new Map());
 
   // Track expanded folders so we can re-fetch them on lessons_refresh
   const expandedFoldersRef = useRef<Set<string>>(new Set(['']));
@@ -74,7 +74,7 @@ export const LessonsTabApp: React.FC = () => {
             });
           }
           break;
-        case 'sessions_for_lesson':
+        case 'runs_for_lesson':
           if (message.lesson_id) {
             const resolve = pendingAppliedResolvers.current.get(message.lesson_id);
             if (resolve) {
@@ -224,10 +224,10 @@ export const LessonsTabApp: React.FC = () => {
             });
           }
         }}
-        onNavigateToRun={(sessionId: string, nodeId?: string) => {
+        onNavigateToRun={(runId: string, nodeId?: string) => {
           // Navigate to the run - open graph tab (optionally focus on node)
           if (window.vscode) {
-            window.vscode.postMessage({ type: 'navigateToRun', sessionId, nodeId });
+            window.vscode.postMessage({ type: 'navigateToRun', runId, nodeId });
           }
         }}
         onFetchLessonContent={(id: string) => {
@@ -236,11 +236,11 @@ export const LessonsTabApp: React.FC = () => {
             window.vscode.postMessage({ type: 'get_lesson', lesson_id: id });
           }
         }}
-        onFetchAppliedSessions={(lessonId: string) => {
+        onFetchAppliedRuns={(lessonId: string) => {
           return new Promise((resolve) => {
             pendingAppliedResolvers.current.set(lessonId, resolve);
             if (window.vscode) {
-              window.vscode.postMessage({ type: 'get_sessions_for_lesson', lesson_id: lessonId });
+              window.vscode.postMessage({ type: 'get_runs_for_lesson', lesson_id: lessonId });
             }
           });
         }}

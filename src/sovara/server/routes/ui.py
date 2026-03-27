@@ -1,18 +1,16 @@
 """UI REST endpoints -- called by VS Code extension and web app."""
 
-import json
 import os
 import uuid
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, TypeAdapter, ValidationError
-from typing import Optional
 
 from sovara.common.custom_metrics import MetricFilter
 from sovara.server.app import get_state
 from sovara.server.state import ServerState, logger
 from sovara.server.database_manager import DB, BadRequestError, ResourceNotFoundError
-from sovara.server.graph_models import SessionGraph
+from sovara.server.graph_models import RunGraph
 from sovara.common.user import read_user_id, write_user_id
 from sovara.common.project import find_project_root, read_project_id, write_project_id, delete_project_configs
 from sovara.server.handlers.ui_handlers import (
@@ -47,11 +45,29 @@ def _request_error_response(exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": str(exc)})
 
 
+def _extract_http_error_detail(resp) -> str:
+    try:
+        data = resp.json()
+    except ValueError:
+        text = resp.text.strip()
+        return text or "Chat error"
+
+    if isinstance(data, dict):
+        detail = data.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            return detail
+        error = data.get("error")
+        if isinstance(error, str) and error.strip():
+            return error
+
+    return "Chat error"
+
+
 def _notify_user_state_changed(state: ServerState) -> None:
     """Broadcast all UI invalidations caused by a local-user identity change."""
     state.notify_user_changed()
     state.notify_project_list_changed()
-    state.notify_experiment_list_changed()
+    state.notify_run_list_changed()
 
 
 # ============================================================
@@ -59,45 +75,45 @@ def _notify_user_state_changed(state: ServerState) -> None:
 # ============================================================
 
 class EditInputRequest(BaseModel):
-    session_id: str
+    run_id: str
     node_uuid: str
     value: str
 
 
 class EditOutputRequest(BaseModel):
-    session_id: str
+    run_id: str
     node_uuid: str
     value: str
 
 
 class UpdateNodeRequest(BaseModel):
-    session_id: str
+    run_id: str
     node_uuid: str
     field: str
     value: str
 
 
 class UpdateRunNameRequest(BaseModel):
-    session_id: str
-    run_name: str
+    run_id: str
+    name: str
 
 
 class UpdateThumbLabelRequest(BaseModel):
-    session_id: str
+    run_id: str
     thumb_label: bool | None
 
 
 class UpdateNotesRequest(BaseModel):
-    session_id: str
+    run_id: str
     notes: str
 
 
 class RestartRequest(BaseModel):
-    session_id: str
+    run_id: str
 
 
 class EraseRequest(BaseModel):
-    session_id: str
+    run_id: str
 
 
 class CreateProjectRequest(BaseModel):
@@ -143,7 +159,7 @@ class DeleteProjectRequest(BaseModel):
 
 
 class DeleteRunsRequest(BaseModel):
-    session_ids: list[str]
+    run_ids: list[str]
 
 
 class CreateProjectTagRequest(BaseModel):
@@ -156,7 +172,7 @@ class DeleteProjectTagRequest(BaseModel):
 
 
 class UpdateRunTagsRequest(BaseModel):
-    session_id: str
+    run_id: str
     tag_ids: list[str]
 
 
@@ -379,7 +395,7 @@ def delete_project(req: DeleteProjectRequest, state: ServerState = Depends(get_s
     locations = DB.get_all_project_locations(req.project_id)
     delete_project_configs([row["project_location"] for row in locations])
     DB.delete_project(req.project_id)
-    state.notify_experiment_list_changed()
+    state.notify_run_list_changed()
     state.notify_project_list_changed()
     return {"ok": True}
 
@@ -387,11 +403,11 @@ def delete_project(req: DeleteProjectRequest, state: ServerState = Depends(get_s
 @router.post("/delete-runs")
 def delete_runs(req: DeleteRunsRequest, state: ServerState = Depends(get_state)):
     """Delete one or more runs visible to the current user."""
-    session_ids = [session_id for session_id in req.session_ids if session_id]
-    if not session_ids:
-        return JSONResponse(status_code=400, content={"error": "At least one session_id is required."})
+    run_ids = [run_id for run_id in req.run_ids if run_id]
+    if not run_ids:
+        return JSONResponse(status_code=400, content={"error": "At least one run_id is required."})
 
-    deleted = handle_delete_runs(state, {"session_ids": session_ids})
+    deleted = handle_delete_runs(state, {"run_ids": run_ids})
     return {"ok": True, "deleted": deleted}
 
 
@@ -415,7 +431,7 @@ def get_projects(state: ServerState = Depends(get_state)):
     result = []
     for p in projects:
         pid = p["project_id"]
-        run_count = DB.get_experiment_count(project_id=pid)
+        run_count = DB.get_run_count(project_id=pid)
         location_rows = DB.get_all_project_locations(pid)
         locations = []
         location_warning = False
@@ -475,7 +491,7 @@ def create_project_tag(project_id: str, req: CreateProjectTagRequest, state: Ser
         else:
             status_code = 400
         return JSONResponse(status_code=status_code, content={"error": message})
-    state.notify_experiment_list_changed()
+    state.notify_run_list_changed()
     return {"tag": tag}
 
 
@@ -487,19 +503,19 @@ def delete_project_tag(project_id: str, req: DeleteProjectTagRequest, state: Ser
         message = str(exc)
         status_code = 404 if "not found" in message.lower() else 400
         return JSONResponse(status_code=status_code, content={"error": message})
-    state.notify_experiment_list_changed()
+    state.notify_run_list_changed()
     return {"ok": True}
 
 
-@router.get("/projects/{project_id}/experiments")
-def get_project_experiments(
+@router.get("/projects/{project_id}/runs")
+def get_project_runs(
     project_id: str,
     limit: int = 50,
     offset: int = 0,
     sort: str = "timestamp",
     dir: str = "desc",
     name: str = "",
-    session_id: str = "",
+    run_id: str = "",
     label: list[str] = Query(default=[]),
     tag_id: list[str] = Query(default=[]),
     version: list[str] = Query(default=[]),
@@ -508,14 +524,14 @@ def get_project_experiments(
     time_to: str = "",
     state: ServerState = Depends(get_state),
 ):
-    """Get paginated filtered finished experiments plus the current running set for a project."""
-    session_map, running_ids = state.get_session_snapshot()
+    """Get paginated filtered finished runs plus the current running set for a project."""
+    run_map, running_ids = state.get_run_snapshot()
 
     filters = {}
     if name:
         filters["name"] = name
-    if session_id:
-        filters["session_id"] = session_id
+    if run_id:
+        filters["run_id"] = run_id
     if label:
         filters["thumb_label"] = label
     if tag_id:
@@ -532,19 +548,19 @@ def get_project_experiments(
         except ValidationError as exc:
             return JSONResponse(status_code=400, content={"error": exc.errors()})
 
-    running_rows = DB.get_experiments_by_ids(running_ids, project_id=project_id)
-    running = [state._format_experiment_row(row, session_map) for row in running_rows]
+    running_rows = DB.get_runs_by_ids(running_ids, project_id=project_id)
+    running = [state._format_run_row(row, run_map) for row in running_rows]
 
-    finished_rows, finished_total, custom_metric_columns = DB.get_experiment_table_view(
+    finished_rows, finished_total, custom_metric_columns = DB.get_run_table_view(
         project_id=project_id, exclude_ids=running_ids, filters=filters,
         sort_key=sort, sort_dir=dir, limit=limit, offset=offset,
     )
-    finished = [state._format_experiment_row(row, session_map) for row in finished_rows]
+    finished = [state._format_run_row(row, run_map) for row in finished_rows]
 
     distinct_versions = DB.get_distinct_versions(project_id)
 
     return {
-        "type": "experiment_list",
+        "type": "run_list",
         "running": running,
         "finished": finished,
         "finished_total": finished_total,
@@ -553,76 +569,76 @@ def get_project_experiments(
     }
 
 
-@router.get("/graph/{session_id}")
-def get_graph(session_id: str, state: ServerState = Depends(get_state)):
+@router.get("/graph/{run_id}")
+def get_graph(run_id: str, state: ServerState = Depends(get_state)):
     # Check in-memory graph first
-    if session_id in state.session_graphs:
+    if run_id in state.run_graphs:
         return {
             "type": "graph_update",
-            "session_id": session_id,
-            "payload": state.session_graphs[session_id].to_dict(),
-            "active_runtime_seconds": state.get_persisted_active_runtime_seconds(session_id),
+            "run_id": run_id,
+            "payload": state.run_graphs[run_id].to_dict(),
+            "active_runtime_seconds": state.get_persisted_active_runtime_seconds(run_id),
         }
 
     # Fall back to database
-    row = DB.get_graph(session_id)
+    row = DB.get_graph(run_id)
     if row and row["graph_topology"]:
-        graph = SessionGraph.from_json_string(row["graph_topology"])
-        state.session_graphs[session_id] = graph
+        graph = RunGraph.from_json_string(row["graph_topology"])
+        state.run_graphs[run_id] = graph
         return {
             "type": "graph_update",
-            "session_id": session_id,
+            "run_id": run_id,
             "payload": graph.to_dict(),
-            "active_runtime_seconds": state.get_persisted_active_runtime_seconds(session_id),
+            "active_runtime_seconds": state.get_persisted_active_runtime_seconds(run_id),
         }
 
     return {
         "type": "graph_update",
-        "session_id": session_id,
+        "run_id": run_id,
         "payload": {"nodes": [], "edges": []},
-        "active_runtime_seconds": state.get_persisted_active_runtime_seconds(session_id),
+        "active_runtime_seconds": state.get_persisted_active_runtime_seconds(run_id),
     }
 
 
-@router.get("/experiments")
-def get_experiments(state: ServerState = Depends(get_state)):
-    session_map, running_ids = state.get_session_snapshot()
+@router.get("/runs")
+def get_runs(state: ServerState = Depends(get_state)):
+    run_map, running_ids = state.get_run_snapshot()
 
-    running_rows = DB.get_experiments_by_ids(running_ids)
-    finished_rows = DB.get_experiments_excluding_ids(
-        running_ids, limit=state.EXPERIMENT_PAGE_SIZE,
+    running_rows = DB.get_runs_by_ids(running_ids)
+    finished_rows = DB.get_runs_excluding_ids(
+        running_ids, limit=state.RUN_PAGE_SIZE,
     )
-    finished_count = DB.get_experiment_count_excluding_ids(running_ids)
-    has_more = finished_count > state.EXPERIMENT_PAGE_SIZE
+    finished_count = DB.get_run_count_excluding_ids(running_ids)
+    has_more = finished_count > state.RUN_PAGE_SIZE
 
-    experiments = [state._format_experiment_row(row, session_map) for row in running_rows + finished_rows]
-    return {"type": "experiment_list", "experiments": experiments, "has_more": has_more}
-
-
-@router.get("/experiments/more")
-def get_more_experiments(offset: int = 0, state: ServerState = Depends(get_state)):
-    session_map, running_ids = state.get_session_snapshot()
-    db_rows = DB.get_experiments_excluding_ids(running_ids, limit=state.EXPERIMENT_PAGE_SIZE, offset=offset)
-    finished_count = DB.get_experiment_count_excluding_ids(running_ids)
-    has_more = (offset + state.EXPERIMENT_PAGE_SIZE) < finished_count
-    experiments = [state._format_experiment_row(row, session_map) for row in db_rows]
-    return {"type": "more_experiments", "experiments": experiments, "has_more": has_more}
+    runs = [state._format_run_row(row, run_map) for row in running_rows + finished_rows]
+    return {"type": "run_list", "runs": runs, "has_more": has_more}
 
 
-@router.get("/experiment/{session_id}")
-def get_experiment_detail(session_id: str, state: ServerState = Depends(get_state)):
-    row = DB.get_experiment_detail(session_id)
-    session_map, _ = state.get_session_snapshot()
-    session = session_map.get(session_id)
-    status = session.status if session else "finished"
+@router.get("/runs/more")
+def get_more_runs(offset: int = 0, state: ServerState = Depends(get_state)):
+    run_map, running_ids = state.get_run_snapshot()
+    db_rows = DB.get_runs_excluding_ids(running_ids, limit=state.RUN_PAGE_SIZE, offset=offset)
+    finished_count = DB.get_run_count_excluding_ids(running_ids)
+    has_more = (offset + state.RUN_PAGE_SIZE) < finished_count
+    runs = [state._format_run_row(row, run_map) for row in db_rows]
+    return {"type": "more_runs", "runs": runs, "has_more": has_more}
+
+
+@router.get("/run/{run_id}")
+def get_run_detail(run_id: str, state: ServerState = Depends(get_state)):
+    row = DB.get_run_detail(run_id)
+    run_map, _ = state.get_run_snapshot()
+    run = run_map.get(run_id)
+    status = run.status if run else "finished"
     if not row:
-        return {"type": "experiment_detail", "session_id": session_id,
-                "run_name": "", "timestamp": "", "runtime_seconds": None, "active_runtime_seconds": None,
+        return {"type": "run_detail", "run_id": run_id,
+                "name": "", "timestamp": "", "runtime_seconds": None, "active_runtime_seconds": None,
                 "custom_metrics": {}, "thumb_label": None, "tags": [], "notes": "", "log": "", "version_date": None, "status": status}
     return {
-        "type": "experiment_detail",
-        "session_id": session_id,
-        "run_name": row["name"] or "",
+        "type": "run_detail",
+        "run_id": run_id,
+        "name": row["name"] or "",
         "timestamp": row["timestamp"] or "",
         "runtime_seconds": DB._normalize_runtime_seconds(row["runtime_seconds"]),
         "active_runtime_seconds": DB._normalize_runtime_seconds(row["active_runtime_seconds"]),
@@ -636,16 +652,16 @@ def get_experiment_detail(session_id: str, state: ServerState = Depends(get_stat
     }
 
 
-@router.get("/lessons-applied/{session_id}")
-def get_lessons_applied(session_id: str, state: ServerState = Depends(get_state)):
-    records = DB.get_lessons_applied_for_session(session_id)
-    return {"type": "lessons_applied", "session_id": session_id, "records": records}
+@router.get("/lessons-applied/{run_id}")
+def get_lessons_applied(run_id: str, state: ServerState = Depends(get_state)):
+    records = DB.get_lessons_applied_for_run(run_id)
+    return {"type": "lessons_applied", "run_id": run_id, "records": records}
 
 
-@router.get("/sessions-for-lesson/{lesson_id}")
-def get_sessions_for_lesson(lesson_id: str, state: ServerState = Depends(get_state)):
-    records = DB.get_sessions_for_lesson(lesson_id)
-    return {"type": "sessions_for_lesson", "lesson_id": lesson_id, "records": records}
+@router.get("/runs-for-lesson/{lesson_id}")
+def get_runs_for_lesson(lesson_id: str, state: ServerState = Depends(get_state)):
+    records = DB.get_runs_for_lesson(lesson_id)
+    return {"type": "runs_for_lesson", "lesson_id": lesson_id, "records": records}
 
 
 @router.post("/edit-input")
@@ -653,11 +669,11 @@ def edit_input(req: EditInputRequest, state: ServerState = Depends(get_state)):
     try:
         handle_edit_input(
             state,
-            {"session_id": req.session_id, "node_uuid": req.node_uuid, "value": req.value},
+            {"run_id": req.run_id, "node_uuid": req.node_uuid, "value": req.value},
         )
     except (BadRequestError, ResourceNotFoundError) as exc:
         return _request_error_response(exc)
-    state.schedule_graph_update(req.session_id)
+    state.schedule_graph_update(req.run_id)
     return {"ok": True}
 
 
@@ -666,95 +682,95 @@ def edit_output(req: EditOutputRequest, state: ServerState = Depends(get_state))
     try:
         handle_edit_output(
             state,
-            {"session_id": req.session_id, "node_uuid": req.node_uuid, "value": req.value},
+            {"run_id": req.run_id, "node_uuid": req.node_uuid, "value": req.value},
         )
     except (BadRequestError, ResourceNotFoundError) as exc:
         return _request_error_response(exc)
-    state.schedule_graph_update(req.session_id)
+    state.schedule_graph_update(req.run_id)
     return {"ok": True}
 
 
 @router.post("/update-node")
 def update_node(req: UpdateNodeRequest, state: ServerState = Depends(get_state)):
     handle_update_node(state, {
-        "session_id": req.session_id, "node_uuid": req.node_uuid,
+        "run_id": req.run_id, "node_uuid": req.node_uuid,
         "field": req.field, "value": req.value,
     })
-    state.schedule_graph_update(req.session_id)
+    state.schedule_graph_update(req.run_id)
     return {"ok": True}
 
 
 @router.post("/update-run-name")
 def update_run_name(req: UpdateRunNameRequest, state: ServerState = Depends(get_state)):
-    handle_update_run_name(state, {"session_id": req.session_id, "run_name": req.run_name})
+    handle_update_run_name(state, {"run_id": req.run_id, "name": req.name})
     return {"ok": True}
 
 
 @router.post("/update-thumb-label")
 def update_thumb_label(req: UpdateThumbLabelRequest, state: ServerState = Depends(get_state)):
-    handle_update_thumb_label(state, {"session_id": req.session_id, "thumb_label": req.thumb_label})
+    handle_update_thumb_label(state, {"run_id": req.run_id, "thumb_label": req.thumb_label})
     return {"ok": True}
 
 
 @router.post("/update-run-tags")
 def update_run_tags(req: UpdateRunTagsRequest, state: ServerState = Depends(get_state)):
     try:
-        tags = DB.replace_run_tags(req.session_id, req.tag_ids)
+        tags = DB.replace_run_tags(req.run_id, req.tag_ids)
     except ValueError as exc:
         message = str(exc)
         status_code = 404 if "not found" in message.lower() else 400
         return JSONResponse(status_code=status_code, content={"error": message})
-    state.notify_experiment_list_changed()
+    state.notify_run_list_changed()
     return {"ok": True, "tags": tags}
 
 
 @router.post("/update-notes")
 def update_notes(req: UpdateNotesRequest, state: ServerState = Depends(get_state)):
-    handle_update_notes(state, {"session_id": req.session_id, "notes": req.notes})
+    handle_update_notes(state, {"run_id": req.run_id, "notes": req.notes})
     return {"ok": True}
 
 
 @router.post("/restart")
 def restart(req: RestartRequest, state: ServerState = Depends(get_state)):
-    session_id = req.session_id
+    run_id = req.run_id
     try:
-        parent_session_id = DB.get_parent_session_id(session_id)
+        parent_run_id = DB.get_parent_run_id(run_id)
     except ResourceNotFoundError as exc:
         return _request_error_response(exc)
 
-    session_map, _ = state.get_session_snapshot()
-    parent_session = session_map.get(parent_session_id)
-    # Capture status before start_session_attempt mutates the shared Session object
-    # (session_id == parent_session_id for normal runs, so they share the same object)
-    parent_was_running = parent_session.status == "running" if parent_session else False
-    parent_had_live_runner = parent_was_running and parent_session_id in state.runner_event_queues
+    run_map, _ = state.get_run_snapshot()
+    parent_run = run_map.get(parent_run_id)
+    # Capture status before start_run_attempt mutates the shared Run object
+    # (run_id == parent_run_id for normal runs, so they share the same object)
+    parent_was_running = parent_run.status == "running" if parent_run else False
+    parent_had_live_runner = parent_was_running and parent_run_id in state.runner_event_queues
 
-    state.start_session_attempt(session_id)
+    state.start_run_attempt(run_id)
 
     # Clear UI state and schedule broadcasts
-    state.clear_session_ui_and_schedule_broadcast(session_id)
+    state.clear_run_ui_and_schedule_broadcast(run_id)
 
     if parent_had_live_runner:
         # Send restart to running runner via SSE
-        state.schedule_runner_event(parent_session_id, {"type": "restart"})
-    elif parent_session:
-        # Distinct parent sessions can remain stale "running" in memory after their
+        state.schedule_runner_event(parent_run_id, {"type": "restart"})
+    elif parent_run:
+        # Distinct parent runs can remain stale "running" in memory after their
         # runner transport disappears. Reconcile that state before spawning directly.
-        if parent_was_running and parent_session_id != session_id:
-            state.checkpoint_interrupted_session_runtime(parent_session_id)
-            parent_session.status = "finished"
-            state.notify_experiment_list_changed()
+        if parent_was_running and parent_run_id != run_id:
+            state.checkpoint_interrupted_run_runtime(parent_run_id)
+            parent_run.status = "finished"
+            state.notify_run_list_changed()
         # Spawn a new process directly
-        state.spawn_session_process(parent_session_id, session_id)
+        state.spawn_run_process(parent_run_id, run_id)
 
     return {"ok": True}
 
 
 @router.post("/erase")
 def erase(req: EraseRequest, state: ServerState = Depends(get_state)):
-    handle_erase(state, {"session_id": req.session_id})
+    handle_erase(state, {"run_id": req.run_id})
     # After erase, trigger restart
-    restart(RestartRequest(session_id=req.session_id), state)
+    restart(RestartRequest(run_id=req.run_id), state)
     return {"ok": True}
 
 
@@ -768,11 +784,11 @@ def shutdown(state: ServerState = Depends(get_state)):
 @router.post("/clear")
 def clear(state: ServerState = Depends(get_state)):
     DB.clear_db()
-    state.session_graphs.clear()
-    state.sessions.clear()
-    state.notify_experiment_list_changed()
+    state.run_graphs.clear()
+    state.runs.clear()
+    state.notify_run_list_changed()
     state.schedule_broadcast(
-        {"type": "graph_update", "session_id": None, "payload": {"nodes": [], "edges": []}}
+        {"type": "graph_update", "run_id": None, "payload": {"nodes": [], "edges": []}}
     )
     return {"ok": True}
 
@@ -787,15 +803,15 @@ class ChatMessageRequest(BaseModel):
     model: str = "anthropic/claude-sonnet-4-6"
 
 
-@router.post("/prefetch/{session_id}", status_code=202)
+@router.post("/prefetch/{run_id}", status_code=202)
 async def prefetch_trace(
-    session_id: str,
+    run_id: str,
     model: str = "anthropic/claude-sonnet-4-6",
     state: ServerState = Depends(get_state),
 ):
-    session_map, _running_ids = state.get_session_snapshot()
-    session = session_map.get(session_id)
-    if session and session.status == "running":
+    run_map, _running_ids = state.get_run_snapshot()
+    run = run_map.get(run_id)
+    if run and run.status == "running":
         # Don't prefetch while still running (summary will be invalid shortly)
         return {"status": "skipped", "reason": "run_still_active"}
 
@@ -803,24 +819,28 @@ async def prefetch_trace(
     from sovara.common.constants import HOST, INFERENCE_PORT
     async with httpx.AsyncClient() as client:
         await client.post(
-            f"http://{HOST}:{INFERENCE_PORT}/prefetch/{session_id}",
+            f"http://{HOST}:{INFERENCE_PORT}/prefetch/{run_id}",
             params={"model": model},
             timeout=5.0,
         )
     return {"status": "prefetching"}
 
 
-@router.post("/chat/{session_id}")
-async def chat(session_id: str, req: ChatMessageRequest):
+@router.post("/chat/{run_id}")
+async def chat(run_id: str, req: ChatMessageRequest):
     import httpx
     from fastapi import HTTPException
     from sovara.common.constants import HOST, INFERENCE_PORT
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            f"http://{HOST}:{INFERENCE_PORT}/chat/{session_id}",
+            f"http://{HOST}:{INFERENCE_PORT}/chat/{run_id}",
             json=req.model_dump(),
             timeout=120.0,
         )
     if resp.status_code != 200:
-        raise HTTPException(resp.status_code, resp.json().get("detail", "Chat error"))
-    return resp.json()
+        raise HTTPException(resp.status_code, _extract_http_error_detail(resp))
+    try:
+        return resp.json()
+    except ValueError:
+        logger.error("Inference server returned invalid JSON for run %s", run_id)
+        raise HTTPException(502, "Invalid response from inference server")

@@ -23,7 +23,7 @@ export const mockTags: Tag[] = [
   { id: "tag-1", name: "fast-track", color: "#bf8700" },
   { id: "tag-2", name: "analytics", color: "#0969da" },
   { id: "tag-3", name: "production", color: "#1a7f37" },
-  { id: "tag-4", name: "experiment", color: "#8250df" },
+  { id: "tag-4", name: "run", color: "#8250df" },
   { id: "tag-5", name: "debug", color: "#cf222e" },
   { id: "tag-6", name: "benchmark", color: "#0598d5" },
   { id: "tag-7", name: "sql", color: "#5e60ce" },
@@ -51,7 +51,7 @@ export interface Project {
 
 export interface Run {
   id: string;
-  sessionId: string;
+  runId: string;
   name: string;
   status: "running" | "finished" | "failed";
   timestamp: string;
@@ -108,7 +108,7 @@ export const mockProjects: Project[] = [
 export const mockRuns: Run[] = [
   {
     id: "run-4",
-    sessionId: "d1f47a6c",
+    runId: "d1f47a6c",
     name: "Run 49",
     status: "running",
     timestamp: "2026-03-12 10:45:00",
@@ -124,7 +124,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-9",
-    sessionId: "c7e19f34",
+    runId: "c7e19f34",
     name: "Run 50",
     status: "running",
     timestamp: "2026-03-12 10:52:17",
@@ -140,7 +140,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-100",
-    sessionId: "2fad5b74",
+    runId: "2fad5b74",
     name: "Run 47",
     status: "failed",
     timestamp: "2026-03-12 23:39:07",
@@ -156,7 +156,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-101",
-    sessionId: "c7af2d35",
+    runId: "c7af2d35",
     name: "Run 46",
     status: "finished",
     timestamp: "2026-03-12 22:49:06",
@@ -172,7 +172,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-102",
-    sessionId: "23f97e3f",
+    runId: "23f97e3f",
     name: "Run 45",
     status: "finished",
     timestamp: "2026-03-12 22:25:05",
@@ -188,7 +188,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-103",
-    sessionId: "3619e3ae",
+    runId: "3619e3ae",
     name: "Run 44",
     status: "finished",
     timestamp: "2026-03-12 21:18:44",
@@ -199,12 +199,12 @@ export const mockRuns: Run[] = [
     codeVersion: "ae21b4f7",
     success: true,
     confidence: 82,
-    tags: ["fast-track", "experiment"],
+    tags: ["fast-track", "run"],
     comment: "Looks good, matches expected output",
   },
   {
     id: "run-104",
-    sessionId: "9719141f",
+    runId: "9719141f",
     name: "Run 43",
     status: "failed",
     timestamp: "2026-03-12 20:26:55",
@@ -220,7 +220,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-105",
-    sessionId: "5fbc010f",
+    runId: "5fbc010f",
     name: "Run 42",
     status: "finished",
     timestamp: "2026-03-12 19:56:09",
@@ -231,12 +231,12 @@ export const mockRuns: Run[] = [
     codeVersion: "b4f28a63",
     success: true,
     confidence: 89,
-    tags: ["debug", "experiment"],
+    tags: ["debug", "run"],
     comment: "Regression detected in join logic",
   },
   {
     id: "run-106",
-    sessionId: "2fb15768",
+    runId: "2fb15768",
     name: "Run 41",
     status: "finished",
     timestamp: "2026-03-12 19:14:22",
@@ -252,7 +252,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-107",
-    sessionId: "719108cb",
+    runId: "719108cb",
     name: "Run 40",
     status: "failed",
     timestamp: "2026-03-12 18:16:34",
@@ -268,7 +268,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-108",
-    sessionId: "dd42a782",
+    runId: "dd42a782",
     name: "Run 39",
     status: "finished",
     timestamp: "2026-03-12 17:17:40",
@@ -284,7 +284,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-109",
-    sessionId: "3eb49abc",
+    runId: "3eb49abc",
     name: "Run 38",
     status: "finished",
     timestamp: "2026-03-12 16:54:02",
@@ -300,7 +300,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-110",
-    sessionId: "0be25bf5",
+    runId: "0be25bf5",
     name: "Run 37",
     status: "failed",
     timestamp: "2026-03-12 16:02:55",
@@ -311,12 +311,12 @@ export const mockRuns: Run[] = [
     codeVersion: "9c4d7f2a",
     success: false,
     confidence: 37,
-    tags: ["experiment"],
+    tags: ["run"],
     comment: "",
   },
   {
     id: "run-111",
-    sessionId: "9d8d5a81",
+    runId: "9d8d5a81",
     name: "Run 36",
     status: "finished",
     timestamp: "2026-03-12 15:11:10",
@@ -332,7 +332,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-112",
-    sessionId: "94330b16",
+    runId: "94330b16",
     name: "Run 35",
     status: "finished",
     timestamp: "2026-03-12 14:06:43",
@@ -348,7 +348,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-113",
-    sessionId: "c520e559",
+    runId: "c520e559",
     name: "Run 34",
     status: "finished",
     timestamp: "2026-03-12 13:43:29",
@@ -364,7 +364,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-114",
-    sessionId: "e4b862b5",
+    runId: "e4b862b5",
     name: "Run 33",
     status: "failed",
     timestamp: "2026-03-12 12:37:49",
@@ -375,12 +375,12 @@ export const mockRuns: Run[] = [
     codeVersion: "73c9d1e2",
     success: false,
     confidence: 22,
-    tags: ["analytics", "experiment"],
+    tags: ["analytics", "run"],
     comment: "Need to review edge case handling",
   },
   {
     id: "run-115",
-    sessionId: "92163259",
+    runId: "92163259",
     name: "Run 32",
     status: "finished",
     timestamp: "2026-03-12 12:06:04",
@@ -396,7 +396,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-116",
-    sessionId: "5427338f",
+    runId: "5427338f",
     name: "Run 31",
     status: "finished",
     timestamp: "2026-03-12 11:15:56",
@@ -412,7 +412,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-117",
-    sessionId: "45a089d1",
+    runId: "45a089d1",
     name: "Run 30",
     status: "finished",
     timestamp: "2026-03-12 10:33:47",
@@ -428,7 +428,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-118",
-    sessionId: "cd3086c6",
+    runId: "cd3086c6",
     name: "Run 29",
     status: "finished",
     timestamp: "2026-03-12 09:25:37",
@@ -444,7 +444,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-119",
-    sessionId: "56b341c9",
+    runId: "56b341c9",
     name: "Run 28",
     status: "failed",
     timestamp: "2026-03-12 08:50:31",
@@ -460,7 +460,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-120",
-    sessionId: "44ef888f",
+    runId: "44ef888f",
     name: "Run 27",
     status: "finished",
     timestamp: "2026-03-12 07:59:10",
@@ -476,7 +476,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-121",
-    sessionId: "78929496",
+    runId: "78929496",
     name: "Run 26",
     status: "finished",
     timestamp: "2026-03-12 07:20:38",
@@ -487,12 +487,12 @@ export const mockRuns: Run[] = [
     codeVersion: "1b8e3c6d",
     success: true,
     confidence: 84,
-    tags: ["production", "experiment"],
+    tags: ["production", "run"],
     comment: "Need to review edge case handling",
   },
   {
     id: "run-122",
-    sessionId: "747a4168",
+    runId: "747a4168",
     name: "Run 25",
     status: "finished",
     timestamp: "2026-03-12 06:15:00",
@@ -508,7 +508,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-123",
-    sessionId: "9d67b71b",
+    runId: "9d67b71b",
     name: "Run 24",
     status: "finished",
     timestamp: "2026-03-12 05:34:17",
@@ -524,7 +524,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-124",
-    sessionId: "d624b222",
+    runId: "d624b222",
     name: "Run 23",
     status: "failed",
     timestamp: "2026-03-12 05:06:29",
@@ -540,7 +540,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-125",
-    sessionId: "90cf7112",
+    runId: "90cf7112",
     name: "Run 22",
     status: "finished",
     timestamp: "2026-03-12 04:19:32",
@@ -556,7 +556,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-126",
-    sessionId: "c24ebe78",
+    runId: "c24ebe78",
     name: "Run 21",
     status: "failed",
     timestamp: "2026-03-12 03:18:12",
@@ -572,7 +572,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-127",
-    sessionId: "5765bde7",
+    runId: "5765bde7",
     name: "Run 20",
     status: "finished",
     timestamp: "2026-03-12 02:21:33",
@@ -583,12 +583,12 @@ export const mockRuns: Run[] = [
     codeVersion: "f2a8b157",
     success: true,
     confidence: 88,
-    tags: ["experiment", "review"],
+    tags: ["run", "review"],
     comment: "Baseline for comparison",
   },
   {
     id: "run-128",
-    sessionId: "c11b1e1c",
+    runId: "c11b1e1c",
     name: "Run 19",
     status: "finished",
     timestamp: "2026-03-12 01:34:23",
@@ -604,7 +604,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-129",
-    sessionId: "97651908",
+    runId: "97651908",
     name: "Run 18",
     status: "finished",
     timestamp: "2026-03-12 00:48:36",
@@ -620,7 +620,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-130",
-    sessionId: "c92c22c6",
+    runId: "c92c22c6",
     name: "Run 17",
     status: "finished",
     timestamp: "2026-03-12 00:27:48",
@@ -631,12 +631,12 @@ export const mockRuns: Run[] = [
     codeVersion: "9c4d7f2a",
     success: true,
     confidence: 76,
-    tags: ["debug", "review", "experiment"],
+    tags: ["debug", "review", "run"],
     comment: "",
   },
   {
     id: "run-131",
-    sessionId: "839cc642",
+    runId: "839cc642",
     name: "Run 16",
     status: "failed",
     timestamp: "2026-03-11 23:12:35",
@@ -652,7 +652,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-132",
-    sessionId: "ca5f73b3",
+    runId: "ca5f73b3",
     name: "Run 15",
     status: "finished",
     timestamp: "2026-03-11 22:25:13",
@@ -668,7 +668,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-133",
-    sessionId: "d1d6c993",
+    runId: "d1d6c993",
     name: "Run 14",
     status: "finished",
     timestamp: "2026-03-11 21:47:41",
@@ -684,7 +684,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-134",
-    sessionId: "89b6ebfe",
+    runId: "89b6ebfe",
     name: "Run 13",
     status: "failed",
     timestamp: "2026-03-11 21:19:21",
@@ -700,7 +700,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-135",
-    sessionId: "01ac3aaf",
+    runId: "01ac3aaf",
     name: "Run 12",
     status: "finished",
     timestamp: "2026-03-11 20:34:04",
@@ -716,7 +716,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-136",
-    sessionId: "46628192",
+    runId: "46628192",
     name: "Run 11",
     status: "failed",
     timestamp: "2026-03-11 19:20:21",
@@ -732,7 +732,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-137",
-    sessionId: "91393c1d",
+    runId: "91393c1d",
     name: "Run 10",
     status: "failed",
     timestamp: "2026-03-11 18:54:34",
@@ -748,7 +748,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-138",
-    sessionId: "d0952b73",
+    runId: "d0952b73",
     name: "Run 9",
     status: "finished",
     timestamp: "2026-03-11 17:48:26",
@@ -764,7 +764,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-139",
-    sessionId: "a408641e",
+    runId: "a408641e",
     name: "Run 8",
     status: "finished",
     timestamp: "2026-03-11 17:13:26",
@@ -780,7 +780,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-140",
-    sessionId: "64fed97b",
+    runId: "64fed97b",
     name: "Run 7",
     status: "finished",
     timestamp: "2026-03-11 16:36:03",
@@ -796,7 +796,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-141",
-    sessionId: "48302a0d",
+    runId: "48302a0d",
     name: "Run 6",
     status: "finished",
     timestamp: "2026-03-11 15:45:12",
@@ -812,7 +812,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-142",
-    sessionId: "085f6355",
+    runId: "085f6355",
     name: "Run 5",
     status: "finished",
     timestamp: "2026-03-11 14:57:29",
@@ -828,7 +828,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-143",
-    sessionId: "8d8e8e4c",
+    runId: "8d8e8e4c",
     name: "Run 4",
     status: "failed",
     timestamp: "2026-03-11 13:51:35",
@@ -844,7 +844,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-144",
-    sessionId: "40c747a7",
+    runId: "40c747a7",
     name: "Run 3",
     status: "finished",
     timestamp: "2026-03-11 13:02:48",
@@ -860,7 +860,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-145",
-    sessionId: "f5706680",
+    runId: "f5706680",
     name: "Run 2",
     status: "finished",
     timestamp: "2026-03-11 12:38:55",
@@ -871,12 +871,12 @@ export const mockRuns: Run[] = [
     codeVersion: "b4f28a63",
     success: true,
     confidence: 71,
-    tags: ["debug", "benchmark", "experiment"],
+    tags: ["debug", "benchmark", "run"],
     comment: "",
   },
   {
     id: "run-146",
-    sessionId: "bdd01576",
+    runId: "bdd01576",
     name: "Run 1",
     status: "finished",
     timestamp: "2026-03-11 11:45:16",
@@ -887,12 +887,12 @@ export const mockRuns: Run[] = [
     codeVersion: "d1e7c390",
     success: true,
     confidence: 97,
-    tags: ["regression", "benchmark", "experiment"],
+    tags: ["regression", "benchmark", "run"],
     comment: "Baseline for comparison",
   },
   {
     id: "run-147",
-    sessionId: "a45a5a29",
+    runId: "a45a5a29",
     name: "Run 0",
     status: "finished",
     timestamp: "2026-03-11 10:40:46",
@@ -908,7 +908,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-148",
-    sessionId: "ee6f647e",
+    runId: "ee6f647e",
     name: "Run -1",
     status: "finished",
     timestamp: "2026-03-11 10:17:03",
@@ -924,7 +924,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-149",
-    sessionId: "bc452462",
+    runId: "bc452462",
     name: "Run -2",
     status: "finished",
     timestamp: "2026-03-11 09:35:37",
@@ -940,7 +940,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-150",
-    sessionId: "5c5eea61",
+    runId: "5c5eea61",
     name: "Run -3",
     status: "finished",
     timestamp: "2026-03-11 08:47:54",
@@ -956,7 +956,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-151",
-    sessionId: "a25e3e58",
+    runId: "a25e3e58",
     name: "Run -4",
     status: "finished",
     timestamp: "2026-03-11 07:50:07",
@@ -972,7 +972,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-152",
-    sessionId: "3f0dc49d",
+    runId: "3f0dc49d",
     name: "Run -5",
     status: "finished",
     timestamp: "2026-03-11 06:56:05",
@@ -988,7 +988,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-153",
-    sessionId: "c56d3d33",
+    runId: "c56d3d33",
     name: "Run -6",
     status: "finished",
     timestamp: "2026-03-11 06:07:45",
@@ -1004,7 +1004,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-154",
-    sessionId: "0fdf9ec4",
+    runId: "0fdf9ec4",
     name: "Run -7",
     status: "finished",
     timestamp: "2026-03-11 05:21:19",
@@ -1020,7 +1020,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-155",
-    sessionId: "e34f3cf4",
+    runId: "e34f3cf4",
     name: "Run -8",
     status: "failed",
     timestamp: "2026-03-11 04:36:06",
@@ -1036,7 +1036,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-156",
-    sessionId: "389cb0d8",
+    runId: "389cb0d8",
     name: "Run -9",
     status: "finished",
     timestamp: "2026-03-11 03:38:22",
@@ -1047,12 +1047,12 @@ export const mockRuns: Run[] = [
     codeVersion: "d1e7c390",
     success: true,
     confidence: 83,
-    tags: ["experiment", "regression"],
+    tags: ["run", "regression"],
     comment: "",
   },
   {
     id: "run-157",
-    sessionId: "05b2209d",
+    runId: "05b2209d",
     name: "Run -10",
     status: "finished",
     timestamp: "2026-03-11 03:06:53",
@@ -1068,7 +1068,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-158",
-    sessionId: "a78a0c66",
+    runId: "a78a0c66",
     name: "Run -11",
     status: "failed",
     timestamp: "2026-03-11 02:13:33",
@@ -1084,7 +1084,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-159",
-    sessionId: "517bbbfb",
+    runId: "517bbbfb",
     name: "Run -12",
     status: "failed",
     timestamp: "2026-03-11 01:43:56",
@@ -1100,7 +1100,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-160",
-    sessionId: "1c2d1f2e",
+    runId: "1c2d1f2e",
     name: "Run -13",
     status: "finished",
     timestamp: "2026-03-11 00:42:09",
@@ -1116,7 +1116,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-161",
-    sessionId: "a9d3f81a",
+    runId: "a9d3f81a",
     name: "Run -14",
     status: "finished",
     timestamp: "2026-03-10 23:51:40",
@@ -1132,7 +1132,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-162",
-    sessionId: "45239689",
+    runId: "45239689",
     name: "Run -15",
     status: "finished",
     timestamp: "2026-03-10 23:24:05",
@@ -1148,7 +1148,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-163",
-    sessionId: "de24bfea",
+    runId: "de24bfea",
     name: "Run -16",
     status: "finished",
     timestamp: "2026-03-10 22:14:08",
@@ -1164,7 +1164,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-164",
-    sessionId: "2b6f41f1",
+    runId: "2b6f41f1",
     name: "Run -17",
     status: "finished",
     timestamp: "2026-03-10 21:34:45",
@@ -1180,7 +1180,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-165",
-    sessionId: "795bf1fe",
+    runId: "795bf1fe",
     name: "Run -18",
     status: "finished",
     timestamp: "2026-03-10 20:36:09",
@@ -1196,7 +1196,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-166",
-    sessionId: "76063bdd",
+    runId: "76063bdd",
     name: "Run -19",
     status: "failed",
     timestamp: "2026-03-10 20:04:08",
@@ -1212,7 +1212,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-167",
-    sessionId: "62361191",
+    runId: "62361191",
     name: "Run -20",
     status: "finished",
     timestamp: "2026-03-10 19:03:02",
@@ -1223,12 +1223,12 @@ export const mockRuns: Run[] = [
     codeVersion: "f2a8b157",
     success: true,
     confidence: 81,
-    tags: ["regression", "debug", "experiment"],
+    tags: ["regression", "debug", "run"],
     comment: "Approved for production",
   },
   {
     id: "run-168",
-    sessionId: "8d40feb6",
+    runId: "8d40feb6",
     name: "Run -21",
     status: "finished",
     timestamp: "2026-03-10 18:40:22",
@@ -1239,12 +1239,12 @@ export const mockRuns: Run[] = [
     codeVersion: "4c6e91d3",
     success: true,
     confidence: 94,
-    tags: ["experiment"],
+    tags: ["run"],
     comment: "",
   },
   {
     id: "run-169",
-    sessionId: "202fff58",
+    runId: "202fff58",
     name: "Run -22",
     status: "finished",
     timestamp: "2026-03-10 17:52:59",
@@ -1260,7 +1260,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-170",
-    sessionId: "29abee29",
+    runId: "29abee29",
     name: "Run -23",
     status: "finished",
     timestamp: "2026-03-10 17:04:56",
@@ -1276,7 +1276,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-171",
-    sessionId: "b94794d7",
+    runId: "b94794d7",
     name: "Run -24",
     status: "finished",
     timestamp: "2026-03-10 15:57:59",
@@ -1292,7 +1292,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-172",
-    sessionId: "83e3a8d3",
+    runId: "83e3a8d3",
     name: "Run -25",
     status: "finished",
     timestamp: "2026-03-10 15:13:06",
@@ -1308,7 +1308,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-173",
-    sessionId: "eaedd42d",
+    runId: "eaedd42d",
     name: "Run -26",
     status: "finished",
     timestamp: "2026-03-10 14:42:52",
@@ -1324,7 +1324,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-174",
-    sessionId: "82bc5b63",
+    runId: "82bc5b63",
     name: "Run -27",
     status: "finished",
     timestamp: "2026-03-10 13:34:14",
@@ -1340,7 +1340,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-175",
-    sessionId: "15102120",
+    runId: "15102120",
     name: "Run -28",
     status: "finished",
     timestamp: "2026-03-10 12:47:04",
@@ -1356,7 +1356,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-176",
-    sessionId: "4ac9864c",
+    runId: "4ac9864c",
     name: "Run -29",
     status: "finished",
     timestamp: "2026-03-10 12:15:43",
@@ -1372,7 +1372,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-177",
-    sessionId: "1ff0dd6e",
+    runId: "1ff0dd6e",
     name: "Run -30",
     status: "failed",
     timestamp: "2026-03-10 11:12:16",
@@ -1388,7 +1388,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-178",
-    sessionId: "e8370ac3",
+    runId: "e8370ac3",
     name: "Run -31",
     status: "finished",
     timestamp: "2026-03-10 10:40:22",
@@ -1404,7 +1404,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-179",
-    sessionId: "9b58139a",
+    runId: "9b58139a",
     name: "Run -32",
     status: "finished",
     timestamp: "2026-03-10 10:03:24",
@@ -1420,7 +1420,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-180",
-    sessionId: "462c6049",
+    runId: "462c6049",
     name: "Run -33",
     status: "finished",
     timestamp: "2026-03-10 09:06:00",
@@ -1436,7 +1436,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-181",
-    sessionId: "50cc6a3d",
+    runId: "50cc6a3d",
     name: "Run -34",
     status: "finished",
     timestamp: "2026-03-10 08:02:42",
@@ -1452,7 +1452,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-182",
-    sessionId: "605f2660",
+    runId: "605f2660",
     name: "Run -35",
     status: "finished",
     timestamp: "2026-03-10 07:22:57",
@@ -1468,7 +1468,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-183",
-    sessionId: "4594dba9",
+    runId: "4594dba9",
     name: "Run -36",
     status: "finished",
     timestamp: "2026-03-10 06:46:44",
@@ -1484,7 +1484,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-184",
-    sessionId: "8b46250c",
+    runId: "8b46250c",
     name: "Run -37",
     status: "finished",
     timestamp: "2026-03-10 05:41:24",
@@ -1500,7 +1500,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-185",
-    sessionId: "49c541ba",
+    runId: "49c541ba",
     name: "Run -38",
     status: "finished",
     timestamp: "2026-03-10 05:12:35",
@@ -1516,7 +1516,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-186",
-    sessionId: "17600954",
+    runId: "17600954",
     name: "Run -39",
     status: "finished",
     timestamp: "2026-03-10 04:12:37",
@@ -1532,7 +1532,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-187",
-    sessionId: "bf907bf8",
+    runId: "bf907bf8",
     name: "Run -40",
     status: "finished",
     timestamp: "2026-03-10 03:29:13",
@@ -1548,7 +1548,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-188",
-    sessionId: "1de758d2",
+    runId: "1de758d2",
     name: "Run -41",
     status: "finished",
     timestamp: "2026-03-10 02:47:42",
@@ -1564,7 +1564,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-189",
-    sessionId: "c6edc005",
+    runId: "c6edc005",
     name: "Run -42",
     status: "finished",
     timestamp: "2026-03-10 02:09:43",
@@ -1580,7 +1580,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-190",
-    sessionId: "b106f277",
+    runId: "b106f277",
     name: "Run -43",
     status: "finished",
     timestamp: "2026-03-10 01:22:30",
@@ -1596,7 +1596,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-191",
-    sessionId: "f7a3bb03",
+    runId: "f7a3bb03",
     name: "Run -44",
     status: "finished",
     timestamp: "2026-03-10 00:24:12",
@@ -1612,7 +1612,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-192",
-    sessionId: "6283e730",
+    runId: "6283e730",
     name: "Run -45",
     status: "finished",
     timestamp: "2026-03-09 23:51:41",
@@ -1628,7 +1628,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-193",
-    sessionId: "7fd370af",
+    runId: "7fd370af",
     name: "Run -46",
     status: "finished",
     timestamp: "2026-03-09 23:03:51",
@@ -1644,7 +1644,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-194",
-    sessionId: "81e458ce",
+    runId: "81e458ce",
     name: "Run -47",
     status: "failed",
     timestamp: "2026-03-09 21:52:54",
@@ -1660,7 +1660,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-195",
-    sessionId: "5beddd26",
+    runId: "5beddd26",
     name: "Run -48",
     status: "finished",
     timestamp: "2026-03-09 21:18:35",
@@ -1676,7 +1676,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-196",
-    sessionId: "06c4b943",
+    runId: "06c4b943",
     name: "Run -49",
     status: "finished",
     timestamp: "2026-03-09 20:19:32",
@@ -1692,7 +1692,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-197",
-    sessionId: "9940e7e3",
+    runId: "9940e7e3",
     name: "Run -50",
     status: "finished",
     timestamp: "2026-03-09 19:33:30",
@@ -1708,7 +1708,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-198",
-    sessionId: "cf6df5de",
+    runId: "cf6df5de",
     name: "Run -51",
     status: "finished",
     timestamp: "2026-03-09 18:49:49",
@@ -1724,7 +1724,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-199",
-    sessionId: "30f6e8ea",
+    runId: "30f6e8ea",
     name: "Run -52",
     status: "finished",
     timestamp: "2026-03-09 18:04:18",
@@ -1740,7 +1740,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-200",
-    sessionId: "e1265022",
+    runId: "e1265022",
     name: "Run -53",
     status: "failed",
     timestamp: "2026-03-09 17:37:08",
@@ -1756,7 +1756,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-201",
-    sessionId: "67b2f9b8",
+    runId: "67b2f9b8",
     name: "Run -54",
     status: "finished",
     timestamp: "2026-03-09 16:46:04",
@@ -1772,7 +1772,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-202",
-    sessionId: "e58c95ab",
+    runId: "e58c95ab",
     name: "Run -55",
     status: "finished",
     timestamp: "2026-03-09 16:04:13",
@@ -1788,7 +1788,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-203",
-    sessionId: "60de7197",
+    runId: "60de7197",
     name: "Run -56",
     status: "failed",
     timestamp: "2026-03-09 14:48:44",
@@ -1804,7 +1804,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-204",
-    sessionId: "a2b7fe3a",
+    runId: "a2b7fe3a",
     name: "Run -57",
     status: "finished",
     timestamp: "2026-03-09 14:22:48",
@@ -1815,12 +1815,12 @@ export const mockRuns: Run[] = [
     codeVersion: "73c9d1e2",
     success: true,
     confidence: 94,
-    tags: ["fast-track", "experiment"],
+    tags: ["fast-track", "run"],
     comment: "",
   },
   {
     id: "run-205",
-    sessionId: "d0af0512",
+    runId: "d0af0512",
     name: "Run -58",
     status: "finished",
     timestamp: "2026-03-09 13:27:51",
@@ -1836,7 +1836,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-206",
-    sessionId: "07da46a6",
+    runId: "07da46a6",
     name: "Run -59",
     status: "failed",
     timestamp: "2026-03-09 12:44:31",
@@ -1852,7 +1852,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-207",
-    sessionId: "70cd74f4",
+    runId: "70cd74f4",
     name: "Run -60",
     status: "failed",
     timestamp: "2026-03-09 11:58:46",
@@ -1868,7 +1868,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-208",
-    sessionId: "a6a3208d",
+    runId: "a6a3208d",
     name: "Run -61",
     status: "finished",
     timestamp: "2026-03-09 11:06:01",
@@ -1884,7 +1884,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-209",
-    sessionId: "8c84948d",
+    runId: "8c84948d",
     name: "Run -62",
     status: "finished",
     timestamp: "2026-03-09 10:32:55",
@@ -1900,7 +1900,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-210",
-    sessionId: "d6c4aef1",
+    runId: "d6c4aef1",
     name: "Run -63",
     status: "finished",
     timestamp: "2026-03-09 09:43:29",
@@ -1911,12 +1911,12 @@ export const mockRuns: Run[] = [
     codeVersion: "9c4d7f2a",
     success: true,
     confidence: 92,
-    tags: ["experiment", "debug"],
+    tags: ["run", "debug"],
     comment: "Looks good, matches expected output",
   },
   {
     id: "run-211",
-    sessionId: "08bebf1e",
+    runId: "08bebf1e",
     name: "Run -64",
     status: "finished",
     timestamp: "2026-03-09 08:49:16",
@@ -1927,12 +1927,12 @@ export const mockRuns: Run[] = [
     codeVersion: "1b8e3c6d",
     success: true,
     confidence: 98,
-    tags: ["debug", "experiment", "sql"],
+    tags: ["debug", "run", "sql"],
     comment: "",
   },
   {
     id: "run-212",
-    sessionId: "4901cdc7",
+    runId: "4901cdc7",
     name: "Run -65",
     status: "finished",
     timestamp: "2026-03-09 08:14:22",
@@ -1943,12 +1943,12 @@ export const mockRuns: Run[] = [
     codeVersion: "5f7a29e0",
     success: true,
     confidence: 72,
-    tags: ["production", "experiment"],
+    tags: ["production", "run"],
     comment: "Looks good, matches expected output",
   },
   {
     id: "run-213",
-    sessionId: "fc82f5d5",
+    runId: "fc82f5d5",
     name: "Run -66",
     status: "failed",
     timestamp: "2026-03-09 07:27:48",
@@ -1964,7 +1964,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-214",
-    sessionId: "635bf1a1",
+    runId: "635bf1a1",
     name: "Run -67",
     status: "finished",
     timestamp: "2026-03-09 06:22:09",
@@ -1980,7 +1980,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-215",
-    sessionId: "474bb12b",
+    runId: "474bb12b",
     name: "Run -68",
     status: "finished",
     timestamp: "2026-03-09 05:24:13",
@@ -1996,7 +1996,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-216",
-    sessionId: "dfc0a8cd",
+    runId: "dfc0a8cd",
     name: "Run -69",
     status: "finished",
     timestamp: "2026-03-09 04:48:38",
@@ -2012,7 +2012,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-217",
-    sessionId: "1ea3ccab",
+    runId: "1ea3ccab",
     name: "Run -70",
     status: "failed",
     timestamp: "2026-03-09 03:50:19",
@@ -2028,7 +2028,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-218",
-    sessionId: "cd03f1b9",
+    runId: "cd03f1b9",
     name: "Run -71",
     status: "finished",
     timestamp: "2026-03-09 03:12:58",
@@ -2044,7 +2044,7 @@ export const mockRuns: Run[] = [
   },
   {
     id: "run-219",
-    sessionId: "5494d5ec",
+    runId: "5494d5ec",
     name: "Run -72",
     status: "finished",
     timestamp: "2026-03-09 02:44:37",
@@ -2055,7 +2055,7 @@ export const mockRuns: Run[] = [
     codeVersion: "8b3f0a72",
     success: true,
     confidence: 83,
-    tags: ["benchmark", "production", "experiment"],
+    tags: ["benchmark", "production", "run"],
     comment: "Regression detected in join logic",
   }
 ];
@@ -2098,7 +2098,7 @@ export interface GraphData {
   spans?: Span[];
 }
 
-/** Build a mock graph keyed by sessionId for quick lookup. */
+/** Build a mock graph keyed by runId for quick lookup. */
 export const mockGraphs: Record<string, GraphData> = {
   "d1f47a6c": {
     nodes: [

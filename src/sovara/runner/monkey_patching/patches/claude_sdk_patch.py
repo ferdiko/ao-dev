@@ -12,19 +12,19 @@ from typing import List, Dict, Any
 
 from sovara.runner.monkey_patching.patching_utils import send_graph_node_and_edges, capture_stack_trace
 from sovara.runner.string_matching import tokenize, split_html_content, is_content_match
-from sovara.runner.context_manager import get_session_id
+from sovara.runner.context_manager import get_run_id
 from sovara.server.database_manager import DB
 from sovara.common.logger import logger
 
 
-# Module-level storage for content matching (per session)
-# Structure: {session_id: {node_id: [[word_lists]]}}
-_sdk_session_outputs: Dict[str, Dict[str, List[List[str]]]] = {}
+# Module-level storage for content matching (per run)
+# Structure: {run_id: {node_id: [[word_lists]]}}
+_sdk_run_outputs: Dict[str, Dict[str, List[List[str]]]] = {}
 
 # Track tool_use_id -> node_id mapping so we can attach tool results to their nodes
 _sdk_tool_use_to_node: Dict[str, Dict[str, str]] = {}
 
-# Track the last tool node IDs per session for chaining (forms: Redacted → Tool → Redacted → Tool)
+# Track the last tool node IDs per run for chaining (forms: Redacted → Tool → Redacted → Tool)
 _sdk_last_tool_nodes: Dict[str, List[str]] = {}
 
 
@@ -51,9 +51,9 @@ def claude_sdk_patch():
         # Parse the message first (let SDK do its work)
         message = original_parse(data)
 
-        # Get session context
-        session_id = get_session_id()
-        if not session_id:
+        # Get run context
+        run_id = get_run_id()
+        if not run_id:
             return message
 
         api_type = "claude_agent_sdk.parse_message"
@@ -62,9 +62,9 @@ def claude_sdk_patch():
         try:
             # Handle different message types
             if isinstance(message, AssistantMessage):
-                _handle_assistant_message(message, session_id, api_type, stack_trace)
+                _handle_assistant_message(message, run_id, api_type, stack_trace)
             elif isinstance(message, UserMessage):
-                _handle_user_message(message, session_id)
+                _handle_user_message(message, run_id)
         except Exception as e:
             logger.error(f"Error in claude_sdk_patch: {e}")
 
@@ -93,7 +93,7 @@ def claude_sdk_patch():
     logger.info("claude_agent_sdk patch applied")
 
 
-def _handle_assistant_message(message, session_id: str, api_type: str, stack_trace: str):
+def _handle_assistant_message(message, run_id: str, api_type: str, stack_trace: str):
     """Process AssistantMessage: create nodes for tool use blocks."""
     try:
         from claude_agent_sdk.types import ToolUseBlock, TextBlock
@@ -108,26 +108,26 @@ def _handle_assistant_message(message, session_id: str, api_type: str, stack_tra
     # If there are tool use blocks, create a "Redacted LLM calls" node first
     redacted_node_id = None
     if tool_use_blocks:
-        redacted_node_id = _create_redacted_llm_node(session_id, api_type, stack_trace, model)
+        redacted_node_id = _create_redacted_llm_node(run_id, api_type, stack_trace, model)
 
     # Process each block
     tool_node_ids = []
     for block in message.content:
         if isinstance(block, ToolUseBlock):
-            node_id = _process_tool_use(block, session_id, api_type, stack_trace, redacted_node_id)
+            node_id = _process_tool_use(block, run_id, api_type, stack_trace, redacted_node_id)
             if node_id:
                 tool_node_ids.append(node_id)
         elif isinstance(block, TextBlock):
             # Only create nodes for substantial text (final responses, not filler)
             if len(block.text) > 200:
-                _process_text_block(block, session_id, api_type, stack_trace, model)
+                _process_text_block(block, run_id, api_type, stack_trace, model)
 
     # Update last tool nodes for next chain
     if tool_node_ids:
-        _sdk_last_tool_nodes[session_id] = tool_node_ids
+        _sdk_last_tool_nodes[run_id] = tool_node_ids
 
 
-def _handle_user_message(message, session_id: str):
+def _handle_user_message(message, run_id: str):
     """Process UserMessage: store tool results for future edge detection."""
     try:
         from claude_agent_sdk.types import ToolResultBlock
@@ -138,13 +138,13 @@ def _handle_user_message(message, session_id: str):
     if isinstance(content, list):
         for block in content:
             if isinstance(block, ToolResultBlock):
-                _store_tool_result(block, session_id)
+                _store_tool_result(block, run_id)
 
 
-def _create_redacted_llm_node(session_id: str, api_type: str, stack_trace: str, model: str) -> str:
+def _create_redacted_llm_node(run_id: str, api_type: str, stack_trace: str, model: str) -> str:
     """Create a 'Redacted LLM calls' node representing hidden Claude reasoning."""
     # Get the previous tool nodes as sources (the LLM saw their results)
-    source_node_ids = _sdk_last_tool_nodes.get(session_id, [])
+    source_node_ids = _sdk_last_tool_nodes.get(run_id, [])
 
     input_dict = {
         "type": "redacted_llm",
@@ -175,7 +175,7 @@ def _create_redacted_llm_node(session_id: str, api_type: str, stack_trace: str, 
 
 
 def _process_tool_use(
-    block, session_id: str, api_type: str, stack_trace: str, redacted_node_id: str = None
+    block, run_id: str, api_type: str, stack_trace: str, redacted_node_id: str = None
 ) -> str:
     """Create a node for a tool use block and detect edges."""
     # Build input representation
@@ -211,17 +211,17 @@ def _process_tool_use(
     )
 
     # Store tool input for future matching (content might appear in later calls)
-    _store_output_strings(session_id, node_id, tool_input_str)
+    _store_output_strings(run_id, node_id, tool_input_str)
 
     # Track tool_use_id -> node_id so we can attach results later
-    if session_id not in _sdk_tool_use_to_node:
-        _sdk_tool_use_to_node[session_id] = {}
-    _sdk_tool_use_to_node[session_id][block.id] = node_id
+    if run_id not in _sdk_tool_use_to_node:
+        _sdk_tool_use_to_node[run_id] = {}
+    _sdk_tool_use_to_node[run_id][block.id] = node_id
 
     return node_id
 
 
-def _process_text_block(block, session_id: str, api_type: str, stack_trace: str, model: str):
+def _process_text_block(block, run_id: str, api_type: str, stack_trace: str, model: str):
     """Create a node for a substantial text response."""
     input_dict = {
         "type": "assistant_response",
@@ -229,7 +229,7 @@ def _process_text_block(block, session_id: str, api_type: str, stack_trace: str,
     }
 
     # Check if any stored outputs appear in this text
-    source_node_ids = _find_sources_in_text(session_id, block.text)
+    source_node_ids = _find_sources_in_text(run_id, block.text)
 
     output_obj = {
         "text": block.text[:500] + "..." if len(block.text) > 500 else block.text,
@@ -250,10 +250,10 @@ def _process_text_block(block, session_id: str, api_type: str, stack_trace: str,
     )
 
     # Store text for future matching
-    _store_output_strings(session_id, node_id, block.text)
+    _store_output_strings(run_id, node_id, block.text)
 
 
-def _store_tool_result(block, session_id: str):
+def _store_tool_result(block, run_id: str):
     """Store tool result content for future edge detection."""
     content = block.content
     if not content:
@@ -263,20 +263,20 @@ def _store_tool_result(block, session_id: str):
 
     # Find the node that made this tool call
     tool_use_id = block.tool_use_id
-    node_mapping = _sdk_tool_use_to_node.get(session_id, {})
+    node_mapping = _sdk_tool_use_to_node.get(run_id, {})
     node_id = node_mapping.get(tool_use_id)
 
     if node_id:
         # Store the result as output from that node
-        _store_output_strings(session_id, node_id, content_str)
+        _store_output_strings(run_id, node_id, content_str)
 
 
-def _store_output_strings(session_id: str, node_id: str, text: str):
+def _store_output_strings(run_id: str, node_id: str, text: str):
     """Store output strings for future matching."""
-    if session_id not in _sdk_session_outputs:
-        _sdk_session_outputs[session_id] = {}
+    if run_id not in _sdk_run_outputs:
+        _sdk_run_outputs[run_id] = {}
 
-    outputs = _sdk_session_outputs[session_id]
+    outputs = _sdk_run_outputs[run_id]
     word_lists = []
 
     for chunk in split_html_content(text):
@@ -291,13 +291,13 @@ def _store_output_strings(session_id: str, node_id: str, text: str):
             outputs[node_id] = word_lists
 
 
-def _find_sources_in_text(session_id: str, text: str) -> List[str]:
+def _find_sources_in_text(run_id: str, text: str) -> List[str]:
     """Find source node IDs whose outputs appear in the given text."""
     input_words = tokenize(text)
     if not input_words:
         return []
 
-    outputs = _sdk_session_outputs.get(session_id, {})
+    outputs = _sdk_run_outputs.get(run_id, {})
     matches = []
 
     for node_id, output_word_lists in outputs.items():
@@ -310,11 +310,11 @@ def _find_sources_in_text(session_id: str, text: str) -> List[str]:
     return matches
 
 
-def clear_sdk_session_data(session_id: str):
-    """Clear SDK session data when a session is erased or restarted."""
-    if session_id in _sdk_session_outputs:
-        del _sdk_session_outputs[session_id]
-    if session_id in _sdk_tool_use_to_node:
-        del _sdk_tool_use_to_node[session_id]
-    if session_id in _sdk_last_tool_nodes:
-        del _sdk_last_tool_nodes[session_id]
+def clear_sdk_run_data(run_id: str):
+    """Clear SDK run data when a run is erased or restarted."""
+    if run_id in _sdk_run_outputs:
+        del _sdk_run_outputs[run_id]
+    if run_id in _sdk_tool_use_to_node:
+        del _sdk_tool_use_to_node[run_id]
+    if run_id in _sdk_last_tool_nodes:
+        del _sdk_last_tool_nodes[run_id]

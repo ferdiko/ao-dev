@@ -13,7 +13,7 @@ type ServerEvent = {
 type EventHandler = (data: ServerEvent) => void;
 
 const listeners = new Map<string, Set<EventHandler>>();
-const replayableEventTypes = new Set(["experiment_list"]);
+const replayableEventTypes = new Set(["run_list"]);
 const latestReplayableEvents = new Map<string, ServerEvent>();
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;

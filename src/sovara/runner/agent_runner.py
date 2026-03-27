@@ -25,9 +25,9 @@ from sovara.cli.so_server import launch_daemon_server
 from sovara.common.project import ensure_project_configured
 from sovara.server.database_manager import DB
 from sovara.runner.context_manager import (
-    clear_session_timer,
-    reset_current_session_timer,
-    set_parent_session_id,
+    clear_run_timer,
+    reset_current_run_timer,
+    set_parent_run_id,
 )
 from sovara.common.utils import set_server_url, http_post
 from sovara.runner.monkey_patching.apply_monkey_patches import apply_all_monkey_patches
@@ -144,8 +144,8 @@ class AgentRunner:
         self._signal_count = 0
         self._deregister_sent = False
 
-        # Session
-        self.session_id: Optional[str] = None
+        # Run
+        self.run_id: Optional[str] = None
         self.server_url: Optional[str] = None
 
         # SSE listener thread
@@ -168,14 +168,14 @@ class AgentRunner:
         logger.info(f"Received signal {signum}, shutting down...")
         self.shutdown_flag = True
         self._send_deregister(timeout=0.5)
-        clear_session_timer(self.session_id)
+        clear_run_timer(self.run_id)
         raise SystemExit(130)
 
     def _send_deregister(self, timeout: float | None = None) -> None:
         """Send deregistration message to the server."""
-        if self.session_id and not self._deregister_sent:
+        if self.run_id and not self._deregister_sent:
             try:
-                http_post("/runner/deregister", {"session_id": self.session_id}, timeout=timeout)
+                http_post("/runner/deregister", {"run_id": self.run_id}, timeout=timeout)
                 self._deregister_sent = True
             except Exception as e:
                 _log_error("Failed to send deregister", e)
@@ -184,7 +184,7 @@ class AgentRunner:
         """Background thread: listen for SSE events from the server."""
         import httpx
 
-        url = f"{self.server_url}/runner/events/{self.session_id}"
+        url = f"{self.server_url}/runner/events/{self.run_id}"
         try:
             with httpx.stream("GET", url, timeout=None) as resp:
                 for line in resp.iter_lines():
@@ -274,7 +274,7 @@ class AgentRunner:
             "name": self.run_name,
             "cwd": os.getcwd(),
             "environment": dict(os.environ),
-            "prev_session_id": os.getenv("SOVARA_SESSION_ID"),
+            "prev_run_id": os.getenv("SOVARA_RUN_ID"),
             "project_id": self.project_id,
             "project_name": self.project_name,
             "project_description": self.project_description,
@@ -284,19 +284,19 @@ class AgentRunner:
             "user_email": self.user_email,
         })
 
-        self.session_id = response.get("session_id")
-        if not self.session_id:
+        self.run_id = response.get("run_id")
+        if not self.run_id:
             raise RuntimeError(f"Registration failed: {response}")
-        logger.info(f"Registered with session_id: {self.session_id}")
+        logger.info(f"Registered with run_id: {self.run_id}")
 
-        # Write session info to file for so-tool IPC
-        session_file = os.environ.get("SOVARA_SESSION_FILE")
-        if session_file:
+        # Write run info to file for so-tool IPC
+        run_file = os.environ.get("SOVARA_RUN_FILE")
+        if run_file:
             try:
-                with open(session_file, "w") as f:
-                    json.dump({"session_id": self.session_id, "pid": self.process_id}, f)
+                with open(run_file, "w") as f:
+                    json.dump({"run_id": self.run_id, "pid": self.process_id}, f)
             except Exception as e:
-                logger.warning(f"Failed to write session file: {e}")
+                logger.warning(f"Failed to write run file: {e}")
 
     def _setup_environment(self) -> None:
         """Set up the execution environment for the agent runner."""
@@ -329,7 +329,7 @@ class AgentRunner:
 
     def _apply_runtime_setup(self) -> None:
         """Apply runtime setup for execution environment."""
-        set_parent_session_id(self.session_id)
+        set_parent_run_id(self.run_id)
         apply_all_monkey_patches()
 
     def _convert_file_to_module_name(self, script_path: str) -> str:
@@ -380,7 +380,7 @@ class AgentRunner:
                 logger.info("[AgentRunner] Restart requested, rerunning script...")
                 self.restart_event.clear()
                 DB._occurrence_counters.clear()
-                reset_current_session_timer()
+                reset_current_run_timer()
 
         return exit_code
 
@@ -412,7 +412,7 @@ class AgentRunner:
                 try:
                     cmd = self._restart_command_future.result()
                     http_post("/runner/update-command", {
-                        "session_id": self.session_id,
+                        "run_id": self.run_id,
                         "command": cmd,
                     })
                 except Exception as e:
@@ -427,7 +427,7 @@ class AgentRunner:
 
         finally:
             self._send_deregister(timeout=0.5 if self.shutdown_flag else None)
-            clear_session_timer(self.session_id)
+            clear_run_timer(self.run_id)
             self.shutdown_flag = True
             if self.listener_thread:
                 self.listener_thread.join(timeout=2)

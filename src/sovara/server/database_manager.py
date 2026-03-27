@@ -1,5 +1,5 @@
 """
-Database manager for experiment and LLM call data.
+Database manager for run and LLM call data.
 
 This module provides a unified interface for database operations using SQLite.
 """
@@ -25,7 +25,7 @@ from sovara.runner.monkey_patching.api_parser import (
     api_obj_to_response_ok,
     merge_filtered_into_raw,
 )
-from sovara.server.graph_models import SessionGraph
+from sovara.server.graph_models import RunGraph
 
 
 class ResourceNotFoundError(LookupError):
@@ -50,7 +50,7 @@ class CacheOutput:
         node_uuid: Unique identifier for this LLM call node, None if new call
         input_pickle: Serialized input data for caching purposes
         input_hash: Hash of the input for efficient cache lookups
-        session_id: The session ID associated with this cache operation
+        run_id: The run ID associated with this cache operation
         stack_trace: Python stack trace at the point of the LLM call
     """
 
@@ -59,7 +59,7 @@ class CacheOutput:
     node_uuid: Optional[str]
     input_pickle: bytes
     input_hash: str
-    session_id: str
+    run_id: str
     stack_trace: Optional[str] = None
 
 
@@ -71,7 +71,7 @@ class DatabaseManager:
 
         self.cache_attachments = True
         self.attachment_cache_dir = ATTACHMENT_CACHE
-        # Tracks per-(session_id, input_hash) lookup count so concurrent
+        # Tracks per-(run_id, input_hash) lookup count so concurrent
         # identical calls (e.g. ensemble candidates) each get a distinct
         # cached row instead of all hitting the same first row.
         self._occurrence_counters: dict[tuple[str, str], int] = defaultdict(int)
@@ -82,10 +82,10 @@ class DatabaseManager:
         from sovara.common.user import read_user_id
         return read_user_id()
 
-    def _next_occurrence(self, session_id: str, input_hash: str) -> int:
-        """Return and increment the lookup count for (session_id, input_hash)."""
+    def _next_occurrence(self, run_id: str, input_hash: str) -> int:
+        """Return and increment the lookup count for (run_id, input_hash)."""
         with self._occurrence_lock:
-            key = (session_id, input_hash)
+            key = (run_id, input_hash)
             occurrence = self._occurrence_counters[key]
             self._occurrence_counters[key] += 1
             return occurrence
@@ -115,32 +115,32 @@ class DatabaseManager:
         if callable(clear):
             clear()
 
-    def set_input_overwrite(self, session_id, node_uuid, new_input):
+    def set_input_overwrite(self, run_id, node_uuid, new_input):
         """UI sends to_show data; merge into original raw to build full format for the runner.
         Returns the full-format overwrite string, or None if unchanged."""
         try:
             new_to_show = json.loads(new_input)
         except json.JSONDecodeError as exc:
             raise BadRequestError(
-                f"Invalid input JSON for session_id={session_id}, node_uuid={node_uuid}: {exc.msg}."
+                f"Invalid input JSON for run_id={run_id}, node_uuid={node_uuid}: {exc.msg}."
             ) from exc
 
-        row = self.backend.get_llm_call_input_api_type_query(session_id, node_uuid)
+        row = self.backend.get_llm_call_input_api_type_query(run_id, node_uuid)
         if not row:
             raise ResourceNotFoundError(
-                f"Input node not found for session_id={session_id}, node_uuid={node_uuid}."
+                f"Input node not found for run_id={run_id}, node_uuid={node_uuid}."
             )
 
         try:
             original = json.loads(row["input"])
         except (TypeError, json.JSONDecodeError) as exc:
             raise BadRequestError(
-                f"Stored input payload is invalid for session_id={session_id}, node_uuid={node_uuid}."
+                f"Stored input payload is invalid for run_id={run_id}, node_uuid={node_uuid}."
             ) from exc
 
         if not isinstance(original, dict) or "raw" not in original or "to_show" not in original:
             raise BadRequestError(
-                f"Stored input payload is incomplete for session_id={session_id}, node_uuid={node_uuid}."
+                f"Stored input payload is incomplete for run_id={run_id}, node_uuid={node_uuid}."
             )
 
         if json.dumps(new_to_show, sort_keys=True) == json.dumps(original["to_show"], sort_keys=True):
@@ -148,41 +148,41 @@ class DatabaseManager:
 
         merged_raw = merge_filtered_into_raw(original["raw"], new_to_show)
         overwrite = json.dumps({"raw": merged_raw, "to_show": new_to_show}, sort_keys=True)
-        self.backend.set_input_overwrite_query(overwrite, session_id, node_uuid)
+        self.backend.set_input_overwrite_query(overwrite, run_id, node_uuid)
         return overwrite
 
-    def set_output_overwrite(self, session_id, node_uuid, new_output: str):
+    def set_output_overwrite(self, run_id, node_uuid, new_output: str):
         """UI sends to_show data; merge into original raw to build full format for the runner.
         Returns the full-format overwrite string, or None if unchanged or error."""
         try:
             new_to_show = json.loads(new_output)
         except json.JSONDecodeError as exc:
             raise BadRequestError(
-                f"Invalid output JSON for session_id={session_id}, node_uuid={node_uuid}: {exc.msg}."
+                f"Invalid output JSON for run_id={run_id}, node_uuid={node_uuid}: {exc.msg}."
             ) from exc
 
-        row = self.backend.get_llm_call_output_api_type_query(session_id, node_uuid)
+        row = self.backend.get_llm_call_output_api_type_query(run_id, node_uuid)
 
         if not row:
             raise ResourceNotFoundError(
-                f"Output node not found for session_id={session_id}, node_uuid={node_uuid}."
+                f"Output node not found for run_id={run_id}, node_uuid={node_uuid}."
             )
 
         if row["output"] is None:
             raise BadRequestError(
-                f"No stored output is available for session_id={session_id}, node_uuid={node_uuid}."
+                f"No stored output is available for run_id={run_id}, node_uuid={node_uuid}."
             )
 
         try:
             original = json.loads(row["output"])
         except (TypeError, json.JSONDecodeError) as exc:
             raise BadRequestError(
-                f"Stored output payload is invalid for session_id={session_id}, node_uuid={node_uuid}."
+                f"Stored output payload is invalid for run_id={run_id}, node_uuid={node_uuid}."
             ) from exc
 
         if not isinstance(original, dict) or "raw" not in original or "to_show" not in original:
             raise BadRequestError(
-                f"Stored output payload is incomplete for session_id={session_id}, node_uuid={node_uuid}."
+                f"Stored output payload is incomplete for run_id={run_id}, node_uuid={node_uuid}."
             )
 
         try:
@@ -190,18 +190,18 @@ class DatabaseManager:
             overwrite = json.dumps({"raw": merged_raw, "to_show": new_to_show}, sort_keys=True)
 
             json_str_to_api_obj(overwrite, row["api_type"])
-            self.backend.set_output_overwrite_query(overwrite, session_id, node_uuid)
+            self.backend.set_output_overwrite_query(overwrite, run_id, node_uuid)
             return overwrite
         except Exception as e:
             raise BadRequestError(
-                f"Invalid output edit for session_id={session_id}, node_uuid={node_uuid}: {e}"
+                f"Invalid output edit for run_id={run_id}, node_uuid={node_uuid}: {e}"
             ) from e
 
-    def erase(self, session_id):
-        """Erase experiment data."""
+    def erase(self, run_id):
+        """Erase run data."""
         default_graph = json.dumps({"nodes": [], "edges": []})
-        self.backend.delete_llm_calls_query(session_id)
-        self.backend.update_experiment_graph_topology_query(default_graph, session_id)
+        self.backend.delete_llm_calls_query(run_id)
+        self.backend.update_run_graph_topology_query(default_graph, run_id)
 
     def get_user(self, user_id):
         return self.backend.get_user_query(user_id)
@@ -209,30 +209,30 @@ class DatabaseManager:
     def upsert_user(self, user_id, full_name, email):
         self.backend.upsert_user_query(user_id, full_name, email)
 
-    def add_experiment(
+    def add_run(
         self,
-        session_id,
+        run_id,
         name,
         timestamp,
         cwd,
         command,
         environment,
-        parent_session_id=None,
+        parent_run_id=None,
         version_date=None,
         project_id=None,
         user_id=None,
     ):
-        """Add experiment to database."""
+        """Add run to database."""
         from sovara.common.constants import DEFAULT_LOG, DEFAULT_NOTE
 
         default_graph = json.dumps({"nodes": [], "edges": []})
-        parent_session_id = parent_session_id if parent_session_id else session_id
+        parent_run_id = parent_run_id if parent_run_id else run_id
         env_json = json.dumps(environment)
         serialized_timestamp = self._serialize_timestamp(timestamp)
 
-        self.backend.add_experiment_query(
-            session_id,
-            parent_session_id,
+        self.backend.add_run_query(
+            run_id,
+            parent_run_id,
             name,
             default_graph,
             serialized_timestamp,
@@ -246,45 +246,45 @@ class DatabaseManager:
             user_id,
         )
 
-    def update_graph_topology(self, session_id: str, graph: SessionGraph) -> None:
+    def update_graph_topology(self, run_id: str, graph: RunGraph) -> None:
         graph_json = graph.to_json_string()
-        self.backend.update_experiment_graph_topology_query(graph_json, session_id)
+        self.backend.update_run_graph_topology_query(graph_json, run_id)
 
-    def update_timestamp(self, session_id, timestamp):
-        self.backend.update_experiment_timestamp_query(self._serialize_timestamp(timestamp), session_id)
+    def update_timestamp(self, run_id, timestamp):
+        self.backend.update_run_timestamp_query(self._serialize_timestamp(timestamp), run_id)
 
-    def update_runtime_seconds(self, session_id, runtime_seconds):
+    def update_runtime_seconds(self, run_id, runtime_seconds):
         normalized = self._normalize_runtime_seconds(runtime_seconds)
-        self.backend.update_experiment_runtime_seconds_query(normalized, session_id)
+        self.backend.update_run_runtime_seconds_query(normalized, run_id)
 
-    def update_active_runtime_seconds(self, session_id, active_runtime_seconds):
+    def update_active_runtime_seconds(self, run_id, active_runtime_seconds):
         normalized = self._normalize_runtime_seconds(active_runtime_seconds)
-        self.backend.update_experiment_active_runtime_seconds_query(normalized, session_id)
+        self.backend.update_run_active_runtime_seconds_query(normalized, run_id)
 
-    def clear_active_runtime_seconds(self, session_id):
-        self.backend.clear_experiment_active_runtime_seconds_query(session_id)
+    def clear_active_runtime_seconds(self, run_id):
+        self.backend.clear_run_active_runtime_seconds_query(run_id)
 
-    def checkpoint_active_runtime(self, session_id, active_runtime_seconds=None):
+    def checkpoint_active_runtime(self, run_id, active_runtime_seconds=None):
         if active_runtime_seconds is None:
-            from sovara.runner.context_manager import get_session_runtime_seconds
+            from sovara.runner.context_manager import get_run_runtime_seconds
 
-            active_runtime_seconds = get_session_runtime_seconds(session_id)
+            active_runtime_seconds = get_run_runtime_seconds(run_id)
         if active_runtime_seconds is None:
             return None
         normalized = self._normalize_runtime_seconds(active_runtime_seconds)
-        self.backend.update_experiment_active_runtime_seconds_query(normalized, session_id)
+        self.backend.update_run_active_runtime_seconds_query(normalized, run_id)
         return normalized
 
-    def finalize_runtime(self, session_id, runtime_seconds):
+    def finalize_runtime(self, run_id, runtime_seconds):
         normalized = self._normalize_runtime_seconds(runtime_seconds)
-        self.backend.finalize_experiment_runtime_query(normalized, session_id)
+        self.backend.finalize_run_runtime_query(normalized, run_id)
         return normalized
 
-    def update_run_name(self, session_id, run_name):
-        self.backend.update_experiment_name_query(run_name, session_id)
+    def update_run_name(self, run_id, name):
+        self.backend.update_run_name_query(name, run_id)
 
-    def update_thumb_label(self, session_id, thumb_label):
-        self.backend.update_experiment_thumb_label_query(thumb_label, session_id)
+    def update_thumb_label(self, run_id, thumb_label):
+        self.backend.update_run_thumb_label_query(thumb_label, run_id)
 
     @staticmethod
     def _normalize_tag_row(row):
@@ -320,8 +320,8 @@ class DatabaseManager:
             raise ValueError("Tag not found.")
         self.backend.delete_project_tag_query(project_id, tag_id)
 
-    def replace_run_tags(self, session_id, tag_ids):
-        context = self.backend.get_experiment_tag_context_query(session_id)
+    def replace_run_tags(self, run_id, tag_ids):
+        context = self.backend.get_run_tag_context_query(run_id)
         if context is None:
             raise ValueError("Run not found.")
 
@@ -335,26 +335,26 @@ class DatabaseManager:
             if len(project_tags) != len(unique_tag_ids):
                 raise ValueError("All tags must belong to the run's project.")
 
-        self.backend.replace_experiment_tags_query(session_id, unique_tag_ids)
-        return self._get_tags_for_sessions_map([session_id]).get(session_id, [])
+        self.backend.replace_run_tags_query(run_id, unique_tag_ids)
+        return self._get_tags_for_runs_map([run_id]).get(run_id, [])
 
-    def update_notes(self, session_id, notes):
-        self.backend.update_experiment_notes_query(notes, session_id)
+    def update_notes(self, run_id, notes):
+        self.backend.update_run_notes_query(notes, run_id)
 
-    def update_command(self, session_id, command):
-        self.backend.update_experiment_command_query(command, session_id)
+    def update_command(self, run_id, command):
+        self.backend.update_run_command_query(command, run_id)
 
-    def update_experiment_version_date(self, session_id, version_date):
-        self.backend.update_experiment_version_date_query(
+    def update_run_version_date(self, run_id, version_date):
+        self.backend.update_run_version_date_query(
             self._serialize_timestamp(version_date),
-            session_id,
+            run_id,
         )
 
-    def add_metrics(self, session_id, metrics):
+    def add_metrics(self, run_id, metrics):
         """Persist validated custom metrics for a run."""
-        row = self.backend.get_experiment_metrics_context_query(session_id)
+        row = self.backend.get_run_metrics_context_query(run_id)
         if row is None:
-            raise ValueError(f"Unknown session_id: {session_id}")
+            raise ValueError(f"Unknown run_id: {run_id}")
 
         existing_metrics = self._parse_custom_metrics(row["custom_metrics"])
         repeated_keys = sorted(set(existing_metrics) & set(metrics))
@@ -380,9 +380,9 @@ class DatabaseManager:
                     self.backend.upsert_project_metric_kind_query(project_id, key, get_metric_kind(value))
 
         updated_metrics = {**existing_metrics, **metrics}
-        self.backend.update_experiment_custom_metrics_query(
+        self.backend.update_run_custom_metrics_query(
             json.dumps(updated_metrics, sort_keys=True),
-            session_id,
+            run_id,
         )
         return updated_metrics
 
@@ -422,7 +422,7 @@ class DatabaseManager:
             return None
         return max(0.0, float(raw_value))
 
-    def _normalize_experiment_row(self, row):
+    def _normalize_run_row(self, row):
         normalized = dict(row)
         normalized["custom_metrics"] = self._parse_custom_metrics(normalized.get("custom_metrics"))
         normalized["thumb_label"] = self._normalize_thumb_label(normalized.get("thumb_label"))
@@ -431,19 +431,19 @@ class DatabaseManager:
         normalized["tags"] = list(normalized.get("tags") or [])
         return normalized
 
-    def _get_tags_for_sessions_map(self, session_ids):
-        rows = self.backend.get_tags_for_sessions_query(session_ids)
-        tags_by_session: dict[str, list[dict[str, str]]] = defaultdict(list)
+    def _get_tags_for_runs_map(self, run_ids):
+        rows = self.backend.get_tags_for_runs_query(run_ids)
+        tags_by_run: dict[str, list[dict[str, str]]] = defaultdict(list)
         for row in rows:
-            tags_by_session[row["session_id"]].append(self._normalize_tag_row(row))
-        return tags_by_session
+            tags_by_run[row["run_id"]].append(self._normalize_tag_row(row))
+        return tags_by_run
 
     def _attach_tags_to_rows(self, rows):
-        normalized_rows = [self._normalize_experiment_row(row) for row in rows]
-        session_ids = [row["session_id"] for row in normalized_rows]
-        tags_by_session = self._get_tags_for_sessions_map(session_ids)
+        normalized_rows = [self._normalize_run_row(row) for row in rows]
+        run_ids = [row["run_id"] for row in normalized_rows]
+        tags_by_run = self._get_tags_for_runs_map(run_ids)
         for row in normalized_rows:
-            row["tags"] = tags_by_session.get(row["session_id"], [])
+            row["tags"] = tags_by_run.get(row["run_id"], [])
         return normalized_rows
 
     @staticmethod
@@ -507,7 +507,7 @@ class DatabaseManager:
             columns.append(column.model_dump())
         return columns
 
-    def _sort_experiment_rows(self, rows, sort_key, sort_dir):
+    def _sort_run_rows(self, rows, sort_key, sort_dir):
         reverse = sort_dir.lower() == "desc"
 
         if sort_key.startswith("metric:"):
@@ -536,7 +536,7 @@ class DatabaseManager:
 
         sort_field = {
             "timestamp": "timestamp",
-            "sessionId": "session_id",
+            "runId": "run_id",
             "name": "name",
             "codeVersion": "version_date",
         }.get(sort_key, "timestamp")
@@ -549,15 +549,15 @@ class DatabaseManager:
             reverse=reverse,
         )
 
-    def get_experiment_table_view(self, project_id, exclude_ids, filters, sort_key, sort_dir, limit, offset):
+    def get_run_table_view(self, project_id, exclude_ids, filters, sort_key, sort_dir, limit, offset):
         base_filters = {
             "name": filters.get("name"),
-            "session_id": filters.get("session_id"),
+            "run_id": filters.get("run_id"),
             "version_date": filters.get("version_date"),
             "timestamp_from": filters.get("timestamp_from"),
             "timestamp_to": filters.get("timestamp_to"),
         }
-        rows, _ = self.backend.query_experiments_filtered(
+        rows, _ = self.backend.query_runs_filtered(
             project_id,
             exclude_ids,
             base_filters,
@@ -576,43 +576,43 @@ class DatabaseManager:
             and self._matches_custom_metric_filters(row, filters.get("custom_metrics", {}))
         ]
         custom_metric_columns = self._build_custom_metric_columns(filtered_rows)
-        sorted_rows = self._sort_experiment_rows(filtered_rows, sort_key, sort_dir)
+        sorted_rows = self._sort_run_rows(filtered_rows, sort_key, sort_dir)
         total = len(sorted_rows)
         page_rows = sorted_rows[offset:offset + limit] if limit is not None else sorted_rows
         return page_rows, total, custom_metric_columns
 
     # Cache Management Operations
-    def get_subrun_id(self, parent_session_id, name):
-        result = self.backend.get_subrun_by_parent_and_name_query(parent_session_id, name)
+    def get_subrun_id(self, parent_run_id, name):
+        result = self.backend.get_subrun_by_parent_and_name_query(parent_run_id, name)
         if result is None:
             return None
         else:
-            return result["session_id"]
+            return result["run_id"]
 
-    def get_parent_session_id(self, session_id):
+    def get_parent_run_id(self, run_id):
         """
-        Get parent session ID with retry logic to handle race conditions.
+        Get parent run ID with retry logic to handle race conditions.
 
-        Since experiments can be inserted and immediately restarted, there can be a race
-        condition where the restart handler tries to read parent_session_id before the
+        Since runs can be inserted and immediately restarted, there can be a race
+        condition where the restart handler tries to read parent_run_id before the
         insert transaction is committed. This method retries a few times with short delays.
         """
         max_retries = 3
         retry_delay = 0.05  # 50ms between retries
 
         for attempt in range(max_retries):
-            result = self.backend.get_parent_session_id_query(session_id)
+            result = self.backend.get_parent_run_id_query(run_id)
             if result is not None:
-                return result["parent_session_id"]
+                return result["parent_run_id"]
 
             if attempt < max_retries - 1:  # Don't sleep on last attempt
                 logger.debug(
-                    f"Parent session not found for {session_id}, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})"
+                    f"Parent run not found for {run_id}, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})"
                 )
                 time.sleep(retry_delay)
 
-        logger.error(f"Failed to find parent session for {session_id} after {max_retries} attempts")
-        raise ResourceNotFoundError(f"Session not found: {session_id}")
+        logger.error(f"Failed to find parent run for {run_id} after {max_retries} attempts")
+        raise ResourceNotFoundError(f"Run not found: {run_id}")
 
     def cache_file(self, file_id, file_name, io_stream):
         """Cache file attachment."""
@@ -644,7 +644,7 @@ class DatabaseManager:
 
     def get_in_out(self, input_dict: dict, api_type: str) -> CacheOutput:
         """Get input/output for LLM call, handling caching and overwrites."""
-        from sovara.runner.context_manager import get_session_id
+        from sovara.runner.context_manager import get_run_id
         from sovara.common.utils import hash_input, set_seed
         from sovara.runner.monkey_patching.patching_utils import capture_stack_trace
 
@@ -654,14 +654,14 @@ class DatabaseManager:
         input_pickle, _ = func_kwargs_to_json_str(input_dict, api_type)
         input_hash = hash_input(input_pickle)
 
-        session_id = get_session_id()
+        run_id = get_run_id()
 
-        occurrence = self._next_occurrence(session_id, input_hash)
-        row = self.backend.get_llm_call_by_session_and_hash_query(session_id, input_hash, offset=occurrence)
+        occurrence = self._next_occurrence(run_id, input_hash)
+        row = self.backend.get_llm_call_by_run_and_hash_query(run_id, input_hash, offset=occurrence)
 
         if row is None:
             logger.debug(
-                f"Cache miss: session_id {str(session_id)[:4]}, input_hash {str(input_hash)[:4]}"
+                f"Cache miss: run_id {str(run_id)[:4]}, input_hash {str(input_hash)[:4]}"
             )
             return CacheOutput(
                 input_dict=input_dict,
@@ -669,7 +669,7 @@ class DatabaseManager:
                 node_uuid=None,
                 input_pickle=input_pickle,
                 input_hash=input_hash,
-                session_id=session_id,
+                run_id=run_id,
                 stack_trace=stack_trace,
             )
 
@@ -678,7 +678,7 @@ class DatabaseManager:
 
         if row["input_overwrite"] is not None:
             logger.debug(
-                f"Cache hit (input overwritten): session_id {str(session_id)[:4]}, input_hash {str(input_hash)[:4]}"
+                f"Cache hit (input overwritten): run_id {str(run_id)[:4]}, input_hash {str(input_hash)[:4]}"
             )
             input_dict = json_str_to_original_inp_dict(row["input_overwrite"], input_dict, api_type)
 
@@ -686,7 +686,7 @@ class DatabaseManager:
         if row["output"] is not None:
             output = json_str_to_api_obj(row["output"], api_type)
             logger.debug(
-                f"Cache hit (output set): session_id {str(session_id)[:4]}, input_hash {str(input_hash)[:4]}"
+                f"Cache hit (output set): run_id {str(run_id)[:4]}, input_hash {str(input_hash)[:4]}"
             )
 
         set_seed(node_uuid)
@@ -696,7 +696,7 @@ class DatabaseManager:
             node_uuid=node_uuid,
             input_pickle=input_pickle,
             input_hash=input_hash,
-            session_id=session_id,
+            run_id=run_id,
             stack_trace=stack_trace,
         )
 
@@ -717,7 +717,7 @@ class DatabaseManager:
         if response_ok and cache:
             output_json_str = api_obj_to_json_str(output_obj, api_type)
             self.backend.insert_llm_call_with_output_query(
-                cache_result.session_id,
+                cache_result.run_id,
                 cache_result.input_pickle,
                 cache_result.input_hash,
                 node_uuid,
@@ -725,7 +725,7 @@ class DatabaseManager:
                 output_json_str,
                 cache_result.stack_trace,
             )
-            self.checkpoint_active_runtime(cache_result.session_id)
+            self.checkpoint_active_runtime(cache_result.run_id)
         else:
             logger.warning(f"Node {node_uuid} response not OK.")
         cache_result.node_uuid = node_uuid
@@ -735,25 +735,25 @@ class DatabaseManager:
     def get_finished_runs(self, project_id=None):
         return self.backend.get_finished_runs_query(project_id=project_id, user_id=self.user_id)
 
-    def get_all_experiments_sorted(self, limit=None, offset=0, project_id=None):
-        return self.backend.get_all_experiments_sorted_query(limit=limit, offset=offset, project_id=project_id, user_id=self.user_id)
+    def get_all_runs_sorted(self, limit=None, offset=0, project_id=None):
+        return self.backend.get_all_runs_sorted_query(limit=limit, offset=offset, project_id=project_id, user_id=self.user_id)
 
-    def get_experiments_by_ids(self, session_ids, project_id=None):
-        rows = self.backend.get_experiments_by_ids_query(session_ids, project_id=project_id, user_id=self.user_id)
+    def get_runs_by_ids(self, run_ids, project_id=None):
+        rows = self.backend.get_runs_by_ids_query(run_ids, project_id=project_id, user_id=self.user_id)
         return self._attach_tags_to_rows(rows)
 
-    def get_experiments_excluding_ids(self, session_ids, limit=None, offset=0, project_id=None):
-        rows = self.backend.get_experiments_excluding_ids_query(session_ids, limit=limit, offset=offset, project_id=project_id, user_id=self.user_id)
+    def get_runs_excluding_ids(self, run_ids, limit=None, offset=0, project_id=None):
+        rows = self.backend.get_runs_excluding_ids_query(run_ids, limit=limit, offset=offset, project_id=project_id, user_id=self.user_id)
         return self._attach_tags_to_rows(rows)
 
-    def get_experiment_count(self, project_id=None):
-        return self.backend.get_experiment_count_query(project_id=project_id, user_id=self.user_id)
+    def get_run_count(self, project_id=None):
+        return self.backend.get_run_count_query(project_id=project_id, user_id=self.user_id)
 
-    def get_experiment_count_excluding_ids(self, session_ids, project_id=None):
-        return self.backend.get_experiment_count_excluding_ids_query(session_ids, project_id=project_id, user_id=self.user_id)
+    def get_run_count_excluding_ids(self, run_ids, project_id=None):
+        return self.backend.get_run_count_excluding_ids_query(run_ids, project_id=project_id, user_id=self.user_id)
 
-    def get_experiments_filtered(self, project_id, exclude_ids, filters, sort_col, sort_dir, limit, offset):
-        rows, total = self.backend.query_experiments_filtered(
+    def get_runs_filtered(self, project_id, exclude_ids, filters, sort_col, sort_dir, limit, offset):
+        rows, total = self.backend.query_runs_filtered(
             project_id,
             exclude_ids,
             filters,
@@ -769,64 +769,64 @@ class DatabaseManager:
         rows = self.backend.get_distinct_versions_query(project_id, user_id=self.user_id)
         return [row["version_date"] for row in rows]
 
-    def get_experiment_detail(self, session_id):
-        row = self.backend.get_experiment_detail_query(session_id)
+    def get_run_detail(self, run_id):
+        row = self.backend.get_run_detail_query(run_id)
         if row is None:
             return None
         return self._attach_tags_to_rows([row])[0]
 
-    def get_graph(self, session_id):
-        return self.backend.get_experiment_graph_topology_query(session_id)
+    def get_graph(self, run_id):
+        return self.backend.get_run_graph_topology_query(run_id)
 
-    def get_color_preview(self, session_id):
-        row = self.backend.get_experiment_color_preview_query(session_id)
+    def get_color_preview(self, run_id):
+        row = self.backend.get_run_color_preview_query(run_id)
         if row and row["color_preview"]:
             return json.loads(row["color_preview"])
         return []
 
-    def get_parent_environment(self, parent_session_id):
-        return self.backend.get_experiment_environment_query(parent_session_id)
+    def get_parent_environment(self, parent_run_id):
+        return self.backend.get_run_environment_query(parent_run_id)
 
-    def delete_llm_calls_query(self, session_id):
-        return self.backend.delete_llm_calls_query(session_id)
+    def delete_llm_calls_query(self, run_id):
+        return self.backend.delete_llm_calls_query(run_id)
 
     def delete_all_llm_calls_query(self):
         return self.backend.delete_all_llm_calls_query()
 
-    def update_color_preview(self, session_id, colors):
+    def update_color_preview(self, run_id, colors):
         color_preview_json = json.dumps(colors)
-        self.backend.update_experiment_color_preview_query(color_preview_json, session_id)
+        self.backend.update_run_color_preview_query(color_preview_json, run_id)
 
-    def get_exec_command(self, session_id):
-        row = self.backend.get_experiment_exec_info_query(session_id)
+    def get_exec_command(self, run_id):
+        row = self.backend.get_run_exec_info_query(run_id)
         if row is None:
             return None, None, None
         return row["cwd"], row["command"], json.loads(row["environment"])
 
     def clear_db(self):
-        self.backend.delete_all_experiments_query()
+        self.backend.delete_all_runs_query()
         self.backend.delete_all_llm_calls_query()
 
     def delete_project(self, project_id):
         self.backend.delete_project_query(project_id)
 
-    def delete_runs(self, session_ids):
-        return self.backend.delete_experiments_by_ids_query(session_ids, user_id=self.user_id)
+    def delete_runs(self, run_ids):
+        return self.backend.delete_runs_by_ids_query(run_ids, user_id=self.user_id)
 
     def delete_user(self, user_id):
         self.backend.delete_user_query(user_id)
 
-    def get_session_name(self, session_id):
-        row = self.backend.get_session_name_query(session_id)
+    def get_run_name(self, run_id):
+        row = self.backend.get_run_name_query(run_id)
         if not row:
             return []
         return [row["name"]]
 
-    def query_one_llm_call_input(self, session_id, node_uuid):
-        return self.backend.get_llm_call_input_api_type_query(session_id, node_uuid)
+    def query_one_llm_call_input(self, run_id, node_uuid):
+        return self.backend.get_llm_call_input_api_type_query(run_id, node_uuid)
 
-    def query_one_llm_call_output(self, session_id, node_uuid):
-        return self.backend.get_llm_call_output_api_type_query(session_id, node_uuid)
+    def query_one_llm_call_output(self, run_id, node_uuid):
+        return self.backend.get_llm_call_output_api_type_query(run_id, node_uuid)
 
     def get_next_run_index(self, project_id=None):
         return self.backend.get_next_run_index_query(project_id=project_id, user_id=self.user_id)
@@ -879,51 +879,51 @@ class DatabaseManager:
         self.backend.delete_project_location_query(user_id, project_id, project_location)
 
     # Probe-related methods for so-tool
-    def get_experiment_metadata(self, session_id):
-        return self.backend.get_experiment_metadata_query(session_id)
+    def get_run_metadata(self, run_id):
+        return self.backend.get_run_metadata_query(run_id)
 
-    def get_llm_calls_for_session(self, session_id):
-        return self.backend.get_llm_calls_for_session_query(session_id)
+    def get_llm_calls_for_run(self, run_id):
+        return self.backend.get_llm_calls_for_run_query(run_id)
 
-    def get_llm_call_full(self, session_id, node_uuid):
-        return self.backend.get_llm_call_full_query(session_id, node_uuid)
+    def get_llm_call_full(self, run_id, node_uuid):
+        return self.backend.get_llm_call_full_query(run_id, node_uuid)
 
-    def copy_llm_calls(self, old_session_id, new_session_id):
-        self.backend.copy_llm_calls_query(old_session_id, new_session_id)
+    def copy_llm_calls(self, old_run_id, new_run_id):
+        self.backend.copy_llm_calls_query(old_run_id, new_run_id)
 
     # ============================================================
     # Lessons Applied operations (tracks which ao-playbook lessons were applied)
     # ============================================================
 
-    def get_lessons_applied_for_session(self, session_id):
-        """Get lesson application records for a specific session."""
-        rows = self.backend.get_lessons_applied_for_session_query(session_id)
+    def get_lessons_applied_for_run(self, run_id):
+        """Get lesson application records for a specific run."""
+        rows = self.backend.get_lessons_applied_for_run_query(run_id)
         return [
             {
                 "lesson_id": row["lesson_id"],
-                "session_id": row["session_id"],
+                "run_id": row["run_id"],
                 "node_uuid": row["node_uuid"],
-                "run_name": row["run_name"] or "Unknown Run",
+                "name": row["name"] or "Unknown Run",
             }
             for row in rows
         ]
 
-    def get_sessions_for_lesson(self, lesson_id):
+    def get_runs_for_lesson(self, lesson_id):
         rows = self.backend.get_lessons_applied_query(lesson_id)
         return [
             {
-                "sessionId": row["session_id"],
+                "runId": row["run_id"],
                 "nodeUuid": row["node_uuid"],
-                "runName": row["run_name"] or "Unknown Run",
+                "name": row["name"] or "Unknown Run",
             }
             for row in rows
         ]
 
-    def add_lesson_applied(self, lesson_id, session_id, node_uuid=None):
-        self.backend.add_lesson_applied_query(lesson_id, session_id, node_uuid)
+    def add_lesson_applied(self, lesson_id, run_id, node_uuid=None):
+        self.backend.add_lesson_applied_query(lesson_id, run_id, node_uuid)
 
-    def remove_lesson_applied(self, lesson_id, session_id, node_uuid=None):
-        self.backend.remove_lesson_applied_query(lesson_id, session_id, node_uuid)
+    def remove_lesson_applied(self, lesson_id, run_id, node_uuid=None):
+        self.backend.remove_lesson_applied_query(lesson_id, run_id, node_uuid)
 
     def delete_lessons_applied_for_lesson(self, lesson_id):
         self.backend.delete_lessons_applied_for_lesson_query(lesson_id)

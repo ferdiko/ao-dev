@@ -152,40 +152,40 @@ def extract_output_text(output_obj: Any, api_type: str) -> List[str]:
 
 
 # ===========================================================
-# Session Data Management
+# Run Data Management
 # ===========================================================
 
-# In-memory storage for session outputs
-# Structure: {session_id: {node_id: [(word_list, is_url_like), ...]}}
-_session_outputs: Dict[str, Dict[str, List[tuple[List[str], bool]]]] = {}
+# In-memory storage for run outputs
+# Structure: {run_id: {node_id: [(word_list, is_url_like), ...]}}
+_run_outputs: Dict[str, Dict[str, List[tuple[List[str], bool]]]] = {}
 
-# In-memory storage for session inputs
-# Structure: {session_id: {node_id: [word_list]}}
-_session_inputs: Dict[str, Dict[str, List[str]]] = {}
+# In-memory storage for run inputs
+# Structure: {run_id: {node_id: [word_list]}}
+_run_inputs: Dict[str, Dict[str, List[str]]] = {}
 
-# Lock protecting _session_outputs and _session_inputs from concurrent access.
+# Lock protecting _run_outputs and _run_inputs from concurrent access.
 # find_source_nodes iterates while store_output_strings writes; without this
 # lock, concurrent LLM calls cause RuntimeError during dict iteration.
-_session_lock = threading.Lock()
+_run_lock = threading.Lock()
 
 
-def _get_session_outputs(session_id: str) -> Dict[str, List[tuple[List[str], bool]]]:
-    if session_id not in _session_outputs:
-        _session_outputs[session_id] = {}
-    return _session_outputs[session_id]
+def _get_run_outputs(run_id: str) -> Dict[str, List[tuple[List[str], bool]]]:
+    if run_id not in _run_outputs:
+        _run_outputs[run_id] = {}
+    return _run_outputs[run_id]
 
 
-def _get_session_inputs(session_id: str) -> Dict[str, List[str]]:
-    if session_id not in _session_inputs:
-        _session_inputs[session_id] = {}
-    return _session_inputs[session_id]
+def _get_run_inputs(run_id: str) -> Dict[str, List[str]]:
+    if run_id not in _run_inputs:
+        _run_inputs[run_id] = {}
+    return _run_inputs[run_id]
 
 
-def clear_matching_data(session_id: str) -> None:
-    """Clear session data when a session is erased or restarted."""
-    with _session_lock:
-        _session_outputs.pop(session_id, None)
-        _session_inputs.pop(session_id, None)
+def clear_matching_data(run_id: str) -> None:
+    """Clear run data when a run is erased or restarted."""
+    with _run_lock:
+        _run_outputs.pop(run_id, None)
+        _run_inputs.pop(run_id, None)
 
 
 # ===========================================================
@@ -218,7 +218,7 @@ def is_content_match(
 
 
 def find_source_nodes(
-    session_id: str,
+    run_id: str,
     input_dict: Dict[str, Any],
     api_type: str,
 ) -> List[str]:
@@ -245,8 +245,8 @@ def find_source_nodes(
     logger.debug(f"[string_matching] input has {len(input_word_lists)} fields")
 
     # Find matches — snapshot under lock, then match outside it
-    with _session_lock:
-        session_outputs = dict(_get_session_outputs(session_id))
+    with _run_lock:
+        session_outputs = dict(_get_run_outputs(run_id))
     matches = []
 
     for node_id, output_entries in session_outputs.items():
@@ -270,7 +270,7 @@ def find_source_nodes(
 
 
 def store_input_strings(
-    session_id: str,
+    run_id: str,
     node_id: str,
     input_dict: Dict[str, Any],
     api_type: str,
@@ -283,13 +283,13 @@ def store_input_strings(
     # For containment checks, concatenate all fields
     input_words = tokenize("\n".join(input_strings))
     if input_words:
-        with _session_lock:
-            session_inputs = _get_session_inputs(session_id)
+        with _run_lock:
+            session_inputs = _get_run_inputs(run_id)
             session_inputs[node_id] = input_words
 
 
 def store_output_strings(
-    session_id: str,
+    run_id: str,
     node_id: str,
     output_obj: Any,
     api_type: str,
@@ -319,21 +319,21 @@ def store_output_strings(
                     )
 
     if word_lists:
-        with _session_lock:
-            session_outputs = _get_session_outputs(session_id)
+        with _run_lock:
+            session_outputs = _get_run_outputs(run_id)
             session_outputs[node_id] = word_lists
 
 
-def output_contained_in_input(session_id: str, node_a_id: str, node_b_id: str) -> bool:
+def output_contained_in_input(run_id: str, node_a_id: str, node_b_id: str) -> bool:
     """
     Check if A's output is contained in B's input (for transitive edge removal).
 
     A -> B -> C  :  if A's output ⊆ B's input, we don't need A -> C
     A ------> C
     """
-    with _session_lock:
-        output_a_entries = _get_session_outputs(session_id).get(node_a_id, [])
-        input_b = _get_session_inputs(session_id).get(node_b_id, [])
+    with _run_lock:
+        output_a_entries = _get_run_outputs(run_id).get(node_a_id, [])
+        input_b = _get_run_inputs(run_id).get(node_b_id, [])
 
     if not output_a_entries or not input_b:
         return False

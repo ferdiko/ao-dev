@@ -52,12 +52,12 @@ Each concurrent subrun maintains its own context and appears as a separate run i
 
 When you enter a subrun context:
 
-1. A new session ID is generated
-2. The server is notified of the new session
-3. All LLM calls within the context are associated with that session
-4. The dataflow graph is built for that specific session
+1. A new run ID is generated
+2. The server is notified of the new run
+3. All LLM calls within the context are associated with that run
+4. The dataflow graph is built for that specific run
 
-When the context exits, the session is closed and the graph is finalized.
+When the context exits, the run is closed and the graph is finalized.
 
 ![Subruns Architecture](../assets/images/subrun.png)
 

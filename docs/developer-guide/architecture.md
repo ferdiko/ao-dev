@@ -82,7 +82,7 @@ src/
     ├── runner/                 # Runtime execution
     │   ├── agent_runner.py     # Main runner (setup + execution)
     │   ├── string_matching.py  # Content-based edge detection
-    │   ├── context_manager.py  # Session management
+    │   ├── context_manager.py  # Run management
     │   └── monkey_patching/    # API interception
     │       ├── apply_monkey_patches.py
     │       └── patches/        # Per-API patches

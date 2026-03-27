@@ -16,21 +16,21 @@ router = APIRouter()
 # Runner SSE -- server pushes restart/shutdown to runners
 # ============================================================
 
-@router.get("/runner/events/{session_id}")
-async def runner_events(session_id: str, request: Request):
+@router.get("/runner/events/{run_id}")
+async def runner_events(run_id: str, request: Request):
     """SSE stream for a runner. Server pushes restart/shutdown events."""
     state: ServerState = request.app.state.server_state
 
     # Queue must exist (created by POST /runner/register)
-    q = state.runner_event_queues.get(session_id)
+    q = state.runner_event_queues.get(run_id)
     if not q:
         from starlette.responses import JSONResponse
-        return JSONResponse({"error": "Session not registered"}, status_code=404)
+        return JSONResponse({"error": "Run not registered"}, status_code=404)
 
     # Mark SSE as connected so the orphan sweep knows this runner is alive
-    session = state.sessions.get(session_id)
-    if session:
-        session.sse_connected = True
+    run = state.runs.get(run_id)
+    if run:
+        run.sse_connected = True
 
     async def event_generator():
         try:
@@ -47,13 +47,13 @@ async def runner_events(session_id: str, request: Request):
         except asyncio.CancelledError:
             pass
         finally:
-            # Clean up queue and mark session finished on disconnect
-            state.runner_event_queues.pop(session_id, None)
-            session = state.sessions.get(session_id)
-            if session and session.status == "running":
-                state.checkpoint_interrupted_session_runtime(session_id)
-                session.status = "finished"
-                state.notify_experiment_list_changed()
+            # Clean up queue and mark run finished on disconnect
+            state.runner_event_queues.pop(run_id, None)
+            run = state.runs.get(run_id)
+            if run and run.status == "running":
+                state.checkpoint_interrupted_run_runtime(run_id)
+                run.status = "finished"
+                state.notify_run_list_changed()
 
     return StreamingResponse(
         event_generator(),
@@ -67,12 +67,12 @@ async def runner_events(session_id: str, request: Request):
 
 
 # ============================================================
-# UI WebSocket -- push graph/experiment updates
+# UI WebSocket -- push graph/run updates
 # ============================================================
 
 @router.websocket("/ws")
 async def ui_websocket(websocket: WebSocket):
-    """Push-only WebSocket for server→UI broadcasts (graph updates, experiment list, etc.)."""
+    """Push-only WebSocket for server→UI broadcasts (graph updates, run list, etc.)."""
     state: ServerState = websocket.app.state.server_state
     # Accept UIs request to start a WebSocket connection
     await websocket.accept()
@@ -80,16 +80,16 @@ async def ui_websocket(websocket: WebSocket):
 
     # Send initial config
     await websocket.send_text(json.dumps({
-        "type": "session_id",
-        "session_id": None,
+        "type": "run_id",
+        "run_id": None,
         "config_path": SOVARA_CONFIG,
         "playbook_url": PLAYBOOK_SERVER_URL,
         "playbook_api_key": PLAYBOOK_API_KEY,
     }))
 
-    # Load finished runs and send initial experiment list
+    # Load finished runs and send initial run list
     state.load_finished_runs()
-    state.notify_experiment_list_changed()
+    state.notify_run_list_changed()
 
     try:
         # Keep connection alive — just consume incoming messages (pings/keepalives)

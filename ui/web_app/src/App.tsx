@@ -196,7 +196,7 @@ function App() {
         <Routes>
           <Route path="/" element={<OrgRoute />} />
           <Route path="/project/:projectId" element={<ProjectRoute />} />
-          <Route path="/project/:projectId/run/:sessionId" element={<RunRoute />} />
+          <Route path="/project/:projectId/run/:runId" element={<RunRoute />} />
           <Route path="/project/:projectId/sovara" element={<SovaraRoute />} />
           <Route path="/project/:projectId/priors" element={<PriorsRoute />} />
         </Routes>

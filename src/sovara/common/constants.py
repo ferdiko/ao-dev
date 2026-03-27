@@ -44,10 +44,10 @@ SERVER_START_TIMEOUT = 2
 PROCESS_TERMINATE_TIMEOUT = 5
 MESSAGE_POLL_INTERVAL = 0.1
 SERVER_INACTIVITY_TIMEOUT = 1200  # Shutdown server after 20 min of inactivity
-SESSION_ORPHAN_TIMEOUT = 5  # Seconds before a session without SSE is considered dead
+RUN_ORPHAN_TIMEOUT = 5  # Seconds before a run without SSE is considered dead
 SHUTDOWN_WAIT = 2
 
-# Experiment meta data.
+# Run meta data.
 DEFAULT_NOTE = "Take notes."
 DEFAULT_LOG = "No entries"
 DEFAULT_SUCCESS = ""
@@ -92,7 +92,7 @@ SOVARA_GIT_DIR = os.path.expandvars(
 # Note: Don't create the directory here - let GitVersioner handle initialization
 
 
-# the path to the folder where the experiments database is stored
+# the path to the folder where the runs database is stored
 default_db_cache_path = os.path.join(SOVARA_HOME, "db")
 SOVARA_DB_PATH = os.path.expandvars(
     os.path.expanduser(

@@ -3,7 +3,7 @@ Lesson injection for LLM contexts.
 
 Queries the ao-playbook server for lessons and returns them formatted
 for injection into prompts. Automatically tracks which lessons were
-applied to which sessions.
+applied to which runs.
 """
 
 import json
@@ -57,15 +57,15 @@ def _format_lessons(lessons: List[dict]) -> str:
 
 
 def _track_lessons(lesson_ids: List[str]) -> None:
-    """Track which lessons were applied to the current session."""
+    """Track which lessons were applied to the current run."""
     try:
-        from sovara.runner.context_manager import get_session_id
-        session_id = get_session_id()
-        if session_id:
+        from sovara.runner.context_manager import get_run_id
+        run_id = get_run_id()
+        if run_id:
             from sovara.server.database_manager import DB
             for lesson_id in lesson_ids:
-                DB.add_lesson_applied(lesson_id, session_id)
-            logger.debug(f"Tracked {len(lesson_ids)} lessons applied to session {session_id[:8]}")
+                DB.add_lesson_applied(lesson_id, run_id)
+            logger.debug(f"Tracked {len(lesson_ids)} lessons applied to run {run_id[:8]}")
     except Exception as e:
         logger.debug(f"Could not track lesson application: {e}")
 

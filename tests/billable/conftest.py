@@ -33,7 +33,7 @@ def _wait_for_server_ready(timeout_seconds: float = 15.0) -> None:
 
 @pytest.fixture(scope="session", autouse=True)
 def billable_test_server(ensure_test_user_and_project):
-    """Run a dedicated server process for the billable test session."""
+    """Run a dedicated server process for the billable test run."""
     log_dir = os.path.dirname(MAIN_SERVER_LOG)
     os.makedirs(log_dir, exist_ok=True)
 

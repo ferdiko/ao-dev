@@ -12,7 +12,7 @@ const baseRun: ProjectRun = {
   latency: "3.6s",
   latencySeconds: 3.6,
   name: "Run 1",
-  sessionId: "session-1",
+  runId: "run-1",
   status: "running",
   tags: [],
   thumbLabel: null,

@@ -13,19 +13,19 @@ def _create_project() -> str:
     return project_id
 
 
-def _create_session(project_id: str, name: str) -> str:
-    session_id = str(uuid.uuid4())
-    DB.add_experiment(
-        session_id=session_id,
+def _create_run(project_id: str, name: str) -> str:
+    run_id = str(uuid.uuid4())
+    DB.add_run(
+        run_id=run_id,
         name=name,
         timestamp=datetime.now(timezone.utc),
         cwd=os.getcwd(),
         command="test",
         environment={"TEST": "true"},
-        parent_session_id=session_id,
+        parent_run_id=run_id,
         project_id=project_id,
     )
-    return session_id
+    return run_id
 
 
 @pytest.fixture
@@ -62,42 +62,42 @@ def test_create_project_tag_rejects_case_insensitive_duplicates(tag_project):
 
 def test_replace_run_tags_rejects_tags_from_other_projects(tag_project):
     other_project = _create_project()
-    session_id = _create_session(tag_project, "Run scoped")
+    run_id = _create_run(tag_project, "Run scoped")
     other_tag = DB.create_project_tag(other_project, "Foreign", "#6E8B7B")
 
     try:
         with pytest.raises(ValueError, match="must belong"):
-            DB.replace_run_tags(session_id, [other_tag["tag_id"]])
+            DB.replace_run_tags(run_id, [other_tag["tag_id"]])
     finally:
         DB.delete_project(other_project)
 
 
 def test_deleting_a_project_tag_removes_it_from_all_runs(tag_project):
-    session_a = _create_session(tag_project, "Run A")
-    session_b = _create_session(tag_project, "Run B")
+    run_a = _create_run(tag_project, "Run A")
+    run_b = _create_run(tag_project, "Run B")
     keep_tag = DB.create_project_tag(tag_project, "Keep", "#7F6A8A")
     delete_tag = DB.create_project_tag(tag_project, "Delete", "#8A6F66")
 
-    DB.replace_run_tags(session_a, [keep_tag["tag_id"], delete_tag["tag_id"]])
-    DB.replace_run_tags(session_b, [delete_tag["tag_id"]])
+    DB.replace_run_tags(run_a, [keep_tag["tag_id"], delete_tag["tag_id"]])
+    DB.replace_run_tags(run_b, [delete_tag["tag_id"]])
 
     DB.delete_project_tag(tag_project, delete_tag["tag_id"])
 
     assert [tag["name"] for tag in DB.get_project_tags(tag_project)] == ["Keep"]
-    assert [tag["name"] for tag in DB.get_experiment_detail(session_a)["tags"]] == ["Keep"]
-    assert DB.get_experiment_detail(session_b)["tags"] == []
+    assert [tag["name"] for tag in DB.get_run_detail(run_a)["tags"]] == ["Keep"]
+    assert DB.get_run_detail(run_b)["tags"] == []
 
 
 def test_deleting_a_project_removes_tag_catalog_and_assignments():
     project_id = _create_project()
-    session_id = _create_session(project_id, "Run tagged")
+    run_id = _create_run(project_id, "Run tagged")
     tag = DB.create_project_tag(project_id, "Ship", "#6A8C93")
-    DB.replace_run_tags(session_id, [tag["tag_id"]])
+    DB.replace_run_tags(run_id, [tag["tag_id"]])
 
     DB.delete_project(project_id)
 
     assert DB.query_one("SELECT COUNT(*) AS count FROM project_tags WHERE project_id=?", (project_id,))["count"] == 0
-    assert DB.query_one("SELECT COUNT(*) AS count FROM experiment_tags WHERE session_id=?", (session_id,))["count"] == 0
+    assert DB.query_one("SELECT COUNT(*) AS count FROM run_tags WHERE run_id=?", (run_id,))["count"] == 0
 
 
 def test_tag_filters_require_selected_tags_to_be_a_subset(tag_project):
@@ -105,16 +105,16 @@ def test_tag_filters_require_selected_tags_to_be_a_subset(tag_project):
     tag_b = DB.create_project_tag(tag_project, "B", "#7E8F6A")
     tag_c = DB.create_project_tag(tag_project, "C", "#6E8B7B")
 
-    run_none = _create_session(tag_project, "Run none")
-    run_a = _create_session(tag_project, "Run a")
-    run_ab = _create_session(tag_project, "Run ab")
-    run_bc = _create_session(tag_project, "Run bc")
+    run_none = _create_run(tag_project, "Run none")
+    run_a = _create_run(tag_project, "Run a")
+    run_ab = _create_run(tag_project, "Run ab")
+    run_bc = _create_run(tag_project, "Run bc")
 
     DB.replace_run_tags(run_a, [tag_a["tag_id"]])
     DB.replace_run_tags(run_ab, [tag_a["tag_id"], tag_b["tag_id"]])
     DB.replace_run_tags(run_bc, [tag_b["tag_id"], tag_c["tag_id"]])
 
-    rows_a, total_a, _ = DB.get_experiment_table_view(
+    rows_a, total_a, _ = DB.get_run_table_view(
         project_id=tag_project,
         exclude_ids=[],
         filters={"tag_ids": [tag_a["tag_id"]]},
@@ -123,7 +123,7 @@ def test_tag_filters_require_selected_tags_to_be_a_subset(tag_project):
         limit=None,
         offset=0,
     )
-    rows_ab, total_ab, _ = DB.get_experiment_table_view(
+    rows_ab, total_ab, _ = DB.get_run_table_view(
         project_id=tag_project,
         exclude_ids=[],
         filters={"tag_ids": [tag_a["tag_id"], tag_b["tag_id"]]},
@@ -134,8 +134,8 @@ def test_tag_filters_require_selected_tags_to_be_a_subset(tag_project):
     )
 
     assert total_a == 2
-    assert {row["session_id"] for row in rows_a} == {run_a, run_ab}
+    assert {row["run_id"] for row in rows_a} == {run_a, run_ab}
     assert total_ab == 1
-    assert [row["session_id"] for row in rows_ab] == [run_ab]
-    assert run_none not in {row["session_id"] for row in rows_a}
-    assert run_bc not in {row["session_id"] for row in rows_ab}
+    assert [row["run_id"] for row in rows_ab] == [run_ab]
+    assert run_none not in {row["run_id"] for row in rows_a}
+    assert run_bc not in {row["run_id"] for row in rows_ab}

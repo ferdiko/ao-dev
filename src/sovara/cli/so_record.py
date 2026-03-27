@@ -22,7 +22,7 @@ def launch_command_parser():
     parser.add_argument(
         "--run-name",
         default=None,
-        help="Name that will be used in the experiment list. If not set, Run X where X is the index of the current run will be used.",
+        help="Name that will be used in the run list. If not set, Run X where X is the index of the current run will be used.",
     )
 
     parser.add_argument(

@@ -15,12 +15,12 @@ When an LLM produces output, we store all text strings from the response. When a
 The content registry lives in `string_matching.py` and stores tokenized output strings for each node:
 
 ```python
-# Maps session_id -> {node_id -> [[word_lists]]}
-_session_outputs: Dict[str, Dict[str, List[List[str]]]] = {}
+# Maps run_id -> {node_id -> [[word_lists]]}
+_run_outputs: Dict[str, Dict[str, List[List[str]]]] = {}
 ```
 
 Key properties:
-1. **Session-scoped:** Outputs are only matched within the same session
+1. **Run-scoped:** Outputs are only matched within the same run
 2. **In-memory:** No persistence needed (LLM outputs are already cached in the database)
 3. **Tokenized:** Text is split into words for efficient longest-match computation
 
@@ -29,10 +29,10 @@ Key properties:
 The matching logic is in `src/sovara/runner/string_matching.py`:
 
 ```python
-find_source_nodes(session_id, input_dict, api_type) -> List[str]
+find_source_nodes(run_id, input_dict, api_type) -> List[str]
     # Returns node_ids whose outputs appear in this input
 
-store_output_strings(session_id, node_id, output_obj, api_type) -> None
+store_output_strings(run_id, node_id, output_obj, api_type) -> None
     # Stores output strings for future matching
 ```
 
@@ -86,8 +86,8 @@ Each monkey patch (httpx, requests, MCP, genai) calls the string matching functi
 
 ```python
 # In httpx_patch.py
-source_node_ids = find_source_nodes(session_id, input_dict, api_type)
-store_output_strings(session_id, node_id, output, api_type)
+source_node_ids = find_source_nodes(run_id, input_dict, api_type)
+store_output_strings(run_id, node_id, output, api_type)
 
 send_graph_node_and_edges(
     node_id=node_id,
@@ -108,7 +108,7 @@ When an LLM call is intercepted:
 6. **Graph update**: `send_graph_node_and_edges()` notifies server
 
 **Reruns work deterministically** because:
-- Same `session_id` means cache lookups find previous entries
+- Same `run_id` means cache lookups find previous entries
 - Content registry is rebuilt as calls are replayed
 - UI edits to inputs/outputs are respected
 

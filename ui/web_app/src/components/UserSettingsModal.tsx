@@ -88,7 +88,7 @@ export function UserSettingsModal({
               <div className="modal-danger-confirm">
                 <p className="modal-danger-warning">
                   This will permanently delete your user profile and all
-                  associated data (experiments, runs, cached LLM calls). This
+                  associated data (runs, runs, cached LLM calls). This
                   action cannot be undone.
                 </p>
                 <p className="modal-danger-prompt">

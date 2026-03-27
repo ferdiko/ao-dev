@@ -18,12 +18,12 @@ interface OriginalData {
 }
 
 interface RunDetailsModalProps {
-  experiment?: ProcessInfo;
+  run?: ProcessInfo;
   onClose?: () => void;
   onSave?: (data: OriginalData) => void;
 }
 
-export const RunDetailsModalApp: React.FC<RunDetailsModalProps> = ({ experiment: initialExperiment, onClose, onSave }) => {
+export const RunDetailsModalApp: React.FC<RunDetailsModalProps> = ({ run: initialRun, onClose, onSave }) => {
   const [originalData, setOriginalData] = useState<OriginalData>({ runName: '', result: '', notes: '' });
   const [currentData, setCurrentData] = useState<OriginalData>({ runName: '', result: '', notes: '' });
   const isDarkTheme = useIsVsCodeDarkTheme();
@@ -41,17 +41,17 @@ export const RunDetailsModalApp: React.FC<RunDetailsModalProps> = ({ experiment:
 
   useEffect(() => {
     // Only initialize once when component mounts
-    if (!hasInitialized.current && initialExperiment) {
+    if (!hasInitialized.current && initialRun) {
       const original = {
-        runName: initialExperiment.run_name || '',
-        result: initialExperiment.result || '',
-        notes: initialExperiment.notes || ''
+        runName: initialRun.name || '',
+        result: initialRun.result || '',
+        notes: initialRun.notes || ''
       };
       setOriginalData(original);
       setCurrentData(original);
       hasInitialized.current = true;
     }
-  }, [initialExperiment]);
+  }, [initialRun]);
   
   // Reset the flag when modal closes/reopens
   useEffect(() => {

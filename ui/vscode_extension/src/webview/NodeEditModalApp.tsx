@@ -13,7 +13,7 @@ declare global {
 interface NodeEditContext {
   nodeId: string;
   field: string;
-  session_id?: string;
+  run_id?: string;
   attachments?: any;
 }
 

@@ -35,7 +35,7 @@ function compareAnalyses(a: FailureAnalysis, b: FailureAnalysis, key: string): n
   switch (key) {
     case "startTime": return a.startTime.localeCompare(b.startTime);
     case "analysisId": return a.analysisId.localeCompare(b.analysisId);
-    case "sessionId": return a.sessionId.localeCompare(b.sessionId);
+    case "runId": return a.runId.localeCompare(b.runId);
     case "name": return a.name.localeCompare(b.name);
     case "input": return a.input.localeCompare(b.input);
     case "output": return (a.output || "").localeCompare(b.output || "");
@@ -509,7 +509,7 @@ export function AIFailureAnalysisPage() {
                       <SortableHeader label="Status" sortKey="status" sort={sort} onSort={toggleSort} />
                       <SortableHeader label="Start Time" sortKey="startTime" sort={sort} onSort={toggleSort} />
                       <SortableHeader label="Analysis ID" sortKey="analysisId" sort={sort} onSort={toggleSort} />
-                      <SortableHeader label="Session ID" sortKey="sessionId" sort={sort} onSort={toggleSort} />
+                      <SortableHeader label="Run ID" sortKey="runId" sort={sort} onSort={toggleSort} />
                       <SortableHeader label="Name" sortKey="name" sort={sort} onSort={toggleSort} />
                       <SortableHeader label="Input" sortKey="input" sort={sort} onSort={toggleSort} />
                       <SortableHeader label="Output" sortKey="output" sort={sort} onSort={toggleSort} />
@@ -535,7 +535,7 @@ export function AIFailureAnalysisPage() {
                         </td>
                         <td className="cell-timestamp">{a.startTime}</td>
                         <td><span className="cell-id-link">{a.analysisId}</span></td>
-                        <td><span className="cell-id-link">{a.sessionId}</span></td>
+                        <td><span className="cell-id-link">{a.runId}</span></td>
                         <td>{a.name}</td>
                         <td className="cell-content">{a.input}</td>
                         <td className="cell-content">{a.output || "—"}</td>

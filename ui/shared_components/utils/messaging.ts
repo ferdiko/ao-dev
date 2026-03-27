@@ -6,13 +6,13 @@ export function sendMessage(message: any) {
     vscode.postMessage(message);
 }
 
-export function sendNodeUpdate(nodeId: string, field: keyof GraphNode, value: string, session_id?: string) {
+export function sendNodeUpdate(nodeId: string, field: keyof GraphNode, value: string, run_id?: string) {
     const msg = {
         type: 'updateNode',
         nodeId,
         field,
         value,
-        session_id
+        run_id
     };
     sendMessage(msg);
 }
@@ -34,7 +34,7 @@ export function sendReset() {
     sendMessage({ type: 'reset', id: Math.floor(Math.random() * 100000) });
 }
 
-// Send a get_graph message to the backend for a given session_id
-export function sendGetGraph(session_id: string) {
-    sendMessage({ type: 'get_graph', session_id });
+// Send a get_graph message to the backend for a given run_id
+export function sendGetGraph(run_id: string) {
+    sendMessage({ type: 'get_graph', run_id });
 }

@@ -4,22 +4,22 @@ import { ChevronRight, X } from "lucide-react";
 import logoBlack from "../assets/logo_black.png";
 
 export function RunTabsHeader({
-  activeSessionId,
+  activeRunId,
   onCloseTab,
   onSwitchTab,
   projectId,
   projectName,
-  sessionIds,
-  sessionIdsKey,
+  runIds,
+  runIdsKey,
   tabNames,
 }: {
-  activeSessionId: string;
+  activeRunId: string;
   onCloseTab: (id: string) => void;
   onSwitchTab: (id: string) => void;
   projectId?: string;
   projectName: string;
-  sessionIds: string[];
-  sessionIdsKey: string;
+  runIds: string[];
+  runIdsKey: string;
   tabNames: Map<string, string>;
 }) {
   const headerRef = useRef<HTMLDivElement>(null);
@@ -71,7 +71,7 @@ export function RunTabsHeader({
     observer.observe(header);
     observer.observe(tab);
     return () => observer.disconnect();
-  }, [activeSessionId, sessionIdsKey, tabNames]);
+  }, [activeRunId, runIdsKey, tabNames]);
 
   return (
     <div className="run-view-panel-header" ref={headerRef}>
@@ -86,18 +86,18 @@ export function RunTabsHeader({
         </svg>
       )}
       <div className="run-tabs" role="tablist" aria-label="Open runs">
-        {sessionIds.map((id) => (
+        {runIds.map((id) => (
           <div
             key={id}
-            ref={id === activeSessionId ? activeTabRef : undefined}
-            className={`run-tab${id === activeSessionId ? " active" : ""}`}
+            ref={id === activeRunId ? activeTabRef : undefined}
+            className={`run-tab${id === activeRunId ? " active" : ""}`}
           >
             <button
               className="run-tab-button"
               onClick={() => onSwitchTab(id)}
               type="button"
               role="tab"
-              aria-selected={id === activeSessionId}
+              aria-selected={id === activeRunId}
             >
               <img src={logoBlack} alt="" className="run-tab-icon" />
               <span className="run-tab-label">{tabNames.get(id) || id.slice(0, 8)}</span>

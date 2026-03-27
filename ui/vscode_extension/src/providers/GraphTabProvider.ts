@@ -145,16 +145,16 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     // Graph Tab
     // ============================================================
 
-    public async createOrShowGraphTab(experiment: ProcessInfo): Promise<void> {
-        const sessionId = experiment.session_id;
+    public async createOrShowGraphTab(run: ProcessInfo): Promise<void> {
+        const runId = run.run_id;
 
-        // Check if we already have a panel for this session
-        let panel = this._panels.get(sessionId);
+        // Check if we already have a panel for this run
+        let panel = this._panels.get(runId);
 
         if (panel) {
             // Check if panel is disposed
             if ((panel as any)._disposed || (panel as any).disposed) {
-                this._panels.delete(sessionId);
+                this._panels.delete(runId);
                 panel = undefined;
             } else {
                 // Panel exists and is not disposed, just reveal it
@@ -166,7 +166,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         // Find an existing graph panel to determine which column to use
         let existingGraphColumn: vscode.ViewColumn | undefined;
         for (const [key, existingPanel] of this._panels.entries()) {
-            // Check if this is a graph panel (session ID format, not 'lessons' or 'node-editor')
+            // Check if this is a graph panel (run ID format, not 'lessons' or 'node-editor')
             if (key !== 'lessons' && key !== 'node-editor' && existingPanel.viewColumn) {
                 existingGraphColumn = existingPanel.viewColumn;
                 break;
@@ -187,7 +187,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         // Create new panel
         panel = vscode.window.createWebviewPanel(
             GraphTabProvider.viewType,
-            `Graph: ${experiment.run_name || sessionId.substring(0, 8)}...`,
+            `Graph: ${run.name || runId.substring(0, 8)}...`,
             columnToShowIn,
             {
                 enableScripts: true,
@@ -203,14 +203,14 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         panel.iconPath = this._iconPath;
 
         // Set up the webview content
-        panel.webview.html = this._getHtmlForWebview(panel.webview, sessionId);
+        panel.webview.html = this._getHtmlForWebview(panel.webview, runId);
 
         // Store panel reference
-        this._panels.set(sessionId, panel);
+        this._panels.set(runId, panel);
 
         // Handle panel disposal
         panel.onDidDispose(() => {
-            this._panels.delete(sessionId);
+            this._panels.delete(runId);
         }, null);
 
         // Handle messages from the webview
@@ -222,8 +222,8 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                     panel.webview.postMessage({
                         type: 'init',
                         payload: {
-                            experiment,
-                            sessionId
+                            run,
+                            runId
                         }
                     });
                     // Ensure Python client is available
@@ -233,49 +233,49 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                     }
                     // Fetch initial data via HTTP and post to webview
                     if (this._pythonClient) {
-                        this._pythonClient.httpGet(`/ui/graph/${sessionId}`).then(r => panel.webview.postMessage(r));
-                        this._pythonClient.httpGet(`/ui/experiment/${sessionId}`).then(r => panel.webview.postMessage(r));
-                        this._pythonClient.httpGet(`/ui/lessons-applied/${sessionId}`).then(r => panel.webview.postMessage(r));
-                        this._pythonClient.httpGet('/ui/experiments').then(r => panel.webview.postMessage(r));
+                        this._pythonClient.httpGet(`/ui/graph/${runId}`).then(r => panel.webview.postMessage(r));
+                        this._pythonClient.httpGet(`/ui/run/${runId}`).then(r => panel.webview.postMessage(r));
+                        this._pythonClient.httpGet(`/ui/lessons-applied/${runId}`).then(r => panel.webview.postMessage(r));
+                        this._pythonClient.httpGet('/ui/runs').then(r => panel.webview.postMessage(r));
                     } else {
                         console.error('[GraphTabProvider] Still no Python client available after getInstance()');
                     }
                     break;
                 case 'restart':
-                    this._pythonClient?.httpPost('/ui/restart', { session_id: sessionId });
+                    this._pythonClient?.httpPost('/ui/restart', { run_id: runId });
                     break;
                 case 'erase':
-                    this._pythonClient?.httpPost('/ui/erase', { session_id: sessionId });
+                    this._pythonClient?.httpPost('/ui/erase', { run_id: runId });
                     break;
                 case 'edit_input':
                     this._pythonClient?.httpPost('/ui/edit-input', {
-                        session_id: data.session_id, node_uuid: data.node_uuid, value: data.value,
+                        run_id: data.run_id, node_uuid: data.node_uuid, value: data.value,
                     });
                     break;
                 case 'edit_output':
                     this._pythonClient?.httpPost('/ui/edit-output', {
-                        session_id: data.session_id, node_uuid: data.node_uuid, value: data.value,
+                        run_id: data.run_id, node_uuid: data.node_uuid, value: data.value,
                     });
                     break;
                 case 'update_node':
                     this._pythonClient?.httpPost('/ui/update-node', {
-                        session_id: data.session_id, node_uuid: data.node_uuid,
+                        run_id: data.run_id, node_uuid: data.node_uuid,
                         field: data.field, value: data.value,
                     });
                     break;
-                case 'update_run_name':
+                case 'update_name':
                     this._pythonClient?.httpPost('/ui/update-run-name', {
-                        session_id: data.session_id, run_name: data.run_name,
+                        run_id: data.run_id, name: data.name,
                     });
                     break;
                 case 'update_result':
                     this._pythonClient?.httpPost('/ui/update-result', {
-                        session_id: data.session_id, result: data.result,
+                        run_id: data.run_id, result: data.result,
                     });
                     break;
                 case 'update_notes':
                     this._pythonClient?.httpPost('/ui/update-notes', {
-                        session_id: data.session_id, notes: data.notes,
+                        run_id: data.run_id, notes: data.notes,
                     });
                     break;
                 case 'navigateToCode':
@@ -289,8 +289,8 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                     }
                     break;
                 case 'updateTabTitle':
-                    const { sessionId: titleSessionId, title } = data.payload;
-                    const targetPanel = this._panels.get(titleSessionId);
+                    const { runId: titleRunId, title } = data.payload;
+                    const targetPanel = this._panels.get(titleRunId);
                     if (targetPanel && title) {
                         targetPanel.title = `Graph: ${title}`;
                     }
@@ -317,39 +317,39 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                 case 'openNodeEditorTab':
                     this.createOrShowNodeEditorTab(
                         data.nodeId,
-                        data.sessionId,
+                        data.runId,
                         data.field,
                         data.label,
                         data.inputValue,
                         data.outputValue
                     );
                     break;
-                case 'switchExperiment':
-                    // Switch to a different experiment in the current tab
-                    if (data.sessionId && this._pythonClient) {
-                        // Update the session reference for message forwarding
-                        const sessionRef = (panel as any)._sessionRef;
-                        if (sessionRef) {
-                            sessionRef.current = data.sessionId;
+                case 'switchRun':
+                    // Switch to a different run in the current tab
+                    if (data.runId && this._pythonClient) {
+                        // Update the run reference for message forwarding
+                        const runRef = (panel as any)._runRef;
+                        if (runRef) {
+                            runRef.current = data.runId;
                         }
-                        // Fetch data for the new session via HTTP
-                        this._pythonClient.httpGet(`/ui/graph/${data.sessionId}`).then(r => panel.webview.postMessage(r));
-                        this._pythonClient.httpGet(`/ui/experiment/${data.sessionId}`).then(r => panel.webview.postMessage(r));
-                        this._pythonClient.httpGet(`/ui/lessons-applied/${data.sessionId}`).then(r => panel.webview.postMessage(r));
+                        // Fetch data for the new run via HTTP
+                        this._pythonClient.httpGet(`/ui/graph/${data.runId}`).then(r => panel.webview.postMessage(r));
+                        this._pythonClient.httpGet(`/ui/run/${data.runId}`).then(r => panel.webview.postMessage(r));
+                        this._pythonClient.httpGet(`/ui/lessons-applied/${data.runId}`).then(r => panel.webview.postMessage(r));
                         // Update tab title
-                        if (data.experiment?.run_name) {
-                            panel.title = `Graph: ${data.experiment.run_name}`;
+                        if (data.run?.name) {
+                            panel.title = `Graph: ${data.run.name}`;
                         }
-                        // Update the panel's session mapping
-                        this._panels.delete(sessionId);
-                        this._panels.set(data.sessionId, panel);
+                        // Update the panel's run mapping
+                        this._panels.delete(runId);
+                        this._panels.set(data.runId, panel);
                     }
                     break;
             }
         });
 
         // Set up message forwarding from Python server
-        this._setupServerMessageForwarding(panel, sessionId);
+        this._setupServerMessageForwarding(panel, runId);
 
         // Send theme info
         this._sendThemeToPanel(panel);
@@ -440,22 +440,22 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                 case 'get_lesson':
                     this._handleGetLesson(panel, data.lesson_id);
                     break;
-                case 'get_sessions_for_lesson':
+                case 'get_runs_for_lesson':
                     if (data.lesson_id && this._pythonClient) {
-                        this._pythonClient.httpGet(`/ui/sessions-for-lesson/${data.lesson_id}`)
+                        this._pythonClient.httpGet(`/ui/runs-for-lesson/${data.lesson_id}`)
                             .then(r => panel.webview.postMessage(r));
                     }
                     break;
                 case 'navigateToRun':
                     // Navigate to a specific run's graph - handled by opening a new graph tab
-                    if (data.sessionId) {
-                        // We need to get the experiment info to open the graph tab
-                        // For now, create a minimal experiment object
-                        const experiment = {
-                            session_id: data.sessionId,
-                            run_name: data.sessionId.substring(0, 8) + '...',
+                    if (data.runId) {
+                        // We need to get the run info to open the graph tab
+                        // For now, create a minimal run object
+                        const run = {
+                            run_id: data.runId,
+                            name: data.runId.substring(0, 8) + '...',
                         };
-                        this.createOrShowGraphTab(experiment as any);
+                        this.createOrShowGraphTab(run as any);
                     }
                     break;
             }
@@ -477,7 +477,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
 
     public async createOrShowNodeEditorTab(
         nodeId: string,
-        sessionId: string,
+        runId: string,
         field: 'input' | 'output',
         label: string,
         inputValue: any,
@@ -502,7 +502,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                     type: 'updateNodeData',
                     payload: {
                         nodeId,
-                        sessionId,
+                        runId,
                         field,
                         label,
                         inputValue,
@@ -539,7 +539,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         panel.webview.html = this._getHtmlForNodeEditorWebview(
             panel.webview,
             nodeId,
-            sessionId,
+            runId,
             field,
             label,
             inputValue,
@@ -563,7 +563,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         type: 'init',
                         payload: {
                             nodeId,
-                            sessionId,
+                            runId,
                             field,
                             label,
                             inputValue,
@@ -573,12 +573,12 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                     break;
                 case 'edit_input':
                     this._pythonClient?.httpPost('/ui/edit-input', {
-                        session_id: data.session_id, node_uuid: data.node_uuid, value: data.value,
+                        run_id: data.run_id, node_uuid: data.node_uuid, value: data.value,
                     });
                     break;
                 case 'edit_output':
                     this._pythonClient?.httpPost('/ui/edit-output', {
-                        session_id: data.session_id, node_uuid: data.node_uuid, value: data.value,
+                        run_id: data.run_id, node_uuid: data.node_uuid, value: data.value,
                     });
                     break;
                 case 'openDocument':
@@ -606,7 +606,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     private _getHtmlForNodeEditorWebview(
         webview: vscode.Webview,
         nodeId: string,
-        sessionId: string,
+        runId: string,
         field: string,
         label: string,
         inputValue: any,
@@ -668,7 +668,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         window.vscode = vscode;
         window.nodeEditorContext = {
             nodeId: '${nodeId}',
-            sessionId: '${sessionId}',
+            runId: '${runId}',
             field: '${field}',
             label: '${escapedLabel}',
             inputValue: '${escapedInputValue}',
@@ -684,22 +684,22 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     }
 
     // ============================================================
-    // Server message forwarding (graph data, experiment lists, etc.)
+    // Server message forwarding (graph data, run lists, etc.)
     // ============================================================
 
-    private _setupServerMessageForwarding(panel: vscode.WebviewPanel, sessionId: string): void {
+    private _setupServerMessageForwarding(panel: vscode.WebviewPanel, runId: string): void {
         if (!this._pythonClient) {
             console.warn('[GraphTabProvider] No Python client available for message forwarding');
             return;
         }
 
-        // Use an object to hold current sessionId so it can be updated when switching experiments
-        const sessionRef = { current: sessionId };
-        (panel as any)._sessionRef = sessionRef; // Store reference on panel for later updates
+        // Use an object to hold current runId so it can be updated when switching runs
+        const runRef = { current: runId };
+        (panel as any)._runRef = runRef; // Store reference on panel for later updates
 
         const messageHandler = (msg: any) => {
             // Forward relevant messages to this specific tab
-            if (msg.session_id === sessionRef.current || !msg.session_id) {
+            if (msg.run_id === runRef.current || !msg.run_id) {
                 panel.webview.postMessage(msg);
             }
         };
@@ -724,7 +724,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         });
     }
 
-    private _getHtmlForWebview(webview: vscode.Webview, sessionId: string): string {
+    private _getHtmlForWebview(webview: vscode.Webview, runId: string): string {
         const path = require('path');
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview.js'));
         const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'dist', 'codicons', 'codicon.css'));
@@ -766,7 +766,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     <script>
         const vscode = acquireVsCodeApi();
         window.vscode = vscode;
-        window.sessionId = '${sessionId}';
+        window.runId = '${runId}';
     </script>
     <script src="{{scriptUri}}"></script>
 </body>
@@ -776,7 +776,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
 
         html = html.replace(/{{scriptUri}}/g, scriptUri.toString());
         html = html.replace(/{{codiconsUri}}/g, codiconsUri.toString());
-        html = html.replace(/{{sessionId}}/g, sessionId);
+        html = html.replace(/{{runId}}/g, runId);
 
         return html;
     }
@@ -1111,16 +1111,16 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
             ]
         };
 
-        // Restore HTML content (we'll need to get session ID from state)
-        const sessionId = state?.sessionId || 'unknown';
-        webviewPanel.webview.html = this._getHtmlForWebview(webviewPanel.webview, sessionId);
+        // Restore HTML content (we'll need to get the run ID from state)
+        const runId = state?.runId || 'unknown';
+        webviewPanel.webview.html = this._getHtmlForWebview(webviewPanel.webview, runId);
 
         // Store panel reference
-        this._panels.set(sessionId, webviewPanel);
+        this._panels.set(runId, webviewPanel);
 
         // Handle disposal
         webviewPanel.onDidDispose(() => {
-            this._panels.delete(sessionId);
+            this._panels.delete(runId);
         });
     }
 

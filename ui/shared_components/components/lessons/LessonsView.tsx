@@ -6,8 +6,8 @@ export interface Lesson {
   summary: string;
   content: string;
   path?: string;
-  appliedTo?: { sessionId: string; nodeId?: string; runName: string }[];
-  extractedFrom?: { sessionId: string; nodeId?: string };
+  appliedTo?: { runId: string; nodeId?: string; runName: string }[];
+  extractedFrom?: { runId: string; nodeId?: string };
   validationSeverity?: 'info' | 'warning' | 'error';
 }
 
@@ -41,7 +41,7 @@ interface LessonsViewProps {
   onLessonCreate?: (data: LessonFormData, force?: boolean) => void;
   onLessonUpdate?: (id: string, data: Partial<LessonFormData>, force?: boolean) => void;
   onLessonDelete?: (id: string) => void;
-  onNavigateToRun?: (sessionId: string, nodeId?: string) => void;
+  onNavigateToRun?: (runId: string, nodeId?: string) => void;
   onFetchLessonContent?: (id: string) => void;
   onFetchFolder?: (path: string) => void;
   validationResult?: ValidationResult | null;
@@ -52,8 +52,8 @@ interface LessonsViewProps {
   folderResult?: { path: string; folders: FolderEntry[]; lessons: Lesson[]; lessonCount?: number } | null;
   /** Incoming lesson content update */
   lessonContentUpdate?: { id: string; content: string } | null;
-  /** Fetch sessions a lesson was applied to (lazy, per-lesson). Returns a Promise so each result is handled independently. */
-  onFetchAppliedSessions?: (lessonId: string) => Promise<{ sessionId: string; nodeId?: string; runName: string }[]>;
+  /** Fetch runs a lesson was applied to (lazy, per-lesson). Returns a Promise so each result is handled independently. */
+  onFetchAppliedRuns?: (lessonId: string) => Promise<{ runId: string; nodeId?: string; runName: string }[]>;
 }
 
 // Loading spinner component
@@ -106,7 +106,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
   apiKeyError,
   folderResult,
   lessonContentUpdate,
-  onFetchAppliedSessions,
+  onFetchAppliedRuns,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
@@ -171,22 +171,22 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
     });
   }, [lessonContentUpdate]);
 
-  // Fetch applied-session counts when new lessons become visible
+  // Fetch applied-run counts when new lessons become visible
   const fetchedAppliedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!folderResult || !onFetchAppliedSessions) return;
+    if (!folderResult || !onFetchAppliedRuns) return;
     for (const lesson of folderResult.lessons) {
       if (!fetchedAppliedRef.current.has(lesson.id)) {
         fetchedAppliedRef.current.add(lesson.id);
         const lessonId = lesson.id;
-        onFetchAppliedSessions(lessonId).then(sessions => {
+        onFetchAppliedRuns(lessonId).then(runs => {
           setFolderData((prev) => {
             const next = new Map(prev);
             for (const [path, data] of next) {
               const idx = data.lessons.findIndex((l) => l.id === lessonId);
               if (idx !== -1) {
                 const updatedLessons = [...data.lessons];
-                updatedLessons[idx] = { ...updatedLessons[idx], appliedTo: sessions };
+                updatedLessons[idx] = { ...updatedLessons[idx], appliedTo: runs };
                 next.set(path, { ...data, lessons: updatedLessons });
                 break;
               }
@@ -196,7 +196,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
         });
       }
     }
-  }, [folderResult, onFetchAppliedSessions]);
+  }, [folderResult, onFetchAppliedRuns]);
 
   // Collect all loaded lessons for search
   const allLoadedLessons = useCallback((): Lesson[] => {
@@ -840,7 +840,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
             {lesson.appliedTo.map((target, idx) => (
               <button
                 key={idx}
-                onClick={() => onNavigateToRun?.(target.sessionId, target.nodeId)}
+                onClick={() => onNavigateToRun?.(target.runId, target.nodeId)}
                 style={{
                   ...buttonStyle(isDarkTheme),
                   display: 'flex',

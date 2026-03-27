@@ -12,8 +12,9 @@ from argparse import ArgumentParser, REMAINDER
 from pathlib import Path
 from sovara.common.constants import PLAYBOOK_SERVER_URL, PLAYBOOK_SERVER_TIMEOUT
 from sovara.server.database_manager import DB
+from sovara.server.graph_models import RunGraph
 
-SESSION_WAIT_TIMEOUT = 30  # Max seconds to wait for session_id from agent_runner
+RUN_WAIT_TIMEOUT = 30  # Max seconds to wait for run_id from agent_runner
 
 
 def output_json(data: dict) -> None:
@@ -45,7 +46,7 @@ def _resolve_value(value: str) -> str:
     return value
 
 
-def _apply_edit(session_id: str, node_uuid: str, field: str, key: str, value: str) -> dict:
+def _apply_edit(run_id: str, node_uuid: str, field: str, key: str, value: str) -> dict:
     """
     Apply an edit to a single key in a node's input or output.
 
@@ -60,12 +61,12 @@ def _apply_edit(session_id: str, node_uuid: str, field: str, key: str, value: st
 
     # Get the node's current data
     if field == "input":
-        row = DB.query_one_llm_call_input(session_id, node_uuid)
+        row = DB.query_one_llm_call_input(run_id, node_uuid)
     else:
-        row = DB.query_one_llm_call_output(session_id, node_uuid)
+        row = DB.query_one_llm_call_output(run_id, node_uuid)
 
     if not row:
-        return {"status": "error", "error": f"Node {node_uuid} not found in session {session_id}"}
+        return {"status": "error", "error": f"Node {node_uuid} not found in run {run_id}"}
 
     api_type = row["api_type"]
 
@@ -117,50 +118,50 @@ def _apply_edit(session_id: str, node_uuid: str, field: str, key: str, value: st
 
     # Apply the edit
     if field == "input":
-        DB.set_input_overwrite(session_id, node_uuid, new_json_str)
+        DB.set_input_overwrite(run_id, node_uuid, new_json_str)
     else:
-        DB.set_output_overwrite(session_id, node_uuid, new_json_str)
+        DB.set_output_overwrite(run_id, node_uuid, new_json_str)
 
     return {
         "status": "success",
-        "session_id": session_id,
+        "run_id": run_id,
         "node_uuid": node_uuid,
         "field": field,
         "key": key,
     }
 
 
-def _spawn_rerun(session_id: str, timeout: float | None = None) -> dict:
+def _spawn_rerun(run_id: str, timeout: float | None = None) -> dict:
     """
-    Spawn a rerun process for a session and block until completion.
+    Spawn a rerun process for a run and block until completion.
 
     Consistent with record_command: stdout/stderr pass through to terminal.
-    Returns result dict with status, session_id, exit_code, etc.
+    Returns result dict with status, run_id, exit_code, etc.
     """
     # Get the original command, cwd, and environment from DB
-    cwd, command, environment = DB.get_exec_command(session_id)
+    cwd, command, environment = DB.get_exec_command(run_id)
 
     if not command:
-        return {"status": "error", "error": f"Session not found or no command stored: {session_id}"}
+        return {"status": "error", "error": f"Run not found or no command stored: {run_id}"}
 
-    # Create temp file for session_id IPC
+    # Create temp file for run_id IPC
     run_id = str(uuid.uuid4())[:8]
-    session_file = os.path.join(tempfile.gettempdir(), f"sovara-session-{run_id}.json")
+    run_file = os.path.join(tempfile.gettempdir(), f"sovara-run-{run_id}.json")
 
-    def cleanup_session_file():
+    def cleanup_run_file():
         try:
-            if os.path.exists(session_file):
-                os.unlink(session_file)
+            if os.path.exists(run_file):
+                os.unlink(run_file)
         except OSError:
             pass
 
-    atexit.register(cleanup_session_file)
+    atexit.register(cleanup_run_file)
 
-    # Set up environment: restore original env + set rerun session ID
+    # Set up environment: restore original env + set rerun run ID
     env = os.environ.copy()
     env.update(environment)
-    env["SOVARA_SESSION_ID"] = session_id  # Tell agent_runner to reuse this session
-    env["SOVARA_SESSION_FILE"] = session_file
+    env["SOVARA_RUN_ID"] = run_id  # Tell agent_runner to reuse this run
+    env["SOVARA_RUN_FILE"] = run_file
 
     # Parse and execute the original command
     cmd_parts = shlex.split(command)
@@ -172,17 +173,17 @@ def _spawn_rerun(session_id: str, timeout: float | None = None) -> dict:
         stdin=subprocess.DEVNULL,
     )
 
-    # Wait for session_id from agent_runner (confirms handshake)
-    session_data = wait_for_session_file(session_file, SESSION_WAIT_TIMEOUT)
+    # Wait for run_id from agent_runner (confirms handshake)
+    run_data = wait_for_run_file(run_file, RUN_WAIT_TIMEOUT)
 
     # Clean up temp file
-    cleanup_session_file()
-    atexit.unregister(cleanup_session_file)
+    cleanup_run_file()
+    atexit.unregister(cleanup_run_file)
 
-    if not session_data:
+    if not run_data:
         return {
             "status": "error",
-            "error": "Timeout waiting for session handshake",
+            "error": "Timeout waiting for run handshake",
             "pid": process.pid,
         }
 
@@ -193,7 +194,7 @@ def _spawn_rerun(session_id: str, timeout: float | None = None) -> dict:
         duration = time.time() - start_time
         return {
             "status": "completed" if exit_code == 0 else "failed",
-            "session_id": session_id,
+            "run_id": run_id,
             "exit_code": exit_code,
             "duration_seconds": round(duration, 2),
         }
@@ -201,24 +202,24 @@ def _spawn_rerun(session_id: str, timeout: float | None = None) -> dict:
         process.terminate()
         return {
             "status": "timeout",
-            "session_id": session_id,
+            "run_id": run_id,
             "pid": process.pid,
         }
 
 
 
-def wait_for_session_file(session_file: str, timeout: float) -> dict | None:
-    """Poll for session file to be written by agent_runner.
+def wait_for_run_file(run_file: str, timeout: float) -> dict | None:
+    """Poll for the run file written by agent_runner.
 
     Returns the parsed JSON data if successful, None on timeout.
     """
     start = time.time()
     while time.time() - start < timeout:
-        if os.path.exists(session_file):
+        if os.path.exists(run_file):
             try:
-                with open(session_file, "r") as f:
+                with open(run_file, "r") as f:
                     data = json.load(f)
-                    if "session_id" in data:
+                    if "run_id" in data:
                         return data
             except (json.JSONDecodeError, IOError):
                 pass  # File not fully written yet
@@ -233,16 +234,16 @@ def record_command(args) -> None:
         output_json({"status": "error", "error": f"Script not found: {args.script_path}"})
 
     run_id = str(uuid.uuid4())[:8]
-    session_file = os.path.join(tempfile.gettempdir(), f"sovara-session-{run_id}.json")
+    run_file = os.path.join(tempfile.gettempdir(), f"sovara-run-{run_id}.json")
 
-    def cleanup_session_file():
+    def cleanup_run_file():
         try:
-            if os.path.exists(session_file):
-                os.unlink(session_file)
+            if os.path.exists(run_file):
+                os.unlink(run_file)
         except OSError:
             pass
 
-    atexit.register(cleanup_session_file)
+    atexit.register(cleanup_run_file)
 
     cmd = [sys.executable, "-m", "sovara.cli.so_record"]
     if args.run_name:
@@ -253,7 +254,7 @@ def record_command(args) -> None:
     cmd.extend(args.script_args)
 
     env = os.environ.copy()
-    env["SOVARA_SESSION_FILE"] = session_file
+    env["SOVARA_RUN_FILE"] = run_file
 
     process = subprocess.Popen(
         cmd,
@@ -261,20 +262,20 @@ def record_command(args) -> None:
         stdin=subprocess.DEVNULL,
     )
 
-    session_data = wait_for_session_file(session_file, SESSION_WAIT_TIMEOUT)
+    run_data = wait_for_run_file(run_file, RUN_WAIT_TIMEOUT)
 
     # Clean up temp file now that we've read it
-    cleanup_session_file()
-    atexit.unregister(cleanup_session_file)
+    cleanup_run_file()
+    atexit.unregister(cleanup_run_file)
 
-    if not session_data:
+    if not run_data:
         output_json({
             "status": "error",
-            "error": "Timeout waiting for session_id from agent runner",
+            "error": "Timeout waiting for run_id from agent runner",
             "pid": process.pid,
         })
 
-    session_id = session_data["session_id"]
+    run_id = run_data["run_id"]
 
     start_time = time.time()
     try:
@@ -282,7 +283,7 @@ def record_command(args) -> None:
         duration = time.time() - start_time
         output_json({
             "status": "completed" if exit_code == 0 else "failed",
-            "session_id": session_id,
+            "run_id": run_id,
             "exit_code": exit_code,
             "duration_seconds": round(duration, 2),
         })
@@ -290,7 +291,7 @@ def record_command(args) -> None:
         process.terminate()
         output_json({
             "status": "timeout",
-            "session_id": session_id,
+            "run_id": run_id,
             "pid": process.pid,
         })
 
@@ -338,16 +339,16 @@ def _filter_by_key_regex(obj, pattern: str):
 
 
 def probe_command(args) -> None:
-    """Query the state of a session - metadata or specific nodes."""
-    session_id = args.session_id
+    """Query the state of a run: metadata or specific nodes."""
+    run_id = args.run_id
 
-    # Get experiment metadata
-    experiment = DB.get_experiment_metadata(session_id)
-    if not experiment:
-        output_json({"status": "error", "error": f"Session not found: {session_id}"})
+    # Get run metadata
+    run = DB.get_run_metadata(run_id)
+    if not run:
+        output_json({"status": "error", "error": f"Run not found: {run_id}"})
 
     # Parse graph topology from JSON
-    graph_topology = SessionGraph.from_json_string(experiment["graph_topology"]).to_dict()
+    graph_topology = RunGraph.from_json_string(run["graph_topology"]).to_dict()
     edges = graph_topology.get("edges", [])
 
     # Build parent/child relationships from edges
@@ -363,7 +364,7 @@ def probe_command(args) -> None:
         node_uuids = [args.node] if args.node else args.nodes.split(",")
         nodes_data = []
         for node_uuid in node_uuids:
-            llm_call = DB.get_llm_call_full(session_id, node_uuid.strip())
+            llm_call = DB.get_llm_call_full(run_id, node_uuid.strip())
             if not llm_call:
                 output_json({"status": "error", "error": f"Node not found: {node_uuid}"})
 
@@ -415,7 +416,7 @@ def probe_command(args) -> None:
 
             node_info = {
                 "node_uuid": llm_call["node_uuid"],
-                "session_id": session_id,
+                "run_id": run_id,
                 "api_type": llm_call["api_type"],
                 "label": llm_call["label"],
                 "timestamp": format_timestamp(llm_call["timestamp"]),
@@ -442,13 +443,13 @@ def probe_command(args) -> None:
 
     # Default: full probe - metadata + graph summary
     output_json({
-        "session_id": session_id,
-        "name": experiment["name"],
+        "run_id": run_id,
+        "name": run["name"],
         "status": "finished",  # TODO: track running status
-        "timestamp": format_timestamp(experiment["timestamp"]),
-        "custom_metrics": DB._parse_custom_metrics(experiment["custom_metrics"]),
-        "thumb_label": DB._normalize_thumb_label(experiment["thumb_label"]),
-        "version_date": experiment["version_date"],
+        "timestamp": format_timestamp(run["timestamp"]),
+        "custom_metrics": DB._parse_custom_metrics(run["custom_metrics"]),
+        "thumb_label": DB._normalize_thumb_label(run["thumb_label"]),
+        "version_date": run["version_date"],
         "node_count": len(graph_topology.get("nodes", [])),
         "nodes": [
             {
@@ -464,8 +465,8 @@ def probe_command(args) -> None:
     })
 
 
-def experiments_command(args) -> None:
-    """List experiments from the database."""
+def runs_command(args) -> None:
+    """List runs from the database."""
     import re
 
     # Parse range (format: "start:end", ":end", "start:", or "start")
@@ -479,15 +480,15 @@ def experiments_command(args) -> None:
         start = int(range_str)
         end = start + 1  # Single item
 
-    # Get all experiments sorted by timestamp (most recent first)
-    all_experiments = DB.get_all_experiments_sorted()
-    total_count = len(all_experiments)
+    # Get all runs sorted by timestamp (most recent first)
+    all_runs = DB.get_all_runs_sorted()
+    total_count = len(all_runs)
 
     # Apply range first
     if end is not None:
-        experiments = all_experiments[start:end]
+        runs = all_runs[start:end]
     else:
-        experiments = all_experiments[start:]
+        runs = all_runs[start:]
 
     # Apply regex filter on top of the range
     if args.regex:
@@ -495,17 +496,17 @@ def experiments_command(args) -> None:
             pattern = re.compile(args.regex)
         except re.error as e:
             output_json({"status": "error", "error": f"Invalid regex: {e}"})
-        experiments = [exp for exp in experiments if pattern.search(exp["name"] or "")]
+        runs = [exp for exp in runs if pattern.search(exp["name"] or "")]
 
     # Format output
     result = []
-    for exp in experiments:
+    for exp in runs:
         timestamp = exp["timestamp"]
         if hasattr(timestamp, "isoformat"):
             timestamp = timestamp.isoformat()
 
         result.append({
-            "session_id": exp["session_id"],
+            "run_id": exp["run_id"],
             "name": exp["name"],
             "timestamp": format_timestamp(timestamp),
             "custom_metrics": DB._parse_custom_metrics(exp["custom_metrics"]),
@@ -513,65 +514,65 @@ def experiments_command(args) -> None:
             "version_date": exp["version_date"],
         })
 
-    output_json({"experiments": result, "total": total_count, "range": f"{start}:{end if end else ''}"})
+    output_json({"runs": result, "total": total_count, "range": f"{start}:{end if end else ''}"})
 
 
 
-def _copy_experiment(session_id: str, run_name: str | None = None) -> str | dict:
+def _copy_run(run_id: str, run_name: str | None = None) -> str | dict:
     """
-    Clones the experiment and llm-calls entries for the given session_id in the DB
-    and writes them into new entries in the DB with a new session id we generate here.
-    Returns the new session id, or an error dict if the session doesn't exist.
+    Clones the run and llm-calls entries for the given run_id in the DB
+    and writes them into new entries in the DB with a new run id we generate here.
+    Returns the new run id, or an error dict if the run doesn't exist.
 
     Args:
-        session_id: The session to copy
+        run_id: The run to copy
         run_name: Optional name for the new run. If None, defaults to "Edit of <original name>"
     """
     from datetime import datetime
 
-    # Get the original experiment metadata
-    experiment = DB.get_experiment_metadata(session_id)
-    if not experiment:
-        return {"status": "error", "error": f"Session not found: {session_id}"}
+    # Get the original run metadata
+    run = DB.get_run_metadata(run_id)
+    if not run:
+        return {"status": "error", "error": f"Run not found: {run_id}"}
 
     # Get execution info (cwd, command, environment)
-    cwd, command, environment = DB.get_exec_command(session_id)
+    cwd, command, environment = DB.get_exec_command(run_id)
     if not command:
-        return {"status": "error", "error": f"No command stored for session: {session_id}"}
+        return {"status": "error", "error": f"No command stored for run: {run_id}"}
 
-    # Generate new session ID
-    new_session_id = str(uuid.uuid4())
+    # Generate new run ID
+    new_run_id = str(uuid.uuid4())
 
     # Determine run name
     if run_name is None:
-        run_name = f"Edit of {experiment['name']}"
+        run_name = f"Edit of {run['name']}"
 
-    # Create new experiment with copied data but new session_id and timestamp
-    DB.add_experiment(
-        session_id=new_session_id,
+    # Create new run with copied data but new run_id and timestamp
+    DB.add_run(
+        run_id=new_run_id,
         name=run_name,
         timestamp=datetime.now(timezone.utc),
         cwd=cwd,
         command=command,
         environment=environment,
-        parent_session_id=new_session_id,  # Self-referential for new top-level run
-        version_date=experiment["version_date"],
+        parent_run_id=new_run_id,  # Self-referential for new top-level run
+        version_date=run["version_date"],
     )
 
     # Copy graph topology from original
-    if experiment["graph_topology"]:
-        graph = SessionGraph.from_json_string(experiment["graph_topology"])
-        DB.update_graph_topology(new_session_id, graph)
+    if run["graph_topology"]:
+        graph = RunGraph.from_json_string(run["graph_topology"])
+        DB.update_graph_topology(new_run_id, graph)
 
-    # Copy all LLM calls to new session
-    DB.copy_llm_calls(session_id, new_session_id)
+    # Copy all LLM calls to new run
+    DB.copy_llm_calls(run_id, new_run_id)
 
-    return new_session_id
+    return new_run_id
 
 
 def edit_and_rerun_command(args) -> None:
     """Edit a single key in a node's input or output and immediately rerun."""
-    session_id = args.session_id
+    run_id = args.run_id
     node_uuid = args.node_uuid
 
     # Determine field, key, and value from mutually exclusive args
@@ -582,19 +583,19 @@ def edit_and_rerun_command(args) -> None:
         field = "output"
         key, value = args.output
 
-    # Always create a new run (copy experiment)
-    result = _copy_experiment(session_id, args.run_name)
+    # Always create a new run (copy run)
+    result = _copy_run(run_id, args.run_name)
     if isinstance(result, dict):
         output_json(result)
-    session_id = result
+    run_id = result
 
     # Step 1: Apply the edit
-    edit_result = _apply_edit(session_id, node_uuid, field, key, value)
+    edit_result = _apply_edit(run_id, node_uuid, field, key, value)
     if edit_result.get("status") == "error":
         output_json(edit_result)
 
     # Step 2: Spawn rerun and block until completion
-    result = _spawn_rerun(session_id, timeout=args.timeout)
+    result = _spawn_rerun(run_id, timeout=args.timeout)
     result["node_uuid"] = node_uuid
     result["edited_field"] = field
     result["edited_key"] = key
@@ -1143,7 +1144,7 @@ def create_parser() -> ArgumentParser:
     record = subparsers.add_parser(
         "record",
         help="Start recording a script execution",
-        description="Spawn so-record as a background process and return session_id.",
+        description="Spawn so-record as a background process and return run_id.",
     )
     record.add_argument(
         "-m", "--module",
@@ -1164,10 +1165,10 @@ def create_parser() -> ArgumentParser:
     # probe subcommand
     probe = subparsers.add_parser(
         "probe",
-        help="Query session state",
-        description="Query metadata or specific nodes of a session.",
+        help="Query run state",
+        description="Query metadata or specific nodes of a run.",
     )
-    probe.add_argument("session_id", help="Session ID to probe")
+    probe.add_argument("run_id", help="Run ID to probe")
     probe.add_argument(
         "--node",
         help="Return detailed info for a single node",
@@ -1198,31 +1199,31 @@ def create_parser() -> ArgumentParser:
         help="Filter keys using regex pattern on flattened keys (e.g., 'messages.*content'). Lists use index notation: content.0.hello",
     )
 
-    # experiments subcommand
-    experiments = subparsers.add_parser(
-        "experiments",
-        help="List experiments from database",
-        description="List experiments with optional range. Range format: ':50' (first 50), '50:100' (50-99), '10:' (from 10 onwards).",
+    # runs subcommand
+    runs = subparsers.add_parser(
+        "runs",
+        help="List runs from database",
+        description="List runs with optional range. Range format: ':50' (first 50), '50:100' (50-99), '10:' (from 10 onwards).",
     )
-    experiments.add_argument(
+    runs.add_argument(
         "--range",
         default=":50",
-        help="Range of experiments to return (default: ':50'). Format: 'start:end', ':end', 'start:'",
+        help="Range of runs to return (default: ':50'). Format: 'start:end', ':end', 'start:'",
     )
-    experiments.add_argument(
+    runs.add_argument(
         "--regex",
-        help="Filter experiments by name using regex pattern",
+        help="Filter runs by name using regex pattern",
     )
 
     # edit-and-rerun subcommand
     edit_and_rerun = subparsers.add_parser(
         "edit-and-rerun",
         help="Edit a node and immediately rerun",
-        description="Copy a session, edit a single key in a node's input or output, and rerun. "
+        description="Copy a run, edit a single key in a node's input or output, and rerun. "
                     "Keys use flattened dot-notation from probe output (e.g., messages.0.content). "
                     "Value can be a literal or a path to a file.",
     )
-    edit_and_rerun.add_argument("session_id", help="Session ID containing the node")
+    edit_and_rerun.add_argument("run_id", help="Run ID containing the node")
     edit_and_rerun.add_argument("node_uuid", help="Node UUID to edit")
     edit_and_rerun_group = edit_and_rerun.add_mutually_exclusive_group(required=True)
     edit_and_rerun_group.add_argument(
@@ -1424,8 +1425,8 @@ def main():
         record_command(args)
     elif args.command == "probe":
         probe_command(args)
-    elif args.command == "experiments":
-        experiments_command(args)
+    elif args.command == "runs":
+        runs_command(args)
     elif args.command == "edit-and-rerun":
         edit_and_rerun_command(args)
     elif args.command == "install-skill":

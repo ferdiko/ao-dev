@@ -50,22 +50,22 @@ This will return
 ```json
 {
   "status": "completed",
-  "session_id": "77772451-2bea-4401-89aa-1b32cb34f688",
+  "run_id": "77772451-2bea-4401-89aa-1b32cb34f688",
   "exit_code": 0,
   "duration_seconds": 16.9
 }
 ```
 
-### Inspect a session
+### Inspect a run
 After you ran a script/module you can investigate the input/output of each node (LLM call, tool call) using the `probe` command.
 
 The tool is generally structured like this.
 
 ```
-usage: so-tool probe [-h] [--node NODE] [--nodes NODES] [--preview] [--input] [--output] [--key-regex KEY_REGEX] session_id
+usage: so-tool probe [-h] [--node NODE] [--nodes NODES] [--preview] [--input] [--output] [--key-regex KEY_REGEX] run_id
 
 positional arguments:
-  session_id            Session ID to probe
+  run_id            Run ID to probe
 
 options:
   -h, --help            show this help message and exit
@@ -87,7 +87,7 @@ uv run so-tool probe b6aaf796-8e25-4e9a-aae6-a47f261ced54
 This will return a structured JSON with the run metadata and the graph information:
 ```json
 {
-  "session_id": "b6aaf796-8e25-4e9a-aae6-a47f261ced54",
+  "run_id": "b6aaf796-8e25-4e9a-aae6-a47f261ced54",
   "name": "bench-train-9",
   "status": "finished",
   "timestamp": "2026-01-25 17:55:42.100729",
@@ -122,7 +122,7 @@ This will produce a preview with flattened keys:
 ```json
 {
   "node_id": "00b0e4b8-db1d-4f44-bd5e-23c049c7b8c0",
-  "session_id": "b6aaf796-8e25-4e9a-aae6-a47f261ced54",
+  "run_id": "b6aaf796-8e25-4e9a-aae6-a47f261ced54",
   "api_type": "httpx.Client.send",
   "label": null,
   "timestamp": "2026-01-25 16:56:25",
@@ -171,7 +171,7 @@ This will produce the full result (no preview) of the specific keys that match t
 ```json
 {
   "node_id": "00b0e4b8-db1d-4f44-bd5e-23c049c7b8c0",
-  "session_id": "b6aaf796-8e25-4e9a-aae6-a47f261ced54",
+  "run_id": "b6aaf796-8e25-4e9a-aae6-a47f261ced54",
   "api_type": "httpx.Client.send",
   "label": null,
   "timestamp": "2026-01-25 16:56:25",
@@ -204,41 +204,41 @@ This will produce the full result (no preview) of the specific keys that match t
 }
 ```
 
-### List and manage experiments
-You can manage past runs that you did with the `experiments` command, which is structured in the following way
+### List and manage runs
+You can manage past runs that you did with the `runs` command, which is structured in the following way
 
 ```
-usage: so-tool experiments [-h] [--range RANGE] [--regex REGEX]
+usage: so-tool runs [-h] [--range RANGE] [--regex REGEX]
 
-List experiments with optional range. Range format: ':50' (first 50), '50:100' (50-99), '10:' (from 10 onwards).
+List runs with optional range. Range format: ':50' (first 50), '50:100' (50-99), '10:' (from 10 onwards).
 
 options:
   -h, --help     show this help message and exit
-  --range RANGE  Range of experiments to return (default: ':50'). Format: 'start:end', ':end', 'start:'
-  --regex REGEX  Filter experiments by name using regex pattern
+  --range RANGE  Range of runs to return (default: ':50'). Format: 'start:end', ':end', 'start:'
+  --regex REGEX  Filter runs by name using regex pattern
 ```
 
 Example:
-To list the most recent 2 experiments that match a certain regex, I can do
+To list the most recent 2 runs that match a certain regex, I can do
 
 ```bash
-uv run so-tool experiments --range :2 --regex "Run \d+$"
+uv run so-tool runs --range :2 --regex "Run \d+$"
 ```
 
 which produces
 
 ```json
 {
-  "experiments": [
+  "runs": [
     {
-      "session_id": "77772451-2bea-4401-89aa-1b32cb34f688",
+      "run_id": "77772451-2bea-4401-89aa-1b32cb34f688",
       "name": "Run 1023",
       "timestamp": "2026-01-26 09:04:26",
       "result": "",
       "version_date": null
     },
     {
-      "session_id": "b5288aae-02ca-4696-89ee-5f4074f4064e",
+      "run_id": "b5288aae-02ca-4696-89ee-5f4074f4064e",
       "name": "Run 1022",
       "timestamp": "2026-01-26 08:39:28",
       "result": "",
@@ -264,13 +264,13 @@ wait
 
 ## Accelerated A/B Testing
 
-Copy a session, edit a single key in a node's input or output, and rerun to see how changes propagate through the graph. The original session is always preserved. The command blocks until completion and passes stdout/stderr through to the terminal.
+Copy a run, edit a single key in a node's input or output, and rerun to see how changes propagate through the graph. The original run is always preserved. The command blocks until completion and passes stdout/stderr through to the terminal.
 
 ```
-usage: so-tool edit-and-rerun [-h] (--input KEY VALUE | --output KEY VALUE) [--timeout TIMEOUT] [--run-name RUN_NAME] session_id node_id
+usage: so-tool edit-and-rerun [-h] (--input KEY VALUE | --output KEY VALUE) [--timeout TIMEOUT] [--run-name RUN_NAME] run_id node_id
 
 positional arguments:
-  session_id            Session ID containing the node
+  run_id            Run ID containing the node
   node_id               Node ID to edit
 
 options:
@@ -302,7 +302,7 @@ uv run so-tool probe 77772451-2bea-4401-89aa-1b32cb34f688 --node ee5643e0 --prev
 }
 ```
 
-**Step 2:** Edit a key and rerun. This creates a new session, applies the edit, and reruns the script — downstream nodes recompute while unchanged nodes return cached results:
+**Step 2:** Edit a key and rerun. This creates a new run, applies the edit, and reruns the script — downstream nodes recompute while unchanged nodes return cached results:
 ```bash
 uv run so-tool edit-and-rerun 77772451-2bea-4401-89aa-1b32cb34f688 ee5643e0-04e0-474b-bbc5-2d303d02e273 \
   --input body.input "What is the best programming language?" \
@@ -311,7 +311,7 @@ uv run so-tool edit-and-rerun 77772451-2bea-4401-89aa-1b32cb34f688 ee5643e0-04e0
 ```json
 {
   "status": "completed",
-  "session_id": "b7df883a-d5f9-4e5a-8743-48dc3536b57c",
+  "run_id": "b7df883a-d5f9-4e5a-8743-48dc3536b57c",
   "exit_code": 0,
   "duration_seconds": 18.73,
   "node_id": "ee5643e0-04e0-474b-bbc5-2d303d02e273",
@@ -320,17 +320,17 @@ uv run so-tool edit-and-rerun 77772451-2bea-4401-89aa-1b32cb34f688 ee5643e0-04e0
 }
 ```
 
-**Step 3:** Probe downstream nodes in the new session to verify the effect of the change.
+**Step 3:** Probe downstream nodes in the new run to verify the effect of the change.
 
 ### Using file contents as value
 For longer edits (e.g., replacing a system prompt), write the new value to a file and pass the path:
 ```bash
-uv run so-tool edit-and-rerun <session_id> <node_id> \
+uv run so-tool edit-and-rerun <run_id> <node_id> \
   --input body.messages.0.content /path/to/new_system_prompt.txt
 ```
 
 ### Parallel A/B testing
-To test multiple variations of the same input in parallel, launch several `edit-and-rerun` commands concurrently. Each creates its own session copy, so they don't interfere:
+To test multiple variations of the same input in parallel, launch several `edit-and-rerun` commands concurrently. Each creates its own run copy, so they don't interfere:
 ```bash
 SESSION=77772451-2bea-4401-89aa-1b32cb34f688
 NODE=ee5643e0-04e0-474b-bbc5-2d303d02e273
@@ -340,7 +340,7 @@ uv run so-tool edit-and-rerun $SESSION $NODE --input body.temperature 0.5 --run-
 uv run so-tool edit-and-rerun $SESSION $NODE --input body.temperature 1.0 --run-name "temp-1.0" &
 wait
 ```
-Then compare results across the three sessions using `so-tool probe` and `so-tool experiments --regex "temp-"`.
+Then compare results across the three runs using `so-tool probe` and `so-tool runs --regex "temp-"`.
 
 ---
 

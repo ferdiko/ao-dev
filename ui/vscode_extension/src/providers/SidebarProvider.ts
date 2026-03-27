@@ -16,11 +16,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // Buffering is needed to ensure no messages are lost if the server sends messages before the webview is ready.
 
     constructor(private readonly _extensionUri: vscode.Uri, private readonly _context: vscode.ExtensionContext) {
-        // Set up window focus detection to request experiments when VS Code regains focus
+        // Set up window focus detection to request runs when VS Code regains focus
         this._windowStateListener = vscode.window.onDidChangeWindowState((state) => {
             if (state.focused && this._pythonClient && this._view) {
-                // Window regained focus - request fresh experiment list from server
-                this._pythonClient.httpGet('/ui/experiments').then(r => this._view?.webview.postMessage(r));
+                // Window regained focus - request fresh run list from server
+                this._pythonClient.httpGet('/ui/runs').then(r => this._view?.webview.postMessage(r));
             }
         });
     }
@@ -52,14 +52,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
 
-    public handleEditDialogSave(value: string, context: { nodeId: string; field: string; session_id?: string; attachments?: any }): void {
+    public handleEditDialogSave(value: string, context: { nodeId: string; field: string; run_id?: string; attachments?: any }): void {
         this._view?.webview.postMessage({
             type: 'updateNode',
             payload: {
                 nodeId: context.nodeId,
                 field: context.field,
                 value,
-                session_id: context.session_id,
+                run_id: context.run_id,
             }
         });
     }
@@ -77,10 +77,10 @@ _context: vscode.WebviewViewResolveContext,
             this._view = undefined;
         });
 
-        // Request fresh experiment list when the webview becomes visible
+        // Request fresh run list when the webview becomes visible
         webviewView.onDidChangeVisibility(() => {
             if (webviewView.visible && this._pythonClient) {
-                this._pythonClient.httpGet('/ui/experiments').then(r => this._view?.webview.postMessage(r));
+                this._pythonClient.httpGet('/ui/runs').then(r => this._view?.webview.postMessage(r));
             }
         });
 
@@ -109,45 +109,45 @@ _context: vscode.WebviewViewResolveContext,
         webviewView.webview.onDidReceiveMessage(data => {
             switch (data.type) {
                 case 'restart':
-                    if (!data.session_id) {
-                        console.error('Restart message missing session_id!');
+                    if (!data.run_id) {
+                        console.error('Restart message missing run_id!');
                         return;
                     }
-                    this._pythonClient?.httpPost('/ui/restart', { session_id: data.session_id });
+                    this._pythonClient?.httpPost('/ui/restart', { run_id: data.run_id });
                     break;
                 case 'open_log_tab_side_by_side':
                     console.warn('NotesLogTabProvider not available');
                     break;
                 case 'update_node':
                     this._pythonClient?.httpPost('/ui/update-node', {
-                        session_id: data.session_id, node_uuid: data.node_uuid,
+                        run_id: data.run_id, node_uuid: data.node_uuid,
                         field: data.field, value: data.value,
                     });
                     break;
                 case 'edit_input':
                     this._pythonClient?.httpPost('/ui/edit-input', {
-                        session_id: data.session_id, node_uuid: data.node_uuid, value: data.value,
+                        run_id: data.run_id, node_uuid: data.node_uuid, value: data.value,
                     });
                     break;
                 case 'edit_output':
                     this._pythonClient?.httpPost('/ui/edit-output', {
-                        session_id: data.session_id, node_uuid: data.node_uuid, value: data.value,
+                        run_id: data.run_id, node_uuid: data.node_uuid, value: data.value,
                     });
                     break;
                 case 'get_graph':
-                    if (data.session_id) {
-                        this._pythonClient?.httpGet(`/ui/graph/${data.session_id}`).then(r => this._view?.webview.postMessage(r));
+                    if (data.run_id) {
+                        this._pythonClient?.httpGet(`/ui/graph/${data.run_id}`).then(r => this._view?.webview.postMessage(r));
                     }
                     break;
                 case 'erase':
-                    this._pythonClient?.httpPost('/ui/erase', { session_id: data.session_id });
+                    this._pythonClient?.httpPost('/ui/erase', { run_id: data.run_id });
                     break;
-                case 'get_more_experiments':
-                    this._pythonClient?.httpGet(`/ui/experiments/more?offset=${data.offset || 0}`).then(r => this._view?.webview.postMessage(r));
+                case 'get_more_runs':
+                    this._pythonClient?.httpGet(`/ui/runs/more?offset=${data.offset || 0}`).then(r => this._view?.webview.postMessage(r));
                     break;
-                case 'get_experiment_detail':
-                    if (data.session_id) {
-                        this._pythonClient?.httpGet(`/ui/experiment/${data.session_id}`).then(r => this._view?.webview.postMessage(r));
+                case 'get_run_detail':
+                    if (data.run_id) {
+                        this._pythonClient?.httpGet(`/ui/run/${data.run_id}`).then(r => this._view?.webview.postMessage(r));
                     }
                     break;
                 case 'ready':
@@ -155,14 +155,14 @@ _context: vscode.WebviewViewResolveContext,
                     if (!this._pythonClient) {
                         this._pythonClient = PythonServerClient.getInstance();
                         this._pythonClient.ensureConnected(); // async but don't await - webview is ready
-                        // Request experiment list on every connection (including reconnections after server restart)
+                        // Request run list on every connection (including reconnections after server restart)
                         this._pythonClient.onConnection(() => {
-                            this._pythonClient?.httpGet('/ui/experiments').then(r => this._view?.webview.postMessage(r));
+                            this._pythonClient?.httpGet('/ui/runs').then(r => this._view?.webview.postMessage(r));
                         });
                         // Create message handler and store reference for cleanup
                         this._messageHandler = (msg) => {
-                            // Intercept session_id message to set up config management and playbook URL
-                            if (msg.type === 'session_id') {
+                            // Intercept run_id message to set up config management and playbook URL
+                            if (msg.type === 'run_id') {
                                 if (msg.config_path) {
                                     try {
                                         configManager.setConfigPath(msg.config_path);
@@ -200,9 +200,9 @@ _context: vscode.WebviewViewResolveContext,
                         this._pythonClient.startServerIfNeeded();
                     }
 
-                    // Request experiments after Python client is set up
+                    // Request runs after Python client is set up
                     if (this._pythonClient) {
-                        this._pythonClient.httpGet('/ui/experiments').then(r => this._view?.webview.postMessage(r));
+                        this._pythonClient.httpGet('/ui/runs').then(r => this._view?.webview.postMessage(r));
                     }
                     break;
                 case 'navigateToCode':
@@ -217,10 +217,10 @@ _context: vscode.WebviewViewResolveContext,
                     }
                     break;
                 case 'openGraphTab':
-                    if (this._graphTabProvider && data.payload.experiment) {
-                        this._graphTabProvider.createOrShowGraphTab(data.payload.experiment);
+                    if (this._graphTabProvider && data.payload.run) {
+                        this._graphTabProvider.createOrShowGraphTab(data.payload.run);
                     } else {
-                        console.warn('[GraphViewProvider] No GraphTabProvider available or missing experiment data');
+                        console.warn('[GraphViewProvider] No GraphTabProvider available or missing run data');
                     }
                     break;
                 case 'openLessonsTab':
@@ -242,10 +242,10 @@ _context: vscode.WebviewViewResolveContext,
                         this._graphTabProvider.closeLessonEditorTab();
                     }
                     break;
-                case 'requestExperimentRefresh':
-                    // ExperimentsView has mounted and is ready to display data - request experiment list
+                case 'requestRunRefresh':
+                    // RunsView has mounted and is ready to display data - request run list
                     if (this._pythonClient) {
-                        this._pythonClient.httpGet('/ui/experiments').then(r => this._view?.webview.postMessage(r));
+                        this._pythonClient.httpGet('/ui/runs').then(r => this._view?.webview.postMessage(r));
                     }
                     break;
             }

@@ -2,7 +2,7 @@ import React, { useState, useLayoutEffect } from 'react';
 import { ProcessInfo } from '../../types';
 import { formatUtcTimestamp } from '../../utils/timeSpan';
 
-interface ExperimentsViewProps {
+interface RunsViewProps {
   similarProcesses: ProcessInfo[];
   runningProcesses: ProcessInfo[];
   finishedProcesses: ProcessInfo[];
@@ -15,7 +15,7 @@ interface ExperimentsViewProps {
   onLoadMoreFinished?: () => void;
 }
 
-export const ExperimentsView: React.FC<ExperimentsViewProps> = ({
+export const RunsView: React.FC<RunsViewProps> = ({
   similarProcesses,
   runningProcesses,
   finishedProcesses,
@@ -38,11 +38,11 @@ export const ExperimentsView: React.FC<ExperimentsViewProps> = ({
   const [startY, setStartY] = useState(0);
   const [startSize, setStartSize] = useState(0);
 
-  // Request experiment list when component mounts and is ready to display data
+  // Request run list when component mounts and is ready to display data
   useLayoutEffect(() => {
     // Check if we're in a VS Code environment
     if (typeof window !== 'undefined' && (window as any).vscode) {
-      (window as any).vscode.postMessage({ type: 'requestExperimentRefresh' });
+      (window as any).vscode.postMessage({ type: 'requestRunRefresh' });
     }
   }, []); // Empty dependency array - only runs once on mount
 
@@ -96,8 +96,8 @@ export const ExperimentsView: React.FC<ExperimentsViewProps> = ({
   const footerHeight = 60; // px
 
   // Debug logging
-  // console.log('ExperimentsView render - runningProcesses:', runningProcesses);
-  // console.log('ExperimentsView render - finishedProcesses:', finishedProcesses);
+  // console.log('RunsView render - runningProcesses:', runningProcesses);
+  // console.log('RunsView render - finishedProcesses:', finishedProcesses);
   const containerStyle: React.CSSProperties = {
     display: 'flex',
     flexDirection: 'column',
@@ -262,7 +262,7 @@ export const ExperimentsView: React.FC<ExperimentsViewProps> = ({
                   });
 
                   return processes.map((process, index) => {
-                  const cardId = `${sectionPrefix}-${process.session_id}`;
+                  const cardId = `${sectionPrefix}-${process.run_id}`;
                   const isHovered = hoveredCards.has(cardId);
                   const hashColorIndex = colorIndices[index];
                   const hashColors = isDarkTheme ? blueColors.dark[hashColorIndex] : blueColors.light[hashColorIndex];
@@ -284,7 +284,7 @@ export const ExperimentsView: React.FC<ExperimentsViewProps> = ({
 
                   return (
                     <div
-                      key={process.session_id}
+                      key={process.run_id}
                       style={{
                         ...listItemStyle,
                         backgroundColor: isHovered
@@ -303,7 +303,7 @@ export const ExperimentsView: React.FC<ExperimentsViewProps> = ({
                         flex: 1,
                         minWidth: 0,
                       }}>
-                        {process.run_name || 'Untitled'}
+                        {process.name || 'Untitled'}
                       </span>
                       {process.version_date && (
                         <span style={{

@@ -405,7 +405,7 @@ export function ProjectFilterPanel({
   );
   const activeCount = [
     filters.name.value,
-    filters.sessionId,
+    filters.runId,
   ].filter(Boolean).length
     + (filters.version.size > 0 ? 1 : 0)
     + (filters.tags.size > 0 ? 1 : 0)
@@ -418,7 +418,7 @@ export function ProjectFilterPanel({
     () => [
       "startTime",
       "name",
-      "sessionId",
+      "runId",
       "version",
       "tags",
       "label",
@@ -464,11 +464,11 @@ export function ProjectFilterPanel({
           onToggle={() => toggle("name")}
         />
         <PlainTextFilterInput
-          label="Session ID"
-          value={filters.sessionId}
-          onChange={(value) => setFilters({ ...filters, sessionId: value })}
-          open={!!openSections.sessionId}
-          onToggle={() => toggle("sessionId")}
+          label="Run ID"
+          value={filters.runId}
+          onChange={(value) => setFilters({ ...filters, runId: value })}
+          open={!!openSections.runId}
+          onToggle={() => toggle("runId")}
         />
         <CheckboxFilterSection
           label="Version"

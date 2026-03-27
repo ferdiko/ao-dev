@@ -54,11 +54,11 @@ def _generate_summary(trace: Trace, model: str) -> str:
 
 
 def summarize_trace(trace: Trace, **params) -> str:
-    # Return prefetched result if available
-    if hasattr(trace, "_prefetched_summary") and trace._prefetched_summary:
-        return trace._prefetched_summary
-
     model = params.get("model", "anthropic/claude-sonnet-4-6")
+    cached = trace.prefetched_summaries.get(model)
+    if cached:
+        return cached
+
     result = _generate_summary(trace, model)
-    trace._prefetched_summary = result
+    trace.prefetched_summaries[model] = result
     return result
