@@ -347,7 +347,7 @@ def probe_command(args) -> None:
         output_json({"status": "error", "error": f"Session not found: {session_id}"})
 
     # Parse graph topology from JSON
-    graph_topology = json.loads(experiment["graph_topology"]) if experiment["graph_topology"] else {"nodes": [], "edges": []}
+    graph_topology = SessionGraph.from_json_string(experiment["graph_topology"]).to_dict()
     edges = graph_topology.get("edges", [])
 
     # Build parent/child relationships from edges
@@ -560,7 +560,7 @@ def _copy_experiment(session_id: str, run_name: str | None = None) -> str | dict
 
     # Copy graph topology from original
     if experiment["graph_topology"]:
-        graph = json.loads(experiment["graph_topology"])
+        graph = SessionGraph.from_json_string(experiment["graph_topology"])
         DB.update_graph_topology(new_session_id, graph)
 
     # Copy all LLM calls to new session

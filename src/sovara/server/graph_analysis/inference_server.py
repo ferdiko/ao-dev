@@ -137,7 +137,8 @@ def _get_trace_for_session(session_id: str):
     if not graph_row or not graph_row["graph_topology"]:
         return None, False
 
-    graph_data = json.loads(graph_row["graph_topology"])
+    graph = SessionGraph.from_json_string(graph_row["graph_topology"])
+    graph_data = graph.to_dict()
     if not graph_data.get("nodes"):
         return None, False
 

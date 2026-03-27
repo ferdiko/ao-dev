@@ -246,8 +246,7 @@ class DatabaseManager:
         )
 
     def update_graph_topology(self, session_id, graph_dict):
-        graph_payload = graph_dict.to_dict() if hasattr(graph_dict, "to_dict") else graph_dict
-        graph_json = json.dumps(graph_payload)
+        graph_json = graph_dict.to_json_string() if hasattr(graph_dict, "to_json_string") else json.dumps(graph_dict)
         self.backend.update_experiment_graph_topology_query(graph_json, session_id)
 
     def update_timestamp(self, session_id, timestamp):

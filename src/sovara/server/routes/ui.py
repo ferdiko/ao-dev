@@ -567,7 +567,7 @@ def get_graph(session_id: str, state: ServerState = Depends(get_state)):
     # Fall back to database
     row = DB.get_graph(session_id)
     if row and row["graph_topology"]:
-        graph = SessionGraph.from_dict(json.loads(row["graph_topology"]))
+        graph = SessionGraph.from_json_string(row["graph_topology"])
         state.session_graphs[session_id] = graph
         return {
             "type": "graph_update",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -138,6 +139,15 @@ class SessionGraph:
             "nodes": [node.to_dict() for node in self.nodes],
             "edges": [edge.to_dict() for edge in self.edges],
         }
+
+    @classmethod
+    def from_json_string(cls, data: str | None) -> "SessionGraph":
+        if not data:
+            return cls.empty()
+        return cls.from_dict(json.loads(data))
+
+    def to_json_string(self) -> str:
+        return json.dumps(self.to_dict())
 
     def get_node_by_uuid(self, node_uuid: str) -> GraphNode | None:
         for node in self.nodes:
