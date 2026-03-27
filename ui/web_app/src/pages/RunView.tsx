@@ -56,8 +56,10 @@ function LLMNode({ data, selected }: NodeProps) {
       <Handle type="target" position={Position.Top} id="top" className="graph-handle" />
       <Handle type="target" position={Position.Left} id="left" className="graph-handle graph-handle-side" />
       <Handle type="target" position={Position.Right} id="right" className="graph-handle graph-handle-side" />
-      {typeof d.stepId === "number" && <div className="graph-node-step">{`Step ${d.stepId}`}</div>}
-      <div className="graph-node-label">{d.label}</div>
+      <div className={`graph-node-title-row${typeof d.stepId === "number" ? " has-step" : ""}`}>
+        <div className="graph-node-label">{d.label}</div>
+        {typeof d.stepId === "number" && <div className="graph-node-step">{`Step ${d.stepId}`}</div>}
+      </div>
       {d.model && <div className="graph-node-model">{d.model}</div>}
       <Handle type="source" position={Position.Bottom} id="bottom" className="graph-handle" />
       <Handle type="source" position={Position.Left} id="left" className="graph-handle graph-handle-side" />

@@ -3079,7 +3079,7 @@
   position: relative;
   width: 170px;
   height: 46px;
-  padding: 6px 56px 6px 10px;
+  padding: 6px 10px;
   background: var(--color-surface-warm);
   border: 1.5px solid var(--color-border);
   border-radius: 8px;
@@ -3104,25 +3104,32 @@
   border-color: var(--color-primary);
 }
 
+.graph-node-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
 .graph-node-label {
   font-size: 11px;
   font-weight: 600;
   font-family: "Roboto", sans-serif;
   color: var(--color-text);
+  flex: 1 1 auto;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .graph-node-step {
-  position: absolute;
-  top: 7px;
-  right: 10px;
   font-size: 9px;
   font-family: "Roboto", sans-serif;
   color: var(--color-text-muted);
   opacity: 0.78;
   white-space: nowrap;
+  flex: 0 0 auto;
   pointer-events: none;
 }
 
@@ -3151,6 +3158,9 @@
   color: var(--color-text-muted);
   margin-top: 1px;
   opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Span node (collapsed group) */
