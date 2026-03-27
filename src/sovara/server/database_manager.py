@@ -456,14 +456,16 @@ class DatabaseManager:
             if key not in metrics:
                 return False
             value = metrics[key]
-            if filter_def["kind"] == "bool":
-                if value not in filter_def["values"]:
+            kind = filter_def["kind"] if isinstance(filter_def, dict) else filter_def.kind
+            if kind == "bool":
+                values = filter_def["values"] if isinstance(filter_def, dict) else filter_def.values
+                if value not in values:
                     return False
                 continue
             if isinstance(value, bool):
                 return False
-            min_value = filter_def.get("min")
-            max_value = filter_def.get("max")
+            min_value = filter_def.get("min") if isinstance(filter_def, dict) else filter_def.min
+            max_value = filter_def.get("max") if isinstance(filter_def, dict) else filter_def.max
             if min_value is not None and value < min_value:
                 return False
             if max_value is not None and value > max_value:
@@ -482,6 +484,19 @@ class DatabaseManager:
             return True
         assigned_ids = {tag["tag_id"] for tag in row["tags"]}
         return set(tag_ids).issubset(assigned_ids)
+
+    def _matches_latency_filters(self, row, minimum, maximum):
+        if minimum is None and maximum is None:
+            return True
+
+        runtime = self._get_runtime_sort_value(row)
+        if runtime is None:
+            return False
+        if minimum is not None and runtime < minimum:
+            return False
+        if maximum is not None and runtime > maximum:
+            return False
+        return True
 
     def _build_custom_metric_columns(self, rows):
         values_by_key: dict[str, list[bool | int | float]] = defaultdict(list)
@@ -571,7 +586,8 @@ class DatabaseManager:
         filtered_rows = [
             row
             for row in normalized_rows
-            if self._matches_label_filters(row, filters.get("thumb_label", []))
+            if self._matches_latency_filters(row, filters.get("latency_min"), filters.get("latency_max"))
+            and self._matches_label_filters(row, filters.get("thumb_label", []))
             and self._matches_tag_filters(row, filters.get("tag_ids", []))
             and self._matches_custom_metric_filters(row, filters.get("custom_metrics", {}))
         ]

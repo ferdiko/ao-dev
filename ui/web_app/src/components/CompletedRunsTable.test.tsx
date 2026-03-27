@@ -99,4 +99,54 @@ describe("CompletedRunsTable", () => {
 
     expect(onSort).not.toHaveBeenCalled();
   });
+
+  it("omits the custom metrics group header when only one metric column is visible", () => {
+    render(
+      <CompletedRunsTable
+        allVisibleSelected={false}
+        formatCodeVersion={(value) => value || "—"}
+        formatTimestamp={(value) => value}
+        metricColumns={[{ key: "success", kind: "bool", values: [false, true] }]}
+        onOpenRun={vi.fn()}
+        onRowKeyDown={vi.fn()}
+        onRowContextMenu={vi.fn()}
+        onSort={vi.fn()}
+        onToggleSelect={vi.fn()}
+        onToggleSelectAll={vi.fn()}
+        runs={[{ ...baseRun, customMetrics: { success: true } }]}
+        selectedIds={new Set()}
+        sort={null}
+        visibleColumnKeys={new Set(["name", "metric:success"])}
+      />,
+    );
+
+    expect(screen.queryByText("CUSTOM METRICS")).not.toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "success" })).toBeInTheDocument();
+  });
+
+  it("shows the custom metrics group header when multiple metric columns are visible", () => {
+    render(
+      <CompletedRunsTable
+        allVisibleSelected={false}
+        formatCodeVersion={(value) => value || "—"}
+        formatTimestamp={(value) => value}
+        metricColumns={[
+          { key: "success", kind: "bool", values: [false, true] },
+          { key: "score", kind: "float", min: 0, max: 1 },
+        ]}
+        onOpenRun={vi.fn()}
+        onRowKeyDown={vi.fn()}
+        onRowContextMenu={vi.fn()}
+        onSort={vi.fn()}
+        onToggleSelect={vi.fn()}
+        onToggleSelectAll={vi.fn()}
+        runs={[{ ...baseRun, customMetrics: { success: true, score: 0.5 } }]}
+        selectedIds={new Set()}
+        sort={null}
+        visibleColumnKeys={new Set(["name", "metric:success", "metric:score"])}
+      />,
+    );
+
+    expect(screen.getByText("CUSTOM METRICS")).toBeInTheDocument();
+  });
 });

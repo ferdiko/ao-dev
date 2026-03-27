@@ -234,6 +234,8 @@ export interface RunQueryParams {
   metric_filters?: Record<string, MetricFilter>;
   time_from?: string;
   time_to?: string;
+  latency_min?: number;
+  latency_max?: number;
 }
 
 export type MetricKind = "bool" | "int" | "float";
@@ -277,6 +279,8 @@ export async function fetchProjectRuns(
     if (params.run_id) qs.set("run_id", params.run_id);
     if (params.time_from) qs.set("time_from", params.time_from);
     if (params.time_to) qs.set("time_to", params.time_to);
+    if (params.latency_min !== undefined) qs.set("latency_min", String(params.latency_min));
+    if (params.latency_max !== undefined) qs.set("latency_max", String(params.latency_max));
     if (params.label) for (const v of params.label) qs.append("label", v);
     if (params.tag_id) for (const v of params.tag_id) qs.append("tag_id", v);
     if (params.version) for (const v of params.version) qs.append("version", v);

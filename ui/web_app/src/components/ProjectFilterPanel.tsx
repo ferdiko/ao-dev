@@ -13,8 +13,8 @@ import {
 } from "../projectFilters";
 import type { Tag } from "../tags";
 
-function rangeActive(range: RangeFilter, bounds: { min: number; max: number }): boolean {
-  return range.min > bounds.min || range.max < bounds.max;
+function rangeActive(range: RangeFilter): boolean {
+  return Boolean(range.enabled);
 }
 
 function dateRangeActive(range: DateRangeFilter): boolean {
@@ -261,35 +261,48 @@ function RangeFilterSection({
   open: boolean;
   onToggle: () => void;
 }) {
-  const isActive = rangeActive(range, bounds);
+  const isActive = range.enabled ?? (range.min > bounds.min || range.max < bounds.max);
+  const effectiveRange = isActive ? range : { ...bounds, enabled: false };
   const effectiveStep = step ?? 1;
+
+  function buildRange(min: number, max: number): RangeFilter {
+    return {
+      min,
+      max,
+      enabled: min > bounds.min || max < bounds.max,
+    };
+  }
 
   function commitMin(input: HTMLInputElement) {
     const value = parseFloat(input.value);
     if (isNaN(value)) {
-      input.value = formatRangeValue(range.min, precision);
+      input.value = formatRangeValue(effectiveRange.min, precision);
       return;
     }
-    const clamped = Math.max(bounds.min, Math.min(value, range.max));
+    const clamped = Math.max(bounds.min, Math.min(value, effectiveRange.max));
     const normalized = precision === undefined ? clamped : roundToDecimals(clamped, precision);
     input.value = formatRangeValue(normalized, precision);
-    onChange({ ...range, min: normalized });
+    onChange(buildRange(normalized, effectiveRange.max));
   }
 
   function commitMax(input: HTMLInputElement) {
     const value = parseFloat(input.value);
     if (isNaN(value)) {
-      input.value = formatRangeValue(range.max, precision);
+      input.value = formatRangeValue(effectiveRange.max, precision);
       return;
     }
-    const clamped = Math.min(bounds.max, Math.max(value, range.min));
+    const clamped = Math.min(bounds.max, Math.max(value, effectiveRange.min));
     const normalized = precision === undefined ? clamped : roundToDecimals(clamped, precision);
     input.value = formatRangeValue(normalized, precision);
-    onChange({ ...range, max: normalized });
+    onChange(buildRange(effectiveRange.min, normalized));
   }
 
-  const minPercent = bounds.max > bounds.min ? ((range.min - bounds.min) / (bounds.max - bounds.min)) * 100 : 0;
-  const maxPercent = bounds.max > bounds.min ? ((range.max - bounds.min) / (bounds.max - bounds.min)) * 100 : 100;
+  const minPercent = bounds.max > bounds.min
+    ? ((effectiveRange.min - bounds.min) / (bounds.max - bounds.min)) * 100
+    : 0;
+  const maxPercent = bounds.max > bounds.min
+    ? ((effectiveRange.max - bounds.min) / (bounds.max - bounds.min)) * 100
+    : 100;
 
   return (
     <div className={`filter-section${open ? " open" : ""}`}>
@@ -307,10 +320,10 @@ function RangeFilterSection({
               <span className="filter-range-label">Min.</span>
               <div className="filter-range-input-wrap">
                 <input
-                  key={`min-${range.min}-${range.max}`}
+                  key={`min-${effectiveRange.min}-${effectiveRange.max}-${isActive ? "on" : "off"}`}
                   type="text"
                   className="filter-range-input"
-                  defaultValue={formatRangeValue(range.min, precision)}
+                  defaultValue={formatRangeValue(effectiveRange.min, precision)}
                   onBlur={(event) => commitMin(event.currentTarget)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
@@ -326,10 +339,10 @@ function RangeFilterSection({
               <span className="filter-range-label">Max.</span>
               <div className="filter-range-input-wrap">
                 <input
-                  key={`max-${range.min}-${range.max}`}
+                  key={`max-${effectiveRange.min}-${effectiveRange.max}-${isActive ? "on" : "off"}`}
                   type="text"
                   className="filter-range-input"
-                  defaultValue={formatRangeValue(range.max, precision)}
+                  defaultValue={formatRangeValue(effectiveRange.max, precision)}
                   onBlur={(event) => commitMax(event.currentTarget)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
@@ -353,10 +366,10 @@ function RangeFilterSection({
               min={bounds.min}
               max={bounds.max}
               step={effectiveStep}
-              value={range.min}
+              value={effectiveRange.min}
               onChange={(event) => {
                 const value = parseFloat(event.target.value);
-                if (value <= range.max) onChange({ ...range, min: value });
+                if (value <= effectiveRange.max) onChange(buildRange(value, effectiveRange.max));
               }}
             />
             <input
@@ -365,10 +378,10 @@ function RangeFilterSection({
               min={bounds.min}
               max={bounds.max}
               step={effectiveStep}
-              value={range.max}
+              value={effectiveRange.max}
               onChange={(event) => {
                 const value = parseFloat(event.target.value);
-                if (value >= range.min) onChange({ ...range, max: value });
+                if (value >= effectiveRange.min) onChange(buildRange(effectiveRange.min, value));
               }}
             />
           </div>
@@ -410,7 +423,7 @@ export function ProjectFilterPanel({
     + (filters.version.size > 0 ? 1 : 0)
     + (filters.tags.size > 0 ? 1 : 0)
     + (filters.label.size > 0 ? 1 : 0)
-    + (rangeActive(filters.latency, bounds.latency) ? 1 : 0)
+    + (rangeActive(filters.latency) ? 1 : 0)
     + (dateRangeActive(filters.startTime) ? 1 : 0)
     + Object.values(filters.customMetrics).filter((value) => isMetricFilterActive(value)).length;
 
@@ -499,7 +512,7 @@ export function ProjectFilterPanel({
           onToggle={() => toggle("label")}
         />
         <RangeFilterSection
-          label="Latency"
+          label="Runtime"
           range={filters.latency}
           bounds={bounds.latency}
           unit="s"

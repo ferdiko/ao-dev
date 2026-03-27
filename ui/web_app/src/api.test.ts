@@ -35,6 +35,28 @@ describe("api", () => {
     expect(parsed.searchParams.getAll("tag_id")).toEqual(["tag-a", "tag-b"]);
   });
 
+  it("serializes latency bounds query params for run filters", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        type: "run_list",
+        running: [],
+        finished: [],
+        finished_total: 0,
+        distinct_versions: [],
+        custom_metric_columns: [],
+      }),
+    });
+
+    await fetchProjectRuns("project-1", { latency_min: 1.5, latency_max: 4.2 });
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    const parsed = new URL(url, "http://localhost");
+
+    expect(parsed.searchParams.get("latency_min")).toBe("1.5");
+    expect(parsed.searchParams.get("latency_max")).toBe("4.2");
+  });
+
   it("posts full replacement tag IDs for a run", async () => {
     fetchMock.mockResolvedValue({
       ok: true,

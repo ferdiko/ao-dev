@@ -1909,6 +1909,8 @@
 .header-group-row th {
   padding: 2px 8px 0;
   border-bottom: none;
+  background: var(--color-bg);
+  z-index: 4;
 }
 
 .header-group-label {
@@ -1919,11 +1921,14 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   border-bottom: 1px solid var(--color-border) !important;
+  box-shadow: 0 1px 0 var(--color-bg);
 }
 
 /* Second header row sticky offset (below the 19px group header row) */
 .header-group-row + tr th {
   top: 19px;
+  background: var(--color-bg);
+  z-index: 3;
 }
 
 /* Metric badges */

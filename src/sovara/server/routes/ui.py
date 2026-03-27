@@ -544,6 +544,8 @@ def get_project_runs(
     metric_filters: str = "",
     time_from: str = "",
     time_to: str = "",
+    latency_min: float | None = None,
+    latency_max: float | None = None,
     state: ServerState = Depends(get_state),
 ):
     """Get paginated filtered finished runs plus the current running set for a project."""
@@ -564,6 +566,12 @@ def get_project_runs(
         filters["timestamp_from"] = time_from
     if time_to:
         filters["timestamp_to"] = time_to
+    if latency_min is not None and latency_max is not None and latency_min > latency_max:
+        return JSONResponse(status_code=400, content={"error": "latency_min cannot be greater than latency_max"})
+    if latency_min is not None:
+        filters["latency_min"] = latency_min
+    if latency_max is not None:
+        filters["latency_max"] = latency_max
     if metric_filters:
         try:
             filters["custom_metrics"] = TypeAdapter(dict[str, MetricFilter]).validate_json(metric_filters)

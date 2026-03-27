@@ -46,13 +46,14 @@ export function CompletedRunsTable({
 }) {
   const show = (key: string) => visibleColumnKeys.has(key);
   const visibleMetricColumns = metricColumns.filter((column) => show(`metric:${column.key}`));
+  const showMetricGroupHeader = visibleMetricColumns.length > 1;
   const leadingColumnCount = 1
     + ["timestamp", "name", "codeVersion", "tags", "latency", "thumbLabel"].filter(show).length;
 
   return (
     <table className="runs-table">
       <thead>
-        {visibleMetricColumns.length > 0 && (
+        {showMetricGroupHeader && (
           <tr className="header-group-row">
             <th colSpan={leadingColumnCount} />
             <th className="header-group-label" colSpan={visibleMetricColumns.length}>CUSTOM METRICS</th>

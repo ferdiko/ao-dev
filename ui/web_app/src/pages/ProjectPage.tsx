@@ -11,7 +11,14 @@ import { ProjectFilterPanel } from "../components/ProjectFilterPanel";
 import { RunningRunsSection } from "../components/RunningRunsSection";
 import { useCompletedSelection } from "../hooks/useCompletedSelection";
 import { useProjectRunsData } from "../hooks/useProjectRunsData";
-import { computeDataBounds, emptyFilters, isMetricFilterActive, serializeFilters, type Filters } from "../projectFilters";
+import {
+  computeDataBounds,
+  emptyFilters,
+  isMetricFilterActive,
+  isRangeFilterActive,
+  serializeFilters,
+  type Filters,
+} from "../projectFilters";
 import { toggleSortState, useStoredSortState, type SortState } from "../hooks/useStoredSortState";
 import {
   runToProjectRun,
@@ -109,7 +116,21 @@ export function ProjectPage() {
   });
   const runningRuns = useMemo(() => runningRunsData.map(runToProjectRun), [runningRunsData]);
   const completedRuns = useMemo(() => completedRunsData.map(runToProjectRun), [completedRunsData]);
-  const bounds = useMemo(() => computeDataBounds([...runningRuns, ...completedRuns]), [runningRuns, completedRuns]);
+  const observedBounds = useMemo(() => computeDataBounds([...runningRuns, ...completedRuns]), [runningRuns, completedRuns]);
+  const [latencyBounds, setLatencyBounds] = useState(observedBounds.latency);
+  const previousProjectIdRef = useRef(projectId);
+  useEffect(() => {
+    const projectChanged = previousProjectIdRef.current !== projectId;
+    if (projectChanged || !filters.latency.enabled) {
+      setLatencyBounds((previous) => (
+        previous.min === observedBounds.latency.min && previous.max === observedBounds.latency.max
+          ? previous
+          : observedBounds.latency
+      ));
+    }
+    previousProjectIdRef.current = projectId;
+  }, [filters.latency.enabled, observedBounds.latency.max, observedBounds.latency.min, projectId]);
+  const bounds = useMemo(() => ({ latency: latencyBounds }), [latencyBounds]);
   const columnStorageKey = useMemo(
     () => `web_app:project_columns:${projectId ?? "unknown"}`,
     [projectId],
@@ -152,11 +173,10 @@ export function ProjectPage() {
       || filters.label.size > 0
       || filters.startTime.from
       || filters.startTime.to
-      || filters.latency.min > bounds.latency.min
-      || filters.latency.max < bounds.latency.max
+      || isRangeFilterActive(filters.latency)
       || Object.values(filters.customMetrics).some((filter) => isMetricFilterActive(filter))
     ),
-    [bounds.latency.max, bounds.latency.min, filters],
+    [filters],
   );
 
   const handleSetFilters = useCallback((newFilters: Filters) => {
@@ -451,7 +471,7 @@ export function ProjectPage() {
         <div className="modal-overlay filters-modal-overlay" onClick={() => setFiltersOpen(false)}>
           <div className="modal modal-wide filters-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
-              <h2 className="modal-title">Filters</h2>
+              <h2 className="modal-title">Completed Run Filters</h2>
               <button className="modal-close" onClick={() => setFiltersOpen(false)}>
                 <X size={16} />
               </button>

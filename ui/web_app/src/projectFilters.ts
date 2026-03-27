@@ -8,6 +8,7 @@ export interface TextFilter {
 export interface RangeFilter {
   min: number;
   max: number;
+  enabled?: boolean;
 }
 
 export interface DateRangeFilter {
@@ -80,7 +81,7 @@ export function emptyFilters(bounds?: DataBounds): Filters {
     tags: new Set(),
     label: new Set(),
     customMetrics: {},
-    latency: bounds ? { ...bounds.latency } : { min: 0, max: 100 },
+    latency: bounds ? { ...bounds.latency, enabled: false } : { min: 0, max: 100, enabled: false },
     startTime: { from: "", to: "" },
   };
 }
@@ -90,6 +91,10 @@ export function isMetricFilterActive(filter: MetricFilterState): boolean {
     return filter.values.size > 0;
   }
   return filter.min !== null || filter.max !== null;
+}
+
+export function isRangeFilterActive(filter: RangeFilter): boolean {
+  return Boolean(filter.enabled);
 }
 
 export function serializeFilters(filters: Filters): string {
@@ -111,7 +116,9 @@ export function serializeFilters(filters: Filters): string {
     tags: Array.from(filters.tags).sort(),
     label: Array.from(filters.label).sort(),
     customMetrics: serializedMetricFilters,
-    latency: filters.latency,
+    latency: filters.latency.enabled
+      ? filters.latency
+      : { enabled: false },
     startTime: filters.startTime,
   });
 }

@@ -91,6 +91,8 @@ export function useProjectRunsData({
       metric_filters?: Record<string, MetricFilter>;
       time_from?: string;
       time_to?: string;
+      latency_min?: number;
+      latency_max?: number;
     } = {
       limit: completedRowsPerPage,
       offset: (completedPage - 1) * completedRowsPerPage,
@@ -108,6 +110,10 @@ export function useProjectRunsData({
     if (Object.keys(metricFilters).length > 0) params.metric_filters = metricFilters;
     if (filters.startTime.from) params.time_from = toUtcFilterTimestamp(filters.startTime.from, false);
     if (filters.startTime.to) params.time_to = toUtcFilterTimestamp(filters.startTime.to, true);
+    if (filters.latency.enabled) {
+      params.latency_min = filters.latency.min;
+      params.latency_max = filters.latency.max;
+    }
 
     const timer = window.setTimeout(async () => {
       try {
