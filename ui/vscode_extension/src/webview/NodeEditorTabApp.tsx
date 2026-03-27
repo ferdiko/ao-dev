@@ -147,7 +147,7 @@ export const NodeEditorTabApp: React.FC = () => {
       window.vscode.postMessage({
         type: 'edit_input',
         session_id: context.sessionId,
-        node_id: context.nodeId,
+        node_uuid: context.nodeId,
         value: safeStringify(inputData),
       });
     }
@@ -158,7 +158,7 @@ export const NodeEditorTabApp: React.FC = () => {
       window.vscode.postMessage({
         type: 'edit_output',
         session_id: context.sessionId,
-        node_id: context.nodeId,
+        node_uuid: context.nodeId,
         value: safeStringify(outputData),
       });
     }

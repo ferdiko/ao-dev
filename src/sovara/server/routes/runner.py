@@ -41,9 +41,20 @@ class RegisterRequest(BaseModel):
     user_email: Optional[str] = ""
 
 
+class IncomingNodeRequest(BaseModel):
+    uuid: str
+    input: str
+    output: str
+    label: str
+    border_color: str
+    stack_trace: Optional[str] = None
+    model: Optional[str] = None
+    attachments: list[str] = Field(default_factory=list)
+
+
 class AddNodeRequest(BaseModel):
     session_id: str
-    node: dict
+    node: IncomingNodeRequest
     incoming_edges: list = Field(default_factory=list)
 
 
@@ -123,12 +134,16 @@ def register(req: RegisterRequest, state: ServerState = Depends(get_state)):
 @router.post("/add-node")
 def add_node(req: AddNodeRequest, state: ServerState = Depends(get_state)):
     state.touch_activity()
-    msg = {"session_id": req.session_id, "node": req.node, "incoming_edges": req.incoming_edges}
+    msg = {
+        "session_id": req.session_id,
+        "node": req.node.model_dump(),
+        "incoming_edges": req.incoming_edges,
+    }
     handle_add_node(state, msg)
     # Schedule graph update and color preview broadcasts
     if req.session_id in state.session_graphs:
         graph = state.session_graphs[req.session_id]
-        node_colors = [n["border_color"] for n in graph.get("nodes", [])]
+        node_colors = [n.border_color for n in graph.nodes]
         color_preview = node_colors[-6:]
         state.schedule_broadcast(
             {"type": "color_preview_update", "session_id": req.session_id, "color_preview": color_preview}

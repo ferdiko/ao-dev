@@ -359,7 +359,7 @@ def send_graph_node_and_edges(
         "type": "add_node",
         "session_id": session_id,
         "node": {
-            "id": node_id,
+            "uuid": node_id,
             "input": input_string,
             "output": output_string,
             "border_color": CERTAINTY_UNKNOWN,

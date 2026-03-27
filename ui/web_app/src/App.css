@@ -3079,7 +3079,7 @@
   position: relative;
   width: 170px;
   height: 46px;
-  padding: 6px 10px;
+  padding: 6px 56px 6px 10px;
   background: var(--color-surface-warm);
   border: 1.5px solid var(--color-border);
   border-radius: 8px;
@@ -3112,6 +3112,18 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.graph-node-step {
+  position: absolute;
+  top: 7px;
+  right: 10px;
+  font-size: 9px;
+  font-family: "Roboto", sans-serif;
+  color: var(--color-text-muted);
+  opacity: 0.78;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .graph-node-desc {

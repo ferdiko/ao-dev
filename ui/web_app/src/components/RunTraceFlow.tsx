@@ -2708,7 +2708,7 @@ function IOPanel({
 }
 
 function NodeHeader({ node }: { node: GraphNode }) {
-  const displayId = node.step_id || node.id;
+  const displayId = typeof node.step_id === "number" ? `Step ${node.step_id}` : node.id;
   const [copied, setCopied] = useState(false);
 
   const handleCopyId = useCallback(() => {

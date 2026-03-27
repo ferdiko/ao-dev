@@ -86,7 +86,7 @@ class TraceRecord:
     summary: Optional[str] = None
     model_or_tool: Optional[str] = None
     index: int = 0
-    node_id: Optional[str] = None  # DB node_id for write-back (set when built from DB)
+    node_uuid: Optional[str] = None  # DB node UUID for write-back (set when built from DB)
 
     def to_dict(self) -> dict:
         return {
@@ -160,7 +160,7 @@ def parse_record(raw: dict, index: int = 0) -> TraceRecord:
         summary=raw.get("summary"),
         model_or_tool=raw.get("model/tool"),
         index=index,
-        node_id=raw.get("node_id"),
+        node_uuid=raw.get("node_uuid"),
     )
 
 

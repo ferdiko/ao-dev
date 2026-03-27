@@ -12,7 +12,7 @@ from sovara.common.custom_metrics import MetricFilter
 from sovara.server.app import get_state
 from sovara.server.state import ServerState, logger
 from sovara.server.database_manager import DB, BadRequestError, ResourceNotFoundError
-from sovara.server.graph_payloads import enrich_graph_for_ui
+from sovara.server.graph_models import SessionGraph
 from sovara.common.user import read_user_id, write_user_id
 from sovara.common.project import find_project_root, read_project_id, write_project_id, delete_project_configs
 from sovara.server.handlers.ui_handlers import (
@@ -60,19 +60,19 @@ def _notify_user_state_changed(state: ServerState) -> None:
 
 class EditInputRequest(BaseModel):
     session_id: str
-    node_id: str
+    node_uuid: str
     value: str
 
 
 class EditOutputRequest(BaseModel):
     session_id: str
-    node_id: str
+    node_uuid: str
     value: str
 
 
 class UpdateNodeRequest(BaseModel):
     session_id: str
-    node_id: str
+    node_uuid: str
     field: str
     value: str
 
@@ -560,19 +560,19 @@ def get_graph(session_id: str, state: ServerState = Depends(get_state)):
         return {
             "type": "graph_update",
             "session_id": session_id,
-            "payload": enrich_graph_for_ui(state.session_graphs[session_id]),
+            "payload": state.session_graphs[session_id].to_dict(),
             "active_runtime_seconds": state.get_persisted_active_runtime_seconds(session_id),
         }
 
     # Fall back to database
     row = DB.get_graph(session_id)
     if row and row["graph_topology"]:
-        graph = json.loads(row["graph_topology"])
+        graph = SessionGraph.from_dict(json.loads(row["graph_topology"]))
         state.session_graphs[session_id] = graph
         return {
             "type": "graph_update",
             "session_id": session_id,
-            "payload": enrich_graph_for_ui(graph),
+            "payload": graph.to_dict(),
             "active_runtime_seconds": state.get_persisted_active_runtime_seconds(session_id),
         }
 
@@ -651,7 +651,10 @@ def get_sessions_for_lesson(lesson_id: str, state: ServerState = Depends(get_sta
 @router.post("/edit-input")
 def edit_input(req: EditInputRequest, state: ServerState = Depends(get_state)):
     try:
-        handle_edit_input(state, {"session_id": req.session_id, "node_id": req.node_id, "value": req.value})
+        handle_edit_input(
+            state,
+            {"session_id": req.session_id, "node_uuid": req.node_uuid, "value": req.value},
+        )
     except (BadRequestError, ResourceNotFoundError) as exc:
         return _request_error_response(exc)
     state.schedule_graph_update(req.session_id)
@@ -661,7 +664,10 @@ def edit_input(req: EditInputRequest, state: ServerState = Depends(get_state)):
 @router.post("/edit-output")
 def edit_output(req: EditOutputRequest, state: ServerState = Depends(get_state)):
     try:
-        handle_edit_output(state, {"session_id": req.session_id, "node_id": req.node_id, "value": req.value})
+        handle_edit_output(
+            state,
+            {"session_id": req.session_id, "node_uuid": req.node_uuid, "value": req.value},
+        )
     except (BadRequestError, ResourceNotFoundError) as exc:
         return _request_error_response(exc)
     state.schedule_graph_update(req.session_id)
@@ -671,7 +677,7 @@ def edit_output(req: EditOutputRequest, state: ServerState = Depends(get_state))
 @router.post("/update-node")
 def update_node(req: UpdateNodeRequest, state: ServerState = Depends(get_state)):
     handle_update_node(state, {
-        "session_id": req.session_id, "node_id": req.node_id,
+        "session_id": req.session_id, "node_uuid": req.node_uuid,
         "field": req.field, "value": req.value,
     })
     state.schedule_graph_update(req.session_id)

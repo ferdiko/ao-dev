@@ -23,10 +23,10 @@ def print_graph(graph: dict, label: str) -> None:
     print(f"{label}:")
     print(f"  Nodes ({len(graph['nodes'])}):")
     for node in graph["nodes"]:
-        print(f"    - {node['id']}: {node.get('type', 'unknown')}")
+        print(f"    - {node['uuid']}: {node.get('type', 'unknown')}")
     print(f"  Edges ({len(graph['edges'])}):")
     for edge in graph["edges"]:
-        print(f"    - {edge['source']} -> {edge['target']}")
+        print(f"    - {edge['source_uuid']} -> {edge['target_uuid']}")
     print("=" * 60 + "\n")
 
 
@@ -100,7 +100,7 @@ async def run_test(script_path: str):
 
     # Query results from first run
     rows = DB.query_all(
-        "SELECT node_id, input_overwrite, output FROM llm_calls WHERE session_id=?",
+        "SELECT node_uuid, input_overwrite, output FROM llm_calls WHERE session_id=?",
         (session_id,),
     )
 
@@ -125,7 +125,7 @@ async def run_test(script_path: str):
 
     # Query results from second run
     new_rows = DB.query_all(
-        "SELECT node_id, input_overwrite, output FROM llm_calls WHERE session_id=?",
+        "SELECT node_uuid, input_overwrite, output FROM llm_calls WHERE session_id=?",
         (session_id,),
     )
 
@@ -147,8 +147,8 @@ def caching_asserts(run_data_obj: RunData):
     ), "Length of LLM calls does not match after re-run"
     for old_row, new_row in zip(run_data_obj.rows, run_data_obj.new_rows):
         assert (
-            old_row["node_id"] == new_row["node_id"]
-        ), f"Node IDs of LLM calls don't match after re-run. Potential cache issue. Original: {len(run_data_obj.rows)}; New: {len(run_data_obj.new_rows)}"
+            old_row["node_uuid"] == new_row["node_uuid"]
+        ), f"Node UUIDs of LLM calls don't match after re-run. Potential cache issue. Original: {len(run_data_obj.rows)}; New: {len(run_data_obj.new_rows)}"
 
     # Compare graph topology between runs
     assert len(run_data_obj.graph["nodes"]) == len(
@@ -167,13 +167,13 @@ def caching_asserts(run_data_obj: RunData):
     )
 
     # Check that node IDs match between the two graphs
-    original_node_ids = {node["id"] for node in run_data_obj.graph["nodes"]}
-    new_node_ids = {node["id"] for node in run_data_obj.new_graph["nodes"]}
-    assert original_node_ids == new_node_ids, "Node IDs in graph topology don't match after re-run"
+    original_node_uuids = {node["uuid"] for node in run_data_obj.graph["nodes"]}
+    new_node_uuids = {node["uuid"] for node in run_data_obj.new_graph["nodes"]}
+    assert original_node_uuids == new_node_uuids, "Node UUIDs in graph topology don't match after re-run"
 
     # Check that edge structure is identical
-    original_edges = {(edge["source"], edge["target"]) for edge in run_data_obj.graph["edges"]}
-    new_edges = {(edge["source"], edge["target"]) for edge in run_data_obj.new_graph["edges"]}
+    original_edges = {(edge["source_uuid"], edge["target_uuid"]) for edge in run_data_obj.graph["edges"]}
+    new_edges = {(edge["source_uuid"], edge["target_uuid"]) for edge in run_data_obj.new_graph["edges"]}
     assert (
         original_edges == new_edges
     ), f"Edge structure in graph topology doesn't match after re-run.\noriginal: {original_edges}\n\nnew: {new_edges}"

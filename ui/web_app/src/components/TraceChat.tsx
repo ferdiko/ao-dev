@@ -15,7 +15,7 @@ const STEP_LABEL_RE = /\b(steps?\s+\d{1,3}(?:(?:\s*[–-]\s*|\s+to\s+|\s+and\s+)
 
 function getPrimaryStepNodeId(label: string): string | null {
   const firstStepNumber = label.match(/\d{1,3}/);
-  return firstStepNumber ? `step ${firstStepNumber[0]}` : null;
+  return firstStepNumber ? firstStepNumber[0] : null;
 }
 
 function highlightStepLabels(node: ReactNode, onStepLabelClick?: (nodeId: string) => void): ReactNode {

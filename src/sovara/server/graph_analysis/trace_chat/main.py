@@ -42,10 +42,10 @@ No emoji or filler.
 information. Just answer the question directly.
 
 ## Editing
-To edit a system prompt or input messages, use the section tools with step_index. \
+To edit a system prompt or input messages, use the section tools with step_id. \
 Each step shows only its new content — system prompt (if first introduced) and new \
 messages. To edit a system prompt, use the step where it first appears.
-1. Call list_sections(step_index=N) to see sections with labels and roles.
+1. Call list_sections(step_id=N) to see sections with labels and roles.
 2. Call get_section to read the relevant section.
 3. Call edit_section with an instruction. For global changes, use bulk_edit.
 4. Use insert_section, delete_section, or move_section for structural changes.

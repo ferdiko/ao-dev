@@ -31,65 +31,65 @@ def test_restart_missing_session_returns_404():
 
 def test_edit_input_missing_node_returns_404():
     session_id = str(uuid.uuid4())
-    node_id = "missing-node"
+    node_uuid = "missing-node"
     state = ServerState()
 
     response = edit_input(
-        EditInputRequest(session_id=session_id, node_id=node_id, value="{}"),
+        EditInputRequest(session_id=session_id, node_uuid=node_uuid, value="{}"),
         state,
     )
 
     assert response.status_code == 404
     assert _response_json(response) == {
-        "error": f"Input node not found for session_id={session_id}, node_id={node_id}.",
+        "error": f"Input node not found for session_id={session_id}, node_uuid={node_uuid}.",
     }
 
 
 def test_edit_input_invalid_json_returns_400():
     session_id = str(uuid.uuid4())
-    node_id = "missing-node"
+    node_uuid = "missing-node"
     state = ServerState()
 
     response = edit_input(
-        EditInputRequest(session_id=session_id, node_id=node_id, value="{"),
+        EditInputRequest(session_id=session_id, node_uuid=node_uuid, value="{"),
         state,
     )
 
     assert response.status_code == 400
     assert _response_json(response) == {
-        "error": f"Invalid input JSON for session_id={session_id}, node_id={node_id}: Expecting property name enclosed in double quotes.",
+        "error": f"Invalid input JSON for session_id={session_id}, node_uuid={node_uuid}: Expecting property name enclosed in double quotes.",
     }
 
 
 def test_edit_output_missing_node_returns_404():
     session_id = str(uuid.uuid4())
-    node_id = "missing-node"
+    node_uuid = "missing-node"
     state = ServerState()
 
     response = edit_output(
-        EditOutputRequest(session_id=session_id, node_id=node_id, value="{}"),
+        EditOutputRequest(session_id=session_id, node_uuid=node_uuid, value="{}"),
         state,
     )
 
     assert response.status_code == 404
     assert _response_json(response) == {
-        "error": f"Output node not found for session_id={session_id}, node_id={node_id}.",
+        "error": f"Output node not found for session_id={session_id}, node_uuid={node_uuid}.",
     }
 
 
 def test_edit_output_invalid_json_returns_400():
     session_id = str(uuid.uuid4())
-    node_id = "missing-node"
+    node_uuid = "missing-node"
     state = ServerState()
 
     response = edit_output(
-        EditOutputRequest(session_id=session_id, node_id=node_id, value="{"),
+        EditOutputRequest(session_id=session_id, node_uuid=node_uuid, value="{"),
         state,
     )
 
     assert response.status_code == 400
     assert _response_json(response) == {
-        "error": f"Invalid output JSON for session_id={session_id}, node_id={node_id}: Expecting property name enclosed in double quotes.",
+        "error": f"Invalid output JSON for session_id={session_id}, node_uuid={node_uuid}: Expecting property name enclosed in double quotes.",
     }
 
 

@@ -23,7 +23,7 @@ class NodeTimingListener:
         self.first_node_time = None
         self.last_node_time = None
         self.node_count = 0
-        self.last_node_id = None  # Track last node for editing
+        self.last_node_uuid = None  # Track last node for editing
         self.last_node_input = None  # Track last node's input dict for editing
         self.session_id = None  # Track session for editing
         self._lock = threading.Lock()
@@ -68,7 +68,7 @@ class NodeTimingListener:
                 self.node_count = len(nodes)
                 # Track the last node for editing
                 last_node = nodes[-1]
-                self.last_node_id = last_node.get("id")
+                self.last_node_uuid = last_node.get("uuid")
                 # Parse and store the input dict for editing
                 input_str = last_node.get("input")
                 if input_str:
@@ -91,7 +91,7 @@ class NodeTimingListener:
         with "EDITED PROMPT" to trigger a cache miss.
         """
         with self._lock:
-            if not self.last_node_id or not self.session_id or not self.last_node_input:
+            if not self.last_node_uuid or not self.session_id or not self.last_node_input:
                 raise ValueError("No node to edit - run a script first")
 
             # Deep copy to avoid modifying the original
@@ -123,7 +123,7 @@ class NodeTimingListener:
                 f"http://{HOST}:{PORT}/ui/edit-input",
                 json={
                     "session_id": self.session_id,
-                    "node_id": self.last_node_id,
+                    "node_uuid": self.last_node_uuid,
                     "value": json.dumps(input_dict),
                 },
                 timeout=5.0,

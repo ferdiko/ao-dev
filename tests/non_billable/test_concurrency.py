@@ -131,24 +131,24 @@ class TestOccurrenceCounter:
         must each get a different cached row, not all the same first row.
 
         Without the occurrence counter, all threads hit offset 0 and get
-        the same node_id. With it, each gets a unique offset (0-4).
+        the same node_uuid. With it, each gets a unique offset (0-4).
         """
         from sovara.server.database_manager import DB
 
         session_id = "test-occurrence"
         input_hash = "deadbeef"
 
-        # Insert 5 rows with the same (session_id, input_hash) but different node_ids
+        # Insert 5 rows with the same (session_id, input_hash) but different node UUIDs
         for i in range(5):
             sqlite.execute(
-                "INSERT OR IGNORE INTO llm_calls (session_id, input_hash, node_id, api_type) "
+                "INSERT OR IGNORE INTO llm_calls (session_id, input_hash, node_uuid, api_type) "
                 "VALUES (?, ?, ?, ?)",
                 (session_id, input_hash, f"node-{i}", "test"),
             )
 
         DB._occurrence_counters.clear()
 
-        node_ids = []
+        node_uuids = []
         lock = threading.Lock()
         barrier = threading.Barrier(5)
 
@@ -159,7 +159,7 @@ class TestOccurrenceCounter:
                 session_id, input_hash, offset=occurrence,
             )
             with lock:
-                node_ids.append(row["node_id"] if row else None)
+                node_uuids.append(row["node_uuid"] if row else None)
 
         threads = [threading.Thread(target=lookup) for _ in range(5)]
         for t in threads:
@@ -171,10 +171,10 @@ class TestOccurrenceCounter:
         sqlite.execute("DELETE FROM llm_calls WHERE session_id=?", (session_id,))
         DB._occurrence_counters.clear()
 
-        assert len(node_ids) == 5
-        assert None not in node_ids, f"Some lookups got no row: {node_ids}"
-        assert len(set(node_ids)) == 5, (
-            f"Expected 5 distinct node_ids, got {node_ids}. "
+        assert len(node_uuids) == 5
+        assert None not in node_uuids, f"Some lookups got no row: {node_uuids}"
+        assert len(set(node_uuids)) == 5, (
+            f"Expected 5 distinct node_uuids, got {node_uuids}. "
             f"Concurrent identical lookups returned the same cached row."
         )
 

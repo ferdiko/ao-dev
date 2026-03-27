@@ -16,8 +16,7 @@ import type { Tag } from "../tags";
 
 export interface GraphNode {
   id: string;
-  step_id?: string;
-  step_index?: number;
+  step_id: number;
   label: string;
   input: Record<string, unknown>;
   output: Record<string, unknown>;
@@ -55,9 +54,8 @@ function parseNodeData(raw: unknown): Record<string, unknown> {
 
 function parseGraphPayload(payload: GraphPayload): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = payload.nodes.map((node: BackendGraphNode) => ({
-    id: node.id,
+    id: node.uuid,
     step_id: node.step_id,
-    step_index: node.step_index,
     label: node.label,
     input: parseNodeData(node.input),
     output: parseNodeData(node.output),
@@ -68,8 +66,8 @@ function parseGraphPayload(payload: GraphPayload): { nodes: GraphNode[]; edges: 
   }));
   const edges: GraphEdge[] = payload.edges.map((edge: BackendGraphEdge) => ({
     id: edge.id,
-    source: edge.source,
-    target: edge.target,
+    source: edge.source_uuid,
+    target: edge.target_uuid,
   }));
   return { nodes, edges };
 }

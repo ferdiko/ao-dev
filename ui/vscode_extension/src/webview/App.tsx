@@ -133,7 +133,7 @@ export const App: React.FC = () => {
     if (window.vscode) {
       const baseMsg = {
         session_id: sessionId,
-        node_id: nodeId,
+        node_uuid: nodeId,
         value,
         ...(attachments && { attachments }),
       };
