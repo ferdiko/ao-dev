@@ -381,6 +381,7 @@ function RangeFilterSection({
 export function ProjectFilterPanel({
   bounds,
   distinctVersions,
+  formatCodeVersion,
   filters,
   metricColumns,
   projectTags,
@@ -388,14 +389,15 @@ export function ProjectFilterPanel({
 }: {
   bounds: DataBounds;
   distinctVersions: string[];
+  formatCodeVersion: (raw: string) => string;
   filters: Filters;
   metricColumns: CustomMetricColumn[];
   projectTags: Tag[];
   setFilters: (filters: Filters) => void;
 }) {
   const versionOptions = useMemo(
-    () => distinctVersions.map((version) => ({ value: version, label: version })),
-    [distinctVersions],
+    () => distinctVersions.map((version) => ({ value: version, label: formatCodeVersion(version) })),
+    [distinctVersions, formatCodeVersion],
   );
   const tagOptions = useMemo(
     () => projectTags.map((tag) => ({ value: tag.tag_id, label: tag.name })),

@@ -13,7 +13,12 @@ import { useCompletedSelection } from "../hooks/useCompletedSelection";
 import { useProjectExperimentsData } from "../hooks/useProjectExperimentsData";
 import { computeDataBounds, emptyFilters, isMetricFilterActive, serializeFilters, type Filters } from "../projectFilters";
 import { toggleSortState, useStoredSortState, type SortState } from "../hooks/useStoredSortState";
-import { experimentToProjectRun, formatProjectRunTimestamp, sortProjectRuns } from "../projectRuns";
+import {
+  experimentToProjectRun,
+  formatCodeVersionTimestamp,
+  formatProjectRunTimestamp,
+  sortProjectRuns,
+} from "../projectRuns";
 
 // ── Sorting ──────────────────────────────────────────────
 
@@ -330,6 +335,7 @@ export function ProjectPage() {
       <div className="project-runs-layout">
         <RunningRunsSection
           currentPage={safeRunningPage}
+          formatCodeVersion={formatCodeVersionTimestamp}
           formatTimestamp={formatProjectRunTimestamp}
           onOpenRun={(sessionId) => navigate(`/project/${projectId}/run/${sessionId}`)}
           onRowKeyDown={handleRowKeyDown}
@@ -402,6 +408,7 @@ export function ProjectPage() {
           <div className="runs-section-scroll">
             <CompletedRunsTable
               allVisibleSelected={allVisibleSelected}
+              formatCodeVersion={formatCodeVersionTimestamp}
               formatTimestamp={formatProjectRunTimestamp}
               metricColumns={customMetricColumns}
               onOpenRun={(sessionId) => navigate(`/project/${projectId}/run/${sessionId}`)}
@@ -452,6 +459,7 @@ export function ProjectPage() {
             <ProjectFilterPanel
               bounds={bounds}
               distinctVersions={distinctVersions}
+              formatCodeVersion={formatCodeVersionTimestamp}
               filters={filters}
               metricColumns={customMetricColumns}
               projectTags={projectTags}

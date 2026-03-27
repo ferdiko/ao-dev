@@ -15,6 +15,7 @@ function formatCustomMetricValue(value: boolean | number | undefined) {
 
 export function CompletedRunsTable({
   allVisibleSelected,
+  formatCodeVersion,
   formatTimestamp,
   metricColumns,
   onOpenRun,
@@ -29,6 +30,7 @@ export function CompletedRunsTable({
   visibleColumnKeys,
 }: {
   allVisibleSelected: boolean;
+  formatCodeVersion: (raw: string) => string;
   formatTimestamp: (raw: string) => string;
   metricColumns: CustomMetricColumn[];
   onOpenRun: (sessionId: string) => void;
@@ -102,7 +104,7 @@ export function CompletedRunsTable({
             </td>
             {show("name") && <td>{run.name}</td>}
             {show("timestamp") && <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>}
-            {show("codeVersion") && <td><span className="cell-id-link">{run.codeVersion}</span></td>}
+            {show("codeVersion") && <td><span className="cell-id-link">{formatCodeVersion(run.codeVersion)}</span></td>}
             {show("tags") && (
               <td className="cell-tags">
                 {run.tags.length > 0 ? run.tags.map((tag) => (

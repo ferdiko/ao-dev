@@ -13,7 +13,7 @@ const baseRun: ProjectRun = {
   latency: "12.4s",
   latencySeconds: 12.4,
   activeRuntimeSeconds: null,
-  codeVersion: "—",
+  codeVersion: "",
   thumbLabel: null,
   customMetrics: {},
   tags: [],
@@ -24,6 +24,7 @@ describe("CompletedRunsTable", () => {
     render(
       <CompletedRunsTable
         allVisibleSelected={false}
+        formatCodeVersion={(value) => value || "—"}
         formatTimestamp={(value) => value}
         metricColumns={[]}
         onOpenRun={vi.fn()}
@@ -53,6 +54,7 @@ describe("CompletedRunsTable", () => {
     render(
       <CompletedRunsTable
         allVisibleSelected={false}
+        formatCodeVersion={(value) => value || "—"}
         formatTimestamp={(value) => value}
         metricColumns={[]}
         onOpenRun={vi.fn()}
@@ -77,6 +79,7 @@ describe("CompletedRunsTable", () => {
     render(
       <CompletedRunsTable
         allVisibleSelected={false}
+        formatCodeVersion={(value) => value || "—"}
         formatTimestamp={(value) => value}
         metricColumns={[]}
         onOpenRun={vi.fn()}

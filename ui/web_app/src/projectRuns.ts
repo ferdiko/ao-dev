@@ -39,7 +39,7 @@ export function experimentToProjectRun(experiment: Experiment): ProjectRun {
     name: experiment.run_name,
     status: experiment.status === "running" ? "running" : "finished",
     timestamp: experiment.timestamp,
-    codeVersion: experiment.version_date ?? "—",
+    codeVersion: experiment.version_date ?? "",
     thumbLabel: experiment.thumb_label,
     customMetrics: experiment.custom_metrics ?? {},
     latency: formatRuntimeSeconds(latencySeconds),
@@ -67,6 +67,11 @@ export function formatProjectRunTimestamp(raw: string): string {
     hour12: false,
     hourCycle: "h23",
   });
+}
+
+export function formatCodeVersionTimestamp(raw: string): string {
+  if (!raw) return "—";
+  return formatProjectRunTimestamp(raw);
 }
 
 function compareProjectRuns(a: ProjectRun, b: ProjectRun, key: string): number {

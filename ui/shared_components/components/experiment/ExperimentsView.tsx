@@ -1,5 +1,6 @@
 import React, { useState, useLayoutEffect } from 'react';
 import { ProcessInfo } from '../../types';
+import { formatUtcTimestamp } from '../../utils/timeSpan';
 
 interface ExperimentsViewProps {
   similarProcesses: ProcessInfo[];
@@ -316,7 +317,7 @@ export const ExperimentsView: React.FC<ExperimentsViewProps> = ({
                           lineHeight: '1',
                           marginRight: '0px',
                         }}>
-                          {process.version_date}
+                          {formatUtcTimestamp(process.version_date, { second: undefined })}
                         </span>
                       )}
                     </div>

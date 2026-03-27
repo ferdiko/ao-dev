@@ -381,6 +381,22 @@ class ServerState:
             capture_output=True, text=True, timeout=30,
         )
 
+    @staticmethod
+    def _serialize_git_commit_timestamp(raw_timestamp: str) -> Optional[str]:
+        try:
+            dt = datetime.fromisoformat(raw_timestamp.strip())
+        except ValueError:
+            return None
+
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+
+        return DB._serialize_timestamp(dt.astimezone(timezone.utc))
+
+    def _get_head_commit_timestamp(self, project_id: str, project_root: str) -> Optional[str]:
+        result = self._run_git(project_id, project_root, "log", "-1", "--format=%cI", "HEAD")
+        return self._serialize_git_commit_timestamp(result.stdout)
+
     def _ensure_git_initialized(self, project_id: str, project_root: str) -> bool:
         if project_id in self._git_initialized_projects:
             return True
@@ -408,31 +424,25 @@ class ServerState:
             logger.error(f"Failed to init git: {e}")
             return False
 
-    def _commit_and_get_version(self, project_id: str, project_root: str) -> Optional[str]:
+    def _commit_and_get_version_timestamp(self, project_id: str, project_root: str) -> Optional[str]:
         if not self._ensure_git_initialized(project_id, project_root):
             return None
         try:
             self._run_git(project_id, project_root, "add", ".")
             result = self._run_git(project_id, project_root, "diff", "--cached", "--quiet", check=False)
 
-            if result.returncode == 0:
-                try:
-                    result = self._run_git(project_id, project_root, "log", "-1", "--format=%cI", "HEAD")
-                    dt = datetime.fromisoformat(result.stdout.strip())
-                    return f"Version {dt.strftime('%b')} {dt.day}, {dt.hour}:{dt.strftime('%M')}"
-                except subprocess.SubprocessError:
-                    return None
+            if result.returncode != 0:
+                now = datetime.now(timezone.utc)
+                self._run_git(project_id, project_root, "commit", "-m", now.isoformat(timespec="seconds"))
 
-            now = datetime.now(timezone.utc)
-            self._run_git(project_id, project_root, "commit", "-m", now.isoformat(timespec="seconds"))
-            return f"Version {now.strftime('%b')} {now.day}, {now.hour}:{now.strftime('%M')}"
+            return self._get_head_commit_timestamp(project_id, project_root)
         except (subprocess.SubprocessError, subprocess.TimeoutExpired) as e:
             logger.error(f"Git operation failed: {e}")
             return None
 
     def _do_git_version(self, session_id: str, project_id: str, project_root: str) -> None:
         """Background thread: commit files and update experiment version_date."""
-        version_date = self._commit_and_get_version(project_id, project_root)
+        version_date = self._commit_and_get_version_timestamp(project_id, project_root)
         if version_date:
             DB.update_experiment_version_date(session_id, version_date)
         self.notify_experiment_list_changed()

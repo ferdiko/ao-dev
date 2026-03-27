@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { WorkflowRunDetailsPanelProps } from "../../types";
 import { useIsVsCodeDarkTheme } from "../../utils/themeUtils";
+import { formatUtcTimestamp } from "../../utils/timeSpan";
 
 interface Props extends WorkflowRunDetailsPanelProps {
   onBack?: () => void;
@@ -19,7 +20,7 @@ export const WorkflowRunDetailsPanel: React.FC<Props> = ({
   result = "",
   notes = "",
   log = "",
-  codeHash = "",
+  codeVersion = "",
   onOpenInTab,
   onBack,
   sessionId = "",
@@ -46,7 +47,7 @@ export const WorkflowRunDetailsPanel: React.FC<Props> = ({
   }, [notes]);
 
   useEffect(() => {
-  }, [codeHash]);
+  }, [codeVersion]);
 
   const handleRunNameChange = (value: string) => {
     setLocalRunName(value);
@@ -216,17 +217,17 @@ export const WorkflowRunDetailsPanel: React.FC<Props> = ({
         />
       </div>
 
-      {/* Code Hash */}
+      {/* Code Version */}
       <label style={{
         fontSize: "13px",
         fontWeight: "600",
         marginBottom: "4px",
         display: "block",
         color: isDarkTheme ? "#cccccc" : "#333333",
-      }}>Code Hash</label>
+      }}>Code Version</label>
       <input
         type="text"
-        value={codeHash}
+        value={formatUtcTimestamp(codeVersion)}
         readOnly
         style={{
           ...fieldStyle,

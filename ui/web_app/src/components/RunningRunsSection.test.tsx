@@ -6,7 +6,7 @@ import type { ProjectRun } from "../projectRuns";
 
 const baseRun: ProjectRun = {
   activeRuntimeSeconds: 3.6,
-  codeVersion: "—",
+  codeVersion: "",
   customMetrics: {},
   id: "run-1",
   latency: "3.6s",
@@ -24,6 +24,7 @@ describe("RunningRunsSection", () => {
     render(
       <RunningRunsSection
         currentPage={1}
+        formatCodeVersion={(value) => value || "—"}
         formatTimestamp={(value) => value}
         onOpenRun={vi.fn()}
         onRowKeyDown={vi.fn()}

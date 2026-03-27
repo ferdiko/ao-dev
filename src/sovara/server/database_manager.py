@@ -344,7 +344,10 @@ class DatabaseManager:
         self.backend.update_experiment_command_query(command, session_id)
 
     def update_experiment_version_date(self, session_id, version_date):
-        self.backend.update_experiment_version_date_query(version_date, session_id)
+        self.backend.update_experiment_version_date_query(
+            self._serialize_timestamp(version_date),
+            session_id,
+        )
 
     def add_metrics(self, session_id, metrics):
         """Persist validated custom metrics for a run."""

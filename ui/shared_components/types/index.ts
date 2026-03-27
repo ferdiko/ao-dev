@@ -86,7 +86,7 @@ export interface WorkflowRunDetailsPanelProps {
   result?: string;
   notes?: string;
   log?: string;
-  codeHash?: string;
+  codeVersion?: string;
   onOpenInTab?: () => void;
   messageSender?: import('./MessageSender').MessageSender;
 }

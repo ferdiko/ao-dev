@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { Experiment } from "./api";
 import type { ProjectRun } from "./projectRuns";
-import { experimentToProjectRun, parseProjectRunTimestamp, sortProjectRuns } from "./projectRuns";
+import {
+  experimentToProjectRun,
+  formatCodeVersionTimestamp,
+  parseProjectRunTimestamp,
+  sortProjectRuns,
+} from "./projectRuns";
 import type { Tag } from "./tags";
 
 describe("projectRuns", () => {
@@ -25,7 +30,7 @@ describe("projectRuns", () => {
     };
 
     expect(experimentToProjectRun(experiment)).toEqual({
-      codeVersion: "—",
+      codeVersion: "",
       customMetrics: { confidence: 0.95, success: true },
       activeRuntimeSeconds: null,
       id: "session-12",
@@ -45,6 +50,11 @@ describe("projectRuns", () => {
 
     expect(parseProjectRunTimestamp("2026-03-23 10:11:12")).toBe(expected);
     expect(parseProjectRunTimestamp("2026-03-23T10:11:12Z")).toBe(expected);
+  });
+
+  it("formats code version timestamps using the same UTC parsing flow", () => {
+    expect(formatCodeVersionTimestamp("2026-03-23 10:11:12")).not.toBe("2026-03-23 10:11:12");
+    expect(formatCodeVersionTimestamp("")).toBe("—");
   });
 
   it("uses the active runtime checkpoint for running rows", () => {

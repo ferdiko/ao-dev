@@ -26,6 +26,7 @@ function LiveTimer({ anchorSeconds }: { anchorSeconds: number | null }) {
 
 export function RunningRunsSection({
   currentPage,
+  formatCodeVersion,
   formatTimestamp,
   onOpenRun,
   onRowKeyDown,
@@ -39,6 +40,7 @@ export function RunningRunsSection({
   totalPages,
 }: {
   currentPage: number;
+  formatCodeVersion: (raw: string) => string;
   formatTimestamp: (raw: string) => string;
   onOpenRun: (sessionId: string) => void;
   onRowKeyDown: (event: React.KeyboardEvent<HTMLTableRowElement>, sessionId: string) => void;
@@ -80,7 +82,7 @@ export function RunningRunsSection({
               >
                 <td>{run.name}</td>
                 <td className="cell-timestamp">{formatTimestamp(run.timestamp)}</td>
-                <td><span className="cell-id-link">{run.codeVersion}</span></td>
+                <td><span className="cell-id-link">{formatCodeVersion(run.codeVersion)}</span></td>
                 <td className="cell-metric">
                   <LiveTimer
                     key={`${run.sessionId}:${run.activeRuntimeSeconds ?? "null"}`}
