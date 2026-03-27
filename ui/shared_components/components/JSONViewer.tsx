@@ -20,6 +20,7 @@ import {
   unwrapFencedCode,
   unwrapLosslessNumber,
 } from '../utils/contentClassification';
+import { getExternalUrl } from '../utils/urlUtils';
 import {
   detectFlattenedMessageGroups,
   detectMessageLikeArray,
@@ -373,17 +374,20 @@ const FramedContentPanel: React.FC<{
   onJumpToRaw?: () => void;
   headerActions?: React.ReactNode;
   children: React.ReactNode;
-}> = ({ label, isDarkTheme, onJumpToRaw, headerActions, children }) => {
+  embedded?: boolean;
+}> = ({ label, isDarkTheme, onJumpToRaw, headerActions, children, embedded = false }) => {
   const colors = getViewerColors(isDarkTheme);
   const [isHovered, setIsHovered] = useState(false);
 
   return (
     <div
       style={{
-        border: `1px solid ${colors.inputBorder}`,
-        borderRadius: '8px',
-        overflow: 'hidden',
-        backgroundColor: colors.nestedBackground,
+        border: embedded ? 'none' : `1px solid ${colors.inputBorder}`,
+        borderRadius: embedded ? 0 : '8px',
+        overflow: embedded ? 'visible' : 'hidden',
+        backgroundColor: embedded ? 'transparent' : colors.nestedBackground,
+        display: 'grid',
+        gap: embedded ? '8px' : 0,
       }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
@@ -398,9 +402,9 @@ const FramedContentPanel: React.FC<{
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: '8px',
-          padding: '4px 12px',
-          backgroundColor: colors.toolbarBackground,
-          borderBottom: `1px solid ${colors.inputBorder}`,
+          padding: embedded ? 0 : '4px 12px',
+          backgroundColor: embedded ? 'transparent' : colors.toolbarBackground,
+          borderBottom: embedded ? 'none' : `1px solid ${colors.inputBorder}`,
         }}
       >
         <span
@@ -428,7 +432,7 @@ const FramedContentPanel: React.FC<{
           )}
         </div>
       </div>
-      <div style={{ padding: '12px' }}>
+      <div style={{ padding: embedded ? 0 : '12px' }}>
         {children}
       </div>
     </div>
@@ -871,7 +875,8 @@ const MessageBubbleBody: React.FC<{
   matchIndexOffset?: number;
   expandPlainText?: boolean;
   suppressArrayHeader?: boolean;
-}> = ({ value, isDarkTheme, depth, path, onReplaceDocument, onJumpToRaw, onOpenDocument, searchQuery, currentMatchIndex, matchIndexOffset, expandPlainText = true, suppressArrayHeader = false }) => {
+  suppressNestedShell?: boolean;
+}> = ({ value, isDarkTheme, depth, path, onReplaceDocument, onJumpToRaw, onOpenDocument, searchQuery, currentMatchIndex, matchIndexOffset, expandPlainText = true, suppressArrayHeader = false, suppressNestedShell = false }) => {
   if (typeof value === 'string') {
     return (
       <PrettyStringNode
@@ -887,6 +892,7 @@ const MessageBubbleBody: React.FC<{
         currentMatchIndex={currentMatchIndex}
         matchIndexOffset={matchIndexOffset}
         expandPlainText={expandPlainText}
+        suppressNestedShell={suppressNestedShell}
       />
     );
   }
@@ -906,6 +912,7 @@ const MessageBubbleBody: React.FC<{
       currentMatchIndex={currentMatchIndex}
       matchIndexOffset={matchIndexOffset}
       suppressArrayHeader={suppressArrayHeader}
+      suppressNestedShell={suppressNestedShell}
     />
   );
 };
@@ -951,6 +958,7 @@ const MessageObjectNode: React.FC<BaseNodeProps & {
         currentMatchIndex={currentMatchIndex}
         matchIndexOffset={matchIndexOffset}
         suppressArrayHeader
+        suppressNestedShell
       />
       <MessageMetadataStrip metadata={detectedMessage.metadata} isDarkTheme={isDarkTheme} />
     </PrettyShell>
@@ -1013,6 +1021,7 @@ const FlattenedMessageGroupNode: React.FC<BaseNodeProps & {
                 currentMatchIndex={currentMatchIndex}
                 matchIndexOffset={matchIndexOffset}
                 suppressArrayHeader
+                suppressNestedShell
               />
               <MessageMetadataStrip metadata={message.metadata} isDarkTheme={isDarkTheme} />
             </div>
@@ -1061,6 +1070,7 @@ const FlattenedMessageGroupNode: React.FC<BaseNodeProps & {
           currentMatchIndex={currentMatchIndex}
           matchIndexOffset={matchIndexOffset}
           suppressArrayHeader
+          suppressNestedShell
         />
         <MessageMetadataStrip metadata={[...group.metadata, ...group.detectedMessage.metadata]} isDarkTheme={isDarkTheme} />
       </PrettyShell>
@@ -1105,6 +1115,7 @@ const InlineValueRow: React.FC<{
 }> = ({ label, value, isDarkTheme, onJumpToRaw, searchQuery, currentMatchIndex, matchIndexOffset = 0 }) => {
   const colors = getViewerColors(isDarkTheme);
   const isString = typeof value === 'string';
+  const externalUrl = isString ? getExternalUrl(value) : null;
   const [isHovered, setIsHovered] = useState(false);
   const { element: highlighted } = isString
     ? highlightText(value, searchQuery, matchIndexOffset, currentMatchIndex ?? -1)
@@ -1145,18 +1156,42 @@ const InlineValueRow: React.FC<{
       </div>
       <div style={{ minWidth: 0, flex: 1 }}>
         {isString ? (
-          <div
-            style={{
-              fontFamily: 'var(--vscode-editor-font-family, monospace)',
-              fontSize: '13px',
-              lineHeight: '1.5',
-              color: colors.string,
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-            }}
-          >
-            {highlighted}
-          </div>
+          externalUrl ? (
+            <a
+              href={externalUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+              style={{
+                display: 'block',
+                fontFamily: 'var(--vscode-editor-font-family, monospace)',
+                fontSize: '13px',
+                lineHeight: '1.5',
+                color: colors.string,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                textDecoration: 'underline',
+                textDecorationColor: colors.inputBorder,
+                textUnderlineOffset: '0.14em',
+              }}
+            >
+              {highlighted}
+            </a>
+          ) : (
+            <div
+              style={{
+                fontFamily: 'var(--vscode-editor-font-family, monospace)',
+                fontSize: '13px',
+                lineHeight: '1.5',
+                color: colors.string,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}
+            >
+              {highlighted}
+            </div>
+          )
         ) : (
           <CompactScalarValue value={value} isDarkTheme={isDarkTheme} />
         )}
@@ -1226,6 +1261,7 @@ const InlineArrayItemRow: React.FC<{
 }> = ({ value, isDarkTheme, onJumpToRaw, searchQuery, currentMatchIndex, matchIndexOffset = 0 }) => {
   const colors = getViewerColors(isDarkTheme);
   const isString = typeof value === 'string';
+  const externalUrl = isString ? getExternalUrl(value) : null;
   const [isHovered, setIsHovered] = useState(false);
   const { element: highlighted } = isString
     ? highlightText(value, searchQuery, matchIndexOffset, currentMatchIndex ?? -1)
@@ -1251,18 +1287,42 @@ const InlineArrayItemRow: React.FC<{
     >
       <div style={{ minWidth: 0, flex: 1 }}>
         {isString ? (
-          <div
-            style={{
-              fontFamily: 'var(--vscode-editor-font-family, monospace)',
-              fontSize: '13px',
-              lineHeight: '1.5',
-              color: colors.string,
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-            }}
-          >
-            {highlighted}
-          </div>
+          externalUrl ? (
+            <a
+              href={externalUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+              style={{
+                display: 'block',
+                fontFamily: 'var(--vscode-editor-font-family, monospace)',
+                fontSize: '13px',
+                lineHeight: '1.5',
+                color: colors.string,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                textDecoration: 'underline',
+                textDecorationColor: colors.inputBorder,
+                textUnderlineOffset: '0.14em',
+              }}
+            >
+              {highlighted}
+            </a>
+          ) : (
+            <div
+              style={{
+                fontFamily: 'var(--vscode-editor-font-family, monospace)',
+                fontSize: '13px',
+                lineHeight: '1.5',
+                color: colors.string,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}
+            >
+              {highlighted}
+            </div>
+          )
         ) : (
           <CompactScalarValue value={value} isDarkTheme={isDarkTheme} />
         )}
@@ -1453,7 +1513,8 @@ const CodeBlock: React.FC<{
   searchQuery?: string;
   currentMatchIndex?: number;
   matchIndexOffset?: number;
-}> = ({ code, language, isDarkTheme, onJumpToRaw, headerActions, searchQuery, currentMatchIndex, matchIndexOffset = 0 }) => {
+  embedded?: boolean;
+}> = ({ code, language, isDarkTheme, onJumpToRaw, headerActions, searchQuery, currentMatchIndex, matchIndexOffset = 0, embedded = false }) => {
   const colors = getViewerColors(isDarkTheme);
   const highlighted = renderSyntaxHighlightedCode(
     code,
@@ -1472,6 +1533,7 @@ const CodeBlock: React.FC<{
       isDarkTheme={isDarkTheme}
       onJumpToRaw={onJumpToRaw}
       headerActions={headerActions}
+      embedded={embedded}
     >
       {searchQuery ? (
         <pre
@@ -1795,6 +1857,7 @@ const MarkdownRenderer: React.FC<{
 
 const PrettyStringNode: React.FC<BaseNodeProps & {
   expandPlainText?: boolean;
+  suppressNestedShell?: boolean;
 }> = ({
   keyName,
   value,
@@ -1809,6 +1872,7 @@ const PrettyStringNode: React.FC<BaseNodeProps & {
   currentMatchIndex,
   matchIndexOffset = 0,
   expandPlainText = false,
+  suppressNestedShell = false,
 }) => {
   const colors = getViewerColors(isDarkTheme);
   const shouldCollapse = shouldCollapseLongText(value);
@@ -1816,8 +1880,10 @@ const PrettyStringNode: React.FC<BaseNodeProps & {
   const [showMarkdownRaw, setShowMarkdownRaw] = useState(false);
   const detectedDoc = onOpenDocument ? detectDocument(value, siblingData) : null;
   const doc = detectedDoc;
+  const externalUrl = getExternalUrl(value);
   const classification = classifyStringContent(value);
   const canCollapseVisibleText = !expandPlainText && shouldCollapse && classification.kind === 'plain';
+  const renderEmbedded = suppressNestedShell && keyName === null;
   const collapseAction = canCollapseVisibleText ? (
     <ActionIconButton
       title={isExpanded ? 'Collapse' : 'Expand'}
@@ -1874,79 +1940,106 @@ const PrettyStringNode: React.FC<BaseNodeProps & {
   }
 
   if (classification.kind === 'markdown') {
+    const content = (
+      <FramedContentPanel
+        label="MARKDOWN"
+        isDarkTheme={isDarkTheme}
+        onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
+        embedded={renderEmbedded}
+        headerActions={
+          <ActionIconButton
+            title={showMarkdownRaw ? 'Show rendered markdown' : 'Show raw markdown'}
+            icon={<span style={{ fontFamily: 'var(--vscode-editor-font-family, monospace)', fontSize: '11px' }}>{'{}'}</span>}
+            isDarkTheme={isDarkTheme}
+            active={showMarkdownRaw}
+            onClick={() => setShowMarkdownRaw((current) => !current)}
+          />
+        }
+      >
+        {showMarkdownRaw ? (
+          <pre
+            style={{
+              margin: 0,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontFamily: 'var(--vscode-editor-font-family, monospace)',
+              fontSize: '13px',
+              lineHeight: '1.5',
+              color: colors.string,
+            }}
+          >
+            {value}
+          </pre>
+        ) : (
+          <MarkdownRenderer
+            markdown={value}
+            isDarkTheme={isDarkTheme}
+            searchQuery={searchQuery}
+            currentMatchIndex={currentMatchIndex}
+            matchIndexOffset={matchIndexOffset}
+          />
+        )}
+      </FramedContentPanel>
+    );
+
+    if (renderEmbedded) {
+      return content;
+    }
+
     return (
       <PrettyShell label={keyName} isDarkTheme={isDarkTheme} depth={depth}>
-        <FramedContentPanel
-          label="MARKDOWN"
-          isDarkTheme={isDarkTheme}
-          onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
-          headerActions={
-            <ActionIconButton
-              title={showMarkdownRaw ? 'Show rendered markdown' : 'Show raw markdown'}
-              icon={<span style={{ fontFamily: 'var(--vscode-editor-font-family, monospace)', fontSize: '11px' }}>{'{}'}</span>}
-              isDarkTheme={isDarkTheme}
-              active={showMarkdownRaw}
-              onClick={() => setShowMarkdownRaw((current) => !current)}
-            />
-          }
-        >
-          {showMarkdownRaw ? (
-            <pre
-              style={{
-                margin: 0,
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                fontFamily: 'var(--vscode-editor-font-family, monospace)',
-                fontSize: '13px',
-                lineHeight: '1.5',
-                color: colors.string,
-              }}
-            >
-              {value}
-            </pre>
-          ) : (
-            <MarkdownRenderer
-              markdown={value}
-              isDarkTheme={isDarkTheme}
-              searchQuery={searchQuery}
-              currentMatchIndex={currentMatchIndex}
-              matchIndexOffset={matchIndexOffset}
-            />
-          )}
-        </FramedContentPanel>
+        {content}
       </PrettyShell>
     );
   }
 
   if (classification.kind === 'xml') {
+    const content = (
+      <CodeBlock
+        code={value}
+        language="xml"
+        isDarkTheme={isDarkTheme}
+        onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
+        searchQuery={searchQuery}
+        currentMatchIndex={currentMatchIndex}
+        matchIndexOffset={matchIndexOffset}
+        embedded={renderEmbedded}
+      />
+    );
+
+    if (renderEmbedded) {
+      return content;
+    }
+
     return (
       <PrettyShell label={keyName} isDarkTheme={isDarkTheme} depth={depth}>
-        <CodeBlock
-          code={value}
-          language="xml"
-          isDarkTheme={isDarkTheme}
-          onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
-          searchQuery={searchQuery}
-          currentMatchIndex={currentMatchIndex}
-          matchIndexOffset={matchIndexOffset}
-        />
+        {content}
       </PrettyShell>
     );
   }
 
   if (classification.kind === 'code') {
     const code = classification.fenced ? unwrapFencedCode(value)?.code || value : value;
+    const content = (
+      <CodeBlock
+        code={code}
+        language={classification.language}
+        isDarkTheme={isDarkTheme}
+        onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
+        searchQuery={searchQuery}
+        currentMatchIndex={currentMatchIndex}
+        matchIndexOffset={matchIndexOffset}
+        embedded={renderEmbedded}
+      />
+    );
+
+    if (renderEmbedded) {
+      return content;
+    }
+
     return (
       <PrettyShell label={keyName} isDarkTheme={isDarkTheme} depth={depth}>
-        <CodeBlock
-          code={code}
-          language={classification.language}
-          isDarkTheme={isDarkTheme}
-          onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
-          searchQuery={searchQuery}
-          currentMatchIndex={currentMatchIndex}
-          matchIndexOffset={matchIndexOffset}
-        />
+        {content}
       </PrettyShell>
     );
   }
@@ -1961,25 +2054,50 @@ const PrettyStringNode: React.FC<BaseNodeProps & {
       actions={plainStringActions}
       onJumpToRaw={onJumpToRaw ? () => onJumpToRaw(path) : undefined}
     >
-      <pre
-        style={{
-          margin: 0,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          fontFamily: 'var(--vscode-editor-font-family, monospace)',
-          fontSize: '13px',
-          lineHeight: '1.5',
-          color: colors.string,
-        }}
-      >
-        {highlighted}
-      </pre>
+      {externalUrl ? (
+        <a
+          href={externalUrl}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          style={{
+            display: 'block',
+            fontFamily: 'var(--vscode-editor-font-family, monospace)',
+            fontSize: '13px',
+            lineHeight: '1.5',
+            color: colors.string,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            textDecoration: 'underline',
+            textDecorationColor: colors.inputBorder,
+            textUnderlineOffset: '0.14em',
+          }}
+        >
+          {highlighted}
+        </a>
+      ) : (
+        <pre
+          style={{
+            margin: 0,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            fontFamily: 'var(--vscode-editor-font-family, monospace)',
+            fontSize: '13px',
+            lineHeight: '1.5',
+            color: colors.string,
+          }}
+        >
+          {highlighted}
+        </pre>
+      )}
     </PrettyShell>
   );
 };
 
 const PrettyArrayNode: React.FC<BaseNodeProps & {
   suppressArrayHeader?: boolean;
+  suppressNestedShell?: boolean;
 }> = ({
   keyName,
   value,
@@ -1993,6 +2111,7 @@ const PrettyArrayNode: React.FC<BaseNodeProps & {
   currentMatchIndex,
   matchIndexOffset = 0,
   suppressArrayHeader = false,
+  suppressNestedShell = false,
 }) => {
   const colors = getViewerColors(isDarkTheme);
   const [isExpanded, setIsExpanded] = useState(true);
@@ -2000,6 +2119,7 @@ const PrettyArrayNode: React.FC<BaseNodeProps & {
   const detectedMessages = detectMessageLikeArray(arrayValue);
   const columns = getUniformObjectArrayColumns(arrayValue);
   const singleItem = arrayValue[0];
+  const hasOuterShell = !(suppressArrayHeader && keyName === null);
 
   const content = !isExpanded ? (
     <div
@@ -2026,6 +2146,7 @@ const PrettyArrayNode: React.FC<BaseNodeProps & {
           currentMatchIndex={currentMatchIndex}
           matchIndexOffset={matchIndexOffset}
           suppressArrayHeader
+          suppressNestedShell
         />
         <MessageMetadataStrip metadata={detectedMessages[0].metadata} isDarkTheme={isDarkTheme} />
       </div>
@@ -2050,6 +2171,7 @@ const PrettyArrayNode: React.FC<BaseNodeProps & {
                 currentMatchIndex={currentMatchIndex}
                 matchIndexOffset={matchIndexOffset}
                 suppressArrayHeader
+                suppressNestedShell
               />
               <MessageMetadataStrip metadata={message.metadata} isDarkTheme={isDarkTheme} />
             </div>
@@ -2072,6 +2194,7 @@ const PrettyArrayNode: React.FC<BaseNodeProps & {
       currentMatchIndex={currentMatchIndex}
       matchIndexOffset={matchIndexOffset}
       suppressArrayHeader={suppressArrayHeader}
+      suppressNestedShell={hasOuterShell}
     />
   ) : columns ? (
     <div style={{ overflowX: 'auto' }}>
@@ -2188,6 +2311,7 @@ const PrettyArrayNode: React.FC<BaseNodeProps & {
 
 const PrettyObjectNode: React.FC<BaseNodeProps & {
   suppressArrayHeader?: boolean;
+  suppressNestedShell?: boolean;
 }> = ({
   keyName,
   value,
@@ -2201,6 +2325,7 @@ const PrettyObjectNode: React.FC<BaseNodeProps & {
   currentMatchIndex,
   matchIndexOffset = 0,
   suppressArrayHeader = false,
+  suppressNestedShell = false,
 }) => {
   const entries = Object.entries(value as Record<string, unknown>);
   const detectedMessage = detectMessageLikeObject(value);
@@ -2284,6 +2409,7 @@ const PrettyObjectNode: React.FC<BaseNodeProps & {
               currentMatchIndex={currentMatchIndex}
               matchIndexOffset={matchIndexOffset}
               suppressArrayHeader={suppressArrayHeader}
+              suppressNestedShell={suppressNestedShell}
             />
           );
       })}
@@ -2308,6 +2434,7 @@ const PrettyObjectNode: React.FC<BaseNodeProps & {
 
 const PrettyJSONNode: React.FC<BaseNodeProps & {
   suppressArrayHeader?: boolean;
+  suppressNestedShell?: boolean;
 }> = ({
   keyName,
   value,
@@ -2322,6 +2449,7 @@ const PrettyJSONNode: React.FC<BaseNodeProps & {
   currentMatchIndex,
   matchIndexOffset = 0,
   suppressArrayHeader = false,
+  suppressNestedShell = false,
 }) => {
   if (depth > MAX_PRETTY_DEPTH) {
     return (
@@ -2366,7 +2494,7 @@ const PrettyJSONNode: React.FC<BaseNodeProps & {
         searchQuery={searchQuery}
         currentMatchIndex={currentMatchIndex}
         matchIndexOffset={matchIndexOffset}
-        suppressArrayHeader={suppressArrayHeader}
+        suppressNestedShell={suppressNestedShell}
       />
     );
   }
@@ -2386,6 +2514,7 @@ const PrettyJSONNode: React.FC<BaseNodeProps & {
         currentMatchIndex={currentMatchIndex}
         matchIndexOffset={matchIndexOffset}
         suppressArrayHeader={suppressArrayHeader}
+        suppressNestedShell={suppressNestedShell}
       />
     );
   }
@@ -2405,6 +2534,7 @@ const PrettyJSONNode: React.FC<BaseNodeProps & {
         searchQuery={searchQuery}
         currentMatchIndex={currentMatchIndex}
         matchIndexOffset={matchIndexOffset}
+        suppressNestedShell={suppressNestedShell}
       />
     );
   }

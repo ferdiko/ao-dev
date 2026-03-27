@@ -13,6 +13,7 @@ import {
   isPreviewableDocument,
   type DetectedDocument,
 } from "@sovara/shared-components/utils/documentDetection";
+import { getExternalUrl } from "@sovara/shared-components/utils/urlUtils";
 import { saveDocument } from "@sovara/shared-components/utils/documentDownload";
 import { applyDocumentReplacement, pickReplacementDocumentFromBrowser } from "@sovara/shared-components/utils/documentReplacement";
 import {
@@ -550,6 +551,7 @@ function CodeBlock({
   editDisabled = false,
   editTitle = "Edit this field",
   headerActions,
+  embedded = false,
 }: {
   code: string;
   language: string;
@@ -557,6 +559,7 @@ function CodeBlock({
   editDisabled?: boolean;
   editTitle?: string;
   headerActions?: React.ReactNode;
+  embedded?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
@@ -570,17 +573,29 @@ function CodeBlock({
 
   return (
     <div
-      className="code-block"
+      className={!embedded ? "code-block" : undefined}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onDoubleClick={onEdit && !editDisabled ? (event) => {
         event.stopPropagation();
         onEdit();
       } : undefined}
+      style={embedded ? { display: "grid", gap: "8px" } : undefined}
     >
-      <div className="code-block-header">
-        <span className="code-block-lang">{LANG_DISPLAY[language] ?? language}</span>
-        <div className="code-block-actions">
+      <div
+        className={!embedded ? "code-block-header" : undefined}
+        style={embedded ? { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" } : undefined}
+      >
+        <span
+          className={!embedded ? "code-block-lang" : undefined}
+          style={embedded ? { fontSize: "11px", fontWeight: 600, color: "var(--color-text-muted)", letterSpacing: "0.02em" } : undefined}
+        >
+          {LANG_DISPLAY[language] ?? language}
+        </span>
+        <div
+          className={!embedded ? "code-block-actions" : undefined}
+          style={embedded ? { display: "inline-flex", alignItems: "center", gap: "8px" } : undefined}
+        >
           {headerActions}
           {onEdit ? (
             <HoverAction visible={isHovered}>
@@ -605,7 +620,7 @@ function CodeBlock({
         language={language}
         style={syntaxTheme}
         customStyle={{
-          padding: "12px 14px",
+          padding: embedded ? "0" : "12px 14px",
           borderRadius: 0,
           background: "transparent",
           fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
@@ -898,6 +913,7 @@ function FramedContentBlock({
   editTitle = "Edit this field",
   headerActions,
   children,
+  embedded = false,
 }: {
   label: string;
   onEdit?: () => void;
@@ -905,6 +921,7 @@ function FramedContentBlock({
   editTitle?: string;
   headerActions?: React.ReactNode;
   children: React.ReactNode;
+  embedded?: boolean;
 }) {
   const [isHovered, setIsHovered] = useState(false);
   const editAction = onEdit ? (
@@ -915,22 +932,34 @@ function FramedContentBlock({
 
   return (
     <div
-      className="code-block"
+      className={!embedded ? "code-block" : undefined}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onDoubleClick={onEdit && !editDisabled ? (event) => {
         event.stopPropagation();
         onEdit();
       } : undefined}
+      style={embedded ? { display: "grid", gap: "8px" } : undefined}
     >
-      <div className="code-block-header">
-        <span className="code-block-lang">{label}</span>
-        <div className="code-block-actions">
+      <div
+        className={!embedded ? "code-block-header" : undefined}
+        style={embedded ? { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" } : undefined}
+      >
+        <span
+          className={!embedded ? "code-block-lang" : undefined}
+          style={embedded ? { fontSize: "11px", fontWeight: 600, color: "var(--color-text-muted)", letterSpacing: "0.02em" } : undefined}
+        >
+          {label}
+        </span>
+        <div
+          className={!embedded ? "code-block-actions" : undefined}
+          style={embedded ? { display: "inline-flex", alignItems: "center", gap: "8px" } : undefined}
+        >
           {headerActions}
           {editAction}
         </div>
       </div>
-      <div style={{ padding: "12px 14px" }}>{children}</div>
+      <div style={{ padding: embedded ? 0 : "12px 14px" }}>{children}</div>
     </div>
   );
 }
@@ -964,6 +993,41 @@ function CompactScalarValue({
     >
       {scalarText}
     </div>
+  );
+}
+
+function UrlValue({ value, href }: { value: string; href?: string }) {
+  const resolvedHref = href ?? getExternalUrl(value);
+  if (!resolvedHref) {
+    return null;
+  }
+
+  return (
+    <a
+      href={resolvedHref}
+      target="_blank"
+      rel="noreferrer"
+      onClick={(event) => {
+        event.stopPropagation();
+      }}
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+      }}
+      style={{
+        display: "block",
+        fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+        fontSize: "12.5px",
+        lineHeight: "1.5",
+        color: "#43884e",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+        textDecoration: "underline",
+        textDecorationColor: "rgba(138, 138, 126, 0.28)",
+        textUnderlineOffset: "0.14em",
+      }}
+    >
+      {value}
+    </a>
   );
 }
 
@@ -1096,6 +1160,7 @@ function InlineValueRow({
   editTitle?: string;
 }) {
   const isString = typeof value === "string";
+  const externalUrl = isString ? getExternalUrl(value) : null;
   const [isHovered, setIsHovered] = useState(false);
   return (
     <div
@@ -1132,18 +1197,22 @@ function InlineValueRow({
       </div>
       <div style={{ minWidth: 0, flex: 1 }}>
         {isString ? (
-          <div
-            style={{
-              fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
-              fontSize: "12.5px",
-              lineHeight: "1.5",
-              color: "#43884e",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-            }}
-          >
-            {value}
-          </div>
+          externalUrl ? (
+            <UrlValue value={value} />
+          ) : (
+            <div
+              style={{
+                fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+                fontSize: "12.5px",
+                lineHeight: "1.5",
+                color: "#43884e",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {value}
+            </div>
+          )
         ) : (
           <CompactScalarValue value={value} />
         )}
@@ -1211,6 +1280,7 @@ function InlineArrayItemRow({
   editTitle?: string;
 }) {
   const isString = typeof value === "string";
+  const externalUrl = isString ? getExternalUrl(value) : null;
   const [isHovered, setIsHovered] = useState(false);
 
   return (
@@ -1233,18 +1303,22 @@ function InlineArrayItemRow({
     >
       <div style={{ minWidth: 0, flex: 1 }}>
         {isString ? (
-          <div
-            style={{
-              fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
-              fontSize: "12.5px",
-              lineHeight: "1.5",
-              color: "#43884e",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-            }}
-          >
-            {value}
-          </div>
+          externalUrl ? (
+            <UrlValue value={value} />
+          ) : (
+            <div
+              style={{
+                fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+                fontSize: "12.5px",
+                lineHeight: "1.5",
+                color: "#43884e",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {value}
+            </div>
+          )
         ) : (
           <CompactScalarValue value={value} />
         )}
@@ -1292,6 +1366,7 @@ function MessageBubbleBody({
   onOpenDocument,
   expandPlainText = true,
   suppressArrayHeader = false,
+  suppressNestedShell = false,
 }: {
   value: unknown;
   depth: number;
@@ -1303,6 +1378,7 @@ function MessageBubbleBody({
   onOpenDocument: (doc: DetectedDocument) => void;
   expandPlainText?: boolean;
   suppressArrayHeader?: boolean;
+  suppressNestedShell?: boolean;
 }) {
   if (typeof value === "string") {
     return (
@@ -1317,6 +1393,7 @@ function MessageBubbleBody({
         editTitle={editTitle}
         onOpenDocument={onOpenDocument}
         expandPlainText={expandPlainText}
+        suppressNestedShell={suppressNestedShell}
       />
     );
   }
@@ -1334,6 +1411,7 @@ function MessageBubbleBody({
       editTitle={editTitle}
       onOpenDocument={onOpenDocument}
       suppressArrayHeader={suppressArrayHeader}
+      suppressNestedShell={suppressNestedShell}
     />
   );
 }
@@ -1379,6 +1457,7 @@ function FlattenedMessageGroupCard({
               editTitle={editTitle}
               onOpenDocument={onOpenDocument}
               suppressArrayHeader
+              suppressNestedShell
             />
             <MessageMetadataStrip metadata={[...group.metadata, ...detectedMessages[0].metadata]} />
           </div>
@@ -1400,6 +1479,7 @@ function FlattenedMessageGroupCard({
                   editTitle={editTitle}
                   onOpenDocument={onOpenDocument}
                   suppressArrayHeader
+                  suppressNestedShell
                 />
                   <MessageMetadataStrip metadata={message.metadata} />
                 </div>
@@ -1431,6 +1511,7 @@ function FlattenedMessageGroupCard({
           editTitle={editTitle}
           onOpenDocument={onOpenDocument}
           suppressArrayHeader
+          suppressNestedShell
         />
         <MessageMetadataStrip metadata={[...group.metadata, ...group.detectedMessage.metadata]} />
       </PrettyCard>
@@ -1452,6 +1533,7 @@ function PrettyStringValue({
   editTitle,
   onOpenDocument,
   expandPlainText = false,
+  suppressNestedShell = false,
 }: {
   label: string | null;
   value: string;
@@ -1464,13 +1546,16 @@ function PrettyStringValue({
   editTitle?: string;
   onOpenDocument: (doc: DetectedDocument) => void;
   expandPlainText?: boolean;
+  suppressNestedShell?: boolean;
 }) {
   const shouldCollapse = shouldCollapseLongText(value);
   const [expanded, setExpanded] = useState(expandPlainText || !shouldCollapse);
   const [showMarkdownRaw, setShowMarkdownRaw] = useState(false);
   const detectedDoc = detectDocument(value, siblingData);
+  const externalUrl = getExternalUrl(value);
   const classification = classifyStringContent(value);
   const canCollapseVisibleText = !expandPlainText && shouldCollapse && classification.kind === "plain";
+  const renderEmbedded = suppressNestedShell && label === null;
   const actions = canCollapseVisibleText ? (
     <ChevronToggleButton
       expanded={expanded}
@@ -1582,70 +1667,97 @@ function PrettyStringValue({
   }
 
   if (classification.kind === "markdown") {
+    const content = (
+      <FramedContentBlock
+        label="MARKDOWN"
+        onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
+        embedded={renderEmbedded}
+        headerActions={
+          <InlineHeaderIconButton
+            title={showMarkdownRaw ? "Show rendered markdown" : "Show raw markdown"}
+            onClick={() => setShowMarkdownRaw((current) => !current)}
+            active={showMarkdownRaw}
+          >
+            <span style={{ fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace', fontSize: "11px" }}>{"{}"}</span>
+          </InlineHeaderIconButton>
+        }
+      >
+        {showMarkdownRaw ? (
+          <pre
+            style={{
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+              fontSize: "12.5px",
+              lineHeight: "1.55",
+              color: "#43884e",
+            }}
+          >
+            {value}
+          </pre>
+        ) : (
+          <MarkdownContent markdown={value} />
+        )}
+      </FramedContentBlock>
+    );
+
+    if (renderEmbedded) {
+      return content;
+    }
+
     return (
       <PrettyCard label={label} depth={depth} actions={actions}>
-        <FramedContentBlock
-          label="MARKDOWN"
-          onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
-          editDisabled={editDisabled}
-          editTitle={editTitle}
-          headerActions={
-            <InlineHeaderIconButton
-              title={showMarkdownRaw ? "Show rendered markdown" : "Show raw markdown"}
-              onClick={() => setShowMarkdownRaw((current) => !current)}
-              active={showMarkdownRaw}
-            >
-              <span style={{ fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace', fontSize: "11px" }}>{"{}"}</span>
-            </InlineHeaderIconButton>
-          }
-        >
-          {showMarkdownRaw ? (
-            <pre
-              style={{
-                margin: 0,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
-                fontSize: "12.5px",
-                lineHeight: "1.55",
-                color: "#43884e",
-              }}
-            >
-              {value}
-            </pre>
-          ) : (
-            <MarkdownContent markdown={value} />
-          )}
-        </FramedContentBlock>
+        {content}
       </PrettyCard>
     );
   }
 
   if (classification.kind === "xml") {
+    const content = (
+      <CodeBlock
+        code={value}
+        language="xml"
+        onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
+        embedded={renderEmbedded}
+      />
+    );
+
+    if (renderEmbedded) {
+      return content;
+    }
+
     return (
       <PrettyCard label={label} depth={depth} actions={actions}>
-        <CodeBlock
-          code={value}
-          language="xml"
-          onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
-          editDisabled={editDisabled}
-          editTitle={editTitle}
-        />
+        {content}
       </PrettyCard>
     );
   }
 
   if (classification.kind === "code") {
     const code = classification.fenced ? (unwrapFencedCode(value)?.code ?? value) : value;
+    const content = (
+      <CodeBlock
+        code={code}
+        language={classification.language}
+        onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
+        editDisabled={editDisabled}
+        editTitle={editTitle}
+        embedded={renderEmbedded}
+      />
+    );
+
+    if (renderEmbedded) {
+      return content;
+    }
+
     return (
       <PrettyCard label={label} depth={depth}>
-        <CodeBlock
-          code={code}
-          language={classification.language}
-          onEdit={onJumpToEdit ? () => onJumpToEdit(path) : undefined}
-          editDisabled={editDisabled}
-          editTitle={editTitle}
-        />
+        {content}
       </PrettyCard>
     );
   }
@@ -1659,19 +1771,23 @@ function PrettyStringValue({
       editDisabled={editDisabled}
       editTitle={editTitle}
     >
-      <pre
-        style={{
-          margin: 0,
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
-          fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
-          fontSize: "12.5px",
-          lineHeight: "1.55",
-          color: "#43884e",
-        }}
-      >
-        {expanded ? value : getStringPreview(value)}
-      </pre>
+      {externalUrl ? (
+        <UrlValue value={expanded ? value : getStringPreview(value)} href={externalUrl} />
+      ) : (
+        <pre
+          style={{
+            margin: 0,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            fontFamily: '"SFMono-Regular","Menlo","Consolas",monospace',
+            fontSize: "12.5px",
+            lineHeight: "1.55",
+            color: "#43884e",
+          }}
+        >
+          {expanded ? value : getStringPreview(value)}
+        </pre>
+      )}
     </PrettyCard>
   );
 }
@@ -1703,6 +1819,7 @@ function PrettyArrayValue({
   const detectedMessages = detectMessageLikeArray(value);
   const columns = getUniformObjectArrayColumns(value);
   const singleItem = value[0];
+  const hasOuterShell = !(suppressHeader && label === null);
 
   let content: React.ReactNode;
   if (!expanded) {
@@ -1722,6 +1839,7 @@ function PrettyArrayValue({
           editTitle={editTitle}
           onOpenDocument={onOpenDocument}
           suppressArrayHeader
+          suppressNestedShell
         />
         <MessageMetadataStrip metadata={detectedMessages[0].metadata} />
       </div>
@@ -1743,6 +1861,7 @@ function PrettyArrayValue({
                 editTitle={editTitle}
                 onOpenDocument={onOpenDocument}
                 suppressArrayHeader
+                suppressNestedShell
               />
               <MessageMetadataStrip metadata={message.metadata} />
             </div>
@@ -1764,6 +1883,7 @@ function PrettyArrayValue({
         editTitle={editTitle}
         onOpenDocument={onOpenDocument}
         suppressArrayHeader={suppressHeader}
+        suppressNestedShell={hasOuterShell}
       />
     );
   } else if (columns) {
@@ -1888,6 +2008,7 @@ function PrettyObjectValue({
           editTitle={editTitle}
           onOpenDocument={onOpenDocument}
           suppressArrayHeader
+          suppressNestedShell
         />
         <MessageMetadataStrip metadata={detectedMessage.metadata} />
       </PrettyCard>
@@ -1973,6 +2094,7 @@ function PrettyValue({
   editTitle,
   onOpenDocument,
   suppressArrayHeader = false,
+  suppressNestedShell = false,
 }: {
   label: string | null;
   value: unknown;
@@ -1985,6 +2107,7 @@ function PrettyValue({
   editTitle?: string;
   onOpenDocument: (doc: DetectedDocument) => void;
   suppressArrayHeader?: boolean;
+  suppressNestedShell?: boolean;
 }) {
   if (depth > MAX_PRETTY_DEPTH) {
     return (
@@ -2028,6 +2151,7 @@ function PrettyValue({
         editDisabled={editDisabled}
         editTitle={editTitle}
         onOpenDocument={onOpenDocument}
+        suppressNestedShell={suppressNestedShell}
       />
     );
   }
