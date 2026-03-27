@@ -782,7 +782,17 @@ class ChatMessageRequest(BaseModel):
 
 
 @router.post("/prefetch/{session_id}", status_code=202)
-async def prefetch_trace(session_id: str, model: str = "anthropic/claude-sonnet-4-6"):
+async def prefetch_trace(
+    session_id: str,
+    model: str = "anthropic/claude-sonnet-4-6",
+    state: ServerState = Depends(get_state),
+):
+    session_map, _running_ids = state.get_session_snapshot()
+    session = session_map.get(session_id)
+    if session and session.status == "running":
+        # Don't prefetch while still running (summary will be invalid shortly)
+        return {"status": "skipped", "reason": "run_still_active"}
+
     import httpx
     from sovara.common.constants import HOST, INFERENCE_PORT
     async with httpx.AsyncClient() as client:
