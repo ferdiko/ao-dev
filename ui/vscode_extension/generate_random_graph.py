@@ -145,14 +145,14 @@ def send_graph_to_ui(graph: Dict, graph_name: str = "Random Graph"):
         }
         send_message(conn, handshake)
 
-        # Receive session_id from server
+        # Receive run_id from server
         session_response = receive_message(conn)
-        session_id = session_response.get("session_id")
-        if not session_id:
-            print("Failed to get session_id from server")
+        run_id = session_response.get("run_id")
+        if not run_id:
+            print("Failed to get run_id from server")
             return None
 
-        print(f"Got session_id: {session_id}")
+        print(f"Got run_id: {run_id}")
 
         # Send each node individually with add_node messages
         for node in graph["nodes"]:
@@ -163,20 +163,20 @@ def send_graph_to_ui(graph: Dict, graph_name: str = "Random Graph"):
 
             add_node_msg = {
                 "type": "add_node",
-                "session_id": session_id,
+                "run_id": run_id,
                 "node": node,
                 "incoming_edges": incoming_edges,
             }
             send_message(conn, add_node_msg)
 
-        # Mark the experiment as finished
-        deregister_msg = {"type": "deregister", "session_id": session_id}
+        # Mark the run as finished
+        deregister_msg = {"type": "deregister", "run_id": run_id}
         send_message(conn, deregister_msg)
 
         print(
             f"Successfully sent graph '{graph_name}' with {len(graph['nodes'])} nodes and {len(graph['edges'])} edges to UI"
         )
-        return session_id
+        return run_id
 
     except Exception as e:
         print(f"Error sending graph to UI: {e}")

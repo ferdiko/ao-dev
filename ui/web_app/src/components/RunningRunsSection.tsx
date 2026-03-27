@@ -42,8 +42,8 @@ export function RunningRunsSection({
   currentPage: number;
   formatCodeVersion: (raw: string) => string;
   formatTimestamp: (raw: string) => string;
-  onOpenRun: (sessionId: string) => void;
-  onRowKeyDown: (event: React.KeyboardEvent<HTMLTableRowElement>, sessionId: string) => void;
+  onOpenRun: (runId: string) => void;
+  onRowKeyDown: (event: React.KeyboardEvent<HTMLTableRowElement>, runId: string) => void;
   onSort: (key: string) => void;
   rows: ProjectRun[];
   rowsPerPage: number;
@@ -74,8 +74,8 @@ export function RunningRunsSection({
               <tr
                 key={run.id}
                 className="clickable-row"
-                onClick={() => onOpenRun(run.sessionId)}
-                onKeyDown={(event) => onRowKeyDown(event, run.sessionId)}
+                onClick={() => onOpenRun(run.runId)}
+                onKeyDown={(event) => onRowKeyDown(event, run.runId)}
                 tabIndex={0}
                 role="link"
                 aria-label={`Open run ${run.name}`}
@@ -85,7 +85,7 @@ export function RunningRunsSection({
                 <td><span className="cell-id-link">{formatCodeVersion(run.codeVersion)}</span></td>
                 <td className="cell-metric">
                   <LiveTimer
-                    key={`${run.sessionId}:${run.activeRuntimeSeconds ?? "null"}`}
+                    key={`${run.runId}:${run.activeRuntimeSeconds ?? "null"}`}
                     anchorSeconds={run.activeRuntimeSeconds}
                   />
                 </td>

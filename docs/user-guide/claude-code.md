@@ -39,30 +39,30 @@ so-tool record -m module_name              # Run as Python module
 so-tool record --run-name "my run" agent.py  # With custom name
 ```
 
-### Query Session State
+### Query Run State
 
 ```bash
-# List recent experiments
-so-tool experiments --range :10
+# List recent runs
+so-tool runs --range :10
 
-# Get session overview (graph topology with nodes and edges)
-so-tool probe <session_id>
+# Get run overview (graph topology with nodes and edges)
+so-tool probe <run_id>
 
 # Get full node details
-so-tool probe <session_id> --node <node_id>
+so-tool probe <run_id> --node <node_id>
 
 # Get multiple nodes
-so-tool probe <session_id> --nodes <id1,id2,id3>
+so-tool probe <run_id> --nodes <id1,id2,id3>
 
 # Get truncated preview (20 char strings)
-so-tool probe <session_id> --node <node_id> --preview
+so-tool probe <run_id> --node <node_id> --preview
 
 # Filter keys with regex
-so-tool probe <session_id> --node <node_id> --key-regex "messages.*content"
+so-tool probe <run_id> --node <node_id> --key-regex "messages.*content"
 
 # Only show input or output
-so-tool probe <session_id> --node <node_id> --input
-so-tool probe <session_id> --node <node_id> --output
+so-tool probe <run_id> --node <node_id> --input
+so-tool probe <run_id> --node <node_id> --output
 ```
 
 ### Edit and Rerun
@@ -71,16 +71,16 @@ Edit commands use flattened key notation (e.g., `messages.0.content`) and always
 
 ```bash
 # Edit an output key and rerun
-so-tool edit-and-rerun <session_id> <node_id> --output <key> <value>
+so-tool edit-and-rerun <run_id> <node_id> --output <key> <value>
 
 # Edit an input key and rerun
-so-tool edit-and-rerun <session_id> <node_id> --input <key> <value>
+so-tool edit-and-rerun <run_id> <node_id> --input <key> <value>
 
 # With custom run name
-so-tool edit-and-rerun <session_id> <node_id> --output <key> <value> --run-name "variant A"
+so-tool edit-and-rerun <run_id> <node_id> --output <key> <value> --run-name "variant A"
 
 # With timeout
-so-tool edit-and-rerun <session_id> <node_id> --output <key> <value> --timeout 60
+so-tool edit-and-rerun <run_id> <node_id> --output <key> <value> --timeout 60
 ```
 
 **Examples:**
@@ -101,21 +101,21 @@ so-tool edit-and-rerun abc-123 node-1 --output "choices.0.message.content" ./new
 ### Debug a Failing Agent
 
 1. Claude records the agent: `so-tool record agent.py`
-2. Inspects the graph: `so-tool probe <session_id>`
-3. Examines the failing node: `so-tool probe <session_id> --node <failing_node>`
-4. Fixes and reruns: `so-tool edit-and-rerun <session_id> <node_id> --output <key> <new_value>`
+2. Inspects the graph: `so-tool probe <run_id>`
+3. Examines the failing node: `so-tool probe <run_id> --node <failing_node>`
+4. Fixes and reruns: `so-tool edit-and-rerun <run_id> <node_id> --output <key> <new_value>`
 
 ### A/B Test a Prompt Change
 
 1. Run original: `so-tool record agent.py`
-2. Inspect the node to edit: `so-tool probe <session_id> --node <node_id>`
-3. Create variant: `so-tool edit-and-rerun <session_id> <node_id> --input <key> <value> --run-name "variant"`
-4. Compare the two sessions
+2. Inspect the node to edit: `so-tool probe <run_id> --node <node_id>`
+3. Create variant: `so-tool edit-and-rerun <run_id> <node_id> --input <key> <value> --run-name "variant"`
+4. Compare the two runs
 
 ### Iterate on LLM Output
 
 1. Run agent and find a suboptimal response
-2. Edit the output to what you want: `so-tool edit-and-rerun <session_id> <node_id> --output <key> <value>`
+2. Edit the output to what you want: `so-tool edit-and-rerun <run_id> <node_id> --output <key> <value>`
 3. See how downstream nodes react to the improved output
 4. Use insights to improve your prompts
 
@@ -127,16 +127,16 @@ All `so-tool` commands output JSON for easy parsing. Examples:
 ```json
 {
   "status": "completed",
-  "session_id": "abc-123",
+  "run_id": "abc-123",
   "exit_code": 0,
   "duration_seconds": 12.5
 }
 ```
 
-**Probe session:**
+**Probe run:**
 ```json
 {
-  "session_id": "abc-123",
+  "run_id": "abc-123",
   "name": "Run 42",
   "status": "finished",
   "node_count": 5,
@@ -153,6 +153,6 @@ All `so-tool` commands output JSON for easy parsing. Examples:
 ```json
 {
   "status": "error",
-  "error": "Session not found: xyz"
+  "error": "Run not found: xyz"
 }
 ```

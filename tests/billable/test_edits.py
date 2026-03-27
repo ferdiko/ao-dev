@@ -25,7 +25,7 @@ class NodeTimingListener:
         self.node_count = 0
         self.last_node_uuid = None  # Track last node for editing
         self.last_node_input = None  # Track last node's input dict for editing
-        self.session_id = None  # Track session for editing
+        self.run_id = None  # Track the run for editing
         self._lock = threading.Lock()
         self._stop = False
         self._ws = None
@@ -73,9 +73,9 @@ class NodeTimingListener:
                 input_str = last_node.get("input")
                 if input_str:
                     self.last_node_input = json.loads(input_str)
-            # Track session_id
-            if msg.get("session_id"):
-                self.session_id = msg.get("session_id")
+            # Track run_id
+            if msg.get("run_id"):
+                self.run_id = msg.get("run_id")
 
     def get_elapsed(self) -> float:
         """Return elapsed time (last - first node) without stopping."""
@@ -91,7 +91,7 @@ class NodeTimingListener:
         with "EDITED PROMPT" to trigger a cache miss.
         """
         with self._lock:
-            if not self.last_node_uuid or not self.session_id or not self.last_node_input:
+            if not self.last_node_uuid or not self.run_id or not self.last_node_input:
                 raise ValueError("No node to edit - run a script first")
 
             # Deep copy to avoid modifying the original
@@ -122,7 +122,7 @@ class NodeTimingListener:
             httpx.post(
                 f"http://{HOST}:{PORT}/ui/edit-input",
                 json={
-                    "session_id": self.session_id,
+                    "run_id": self.run_id,
                     "node_uuid": self.last_node_uuid,
                     "value": json.dumps(input_dict),
                 },
@@ -146,18 +146,18 @@ class NodeTimingListener:
 
 
 def run_and_measure_node_timing(
-    script_path: str, listener: NodeTimingListener, session_id: str = None
+    script_path: str, listener: NodeTimingListener, run_id: str = None
 ) -> tuple:
     """
     Run script via so-record while measuring node arrival timing.
-    Returns (session_id, elapsed_seconds_between_first_and_last_node).
+    Returns (run_id, elapsed_seconds_between_first_and_last_node).
     """
     listener.reset()
 
     env = os.environ.copy()
     env["SOVARA_NO_DEBUG_MODE"] = "True"
-    if session_id:
-        env["SOVARA_SESSION_ID"] = session_id
+    if run_id:
+        env["SOVARA_RUN_ID"] = run_id
 
     script_dir = os.path.dirname(os.path.abspath(script_path))
     script_name = os.path.basename(script_path)
@@ -179,8 +179,8 @@ def run_and_measure_node_timing(
     time.sleep(0.5)
 
     elapsed = listener.get_elapsed()
-    # session_id is tracked by listener from graph_update messages
-    return listener.session_id, elapsed
+    # run_id is tracked by listener from graph_update messages
+    return listener.run_id, elapsed
 
 
 def test_cache_edit_timing():
@@ -201,11 +201,11 @@ def test_cache_edit_timing():
 
     try:
         # Run 1: No cache (real API calls)
-        session_id, time_no_cache = run_and_measure_node_timing(script_path, listener)
+        run_id, time_no_cache = run_and_measure_node_timing(script_path, listener)
         print("0/3 cache:", time_no_cache)
 
         # Run 2: All cached
-        _, time_all_cached = run_and_measure_node_timing(script_path, listener, session_id)
+        _, time_all_cached = run_and_measure_node_timing(script_path, listener, run_id)
         print("3/3 cache hits:", time_all_cached)
 
         assert time_all_cached <= time_no_cache * 0.1, (
@@ -217,7 +217,7 @@ def test_cache_edit_timing():
         listener.send_edit()
 
         # Run 3: One node needs real API call
-        _, time_one_uncached = run_and_measure_node_timing(script_path, listener, session_id)
+        _, time_one_uncached = run_and_measure_node_timing(script_path, listener, run_id)
         print("2/3 cache hits", time_one_uncached)
 
         # The edited run should still be materially slower than the fully cached run,

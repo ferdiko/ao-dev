@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   fetchGraph,
-  fetchExperimentDetail,
+  fetchRunDetail,
   editInput,
   editOutput,
   restartRun,
@@ -72,7 +72,7 @@ function parseGraphPayload(payload: GraphPayload): { nodes: GraphNode[]; edges: 
   return { nodes, edges };
 }
 
-export function useRunSessionState(sessionId: string) {
+export function useRunState(runId: string) {
   const [thumbLabel, setThumbLabel] = useState<boolean | null>(null);
   const [selectedTags, setSelectedTags] = useState<Tag[]>([]);
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
@@ -83,22 +83,22 @@ export function useRunSessionState(sessionId: string) {
   const [editedFields, setEditedFields] = useState<Set<EditKey>>(new Set());
   const rerunning = rerunState !== "idle";
 
-  const refreshSessionDetail = useCallback(async () => {
-    const detail = await fetchExperimentDetail(sessionId);
+  const refreshRunDetail = useCallback(async () => {
+    const detail = await fetchRunDetail(runId);
     setThumbLabel(detail.thumb_label);
     setSelectedTags(detail.tags);
     return detail;
-  }, [sessionId]);
+  }, [runId]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!runId) return;
     let cancelled = false;
 
     async function load() {
       try {
         const [, graphResp] = await Promise.all([
-          refreshSessionDetail(),
-          fetchGraph(sessionId),
+          refreshRunDetail(),
+          fetchGraph(runId),
         ]);
         if (cancelled) return;
         const parsed = parseGraphPayload(graphResp.payload);
@@ -115,17 +115,17 @@ export function useRunSessionState(sessionId: string) {
     return () => {
       cancelled = true;
     };
-  }, [refreshSessionDetail, sessionId]);
+  }, [refreshRunDetail, runId]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!runId) return;
     return subscribe("graph_update", (msg) => {
-      if (msg.session_id !== sessionId) return;
+      if (msg.run_id !== runId) return;
       const parsed = parseGraphPayload(msg.payload as GraphPayload);
       setGraphNodes(parsed.nodes);
       setGraphEdges(parsed.edges);
     });
-  }, [sessionId]);
+  }, [runId]);
 
   const handleStartEdit = useCallback((nodeId: string, label: "Input" | "Output") => {
     setEditLock(`${nodeId}:${label}`);
@@ -134,10 +134,10 @@ export function useRunSessionState(sessionId: string) {
   const handleSaveEdit = useCallback((nodeId: string, label: "Input" | "Output", newData: string) => {
     const key: EditKey = `${nodeId}:${label}`;
     const updateField = label === "Input" ? editInput : editOutput;
-    updateField(sessionId, nodeId, newData).catch(console.error);
+    updateField(runId, nodeId, newData).catch(console.error);
     setEditedFields((prev) => new Set(prev).add(key));
     setEditLock(null);
-  }, [sessionId]);
+  }, [runId]);
 
   const handleCancelEdit = useCallback(() => {
     setEditLock(null);
@@ -156,34 +156,34 @@ export function useRunSessionState(sessionId: string) {
   const handleSaveAndRerun = useCallback((nodeId: string, label: "Input" | "Output", newData: string) => {
     const key: EditKey = `${nodeId}:${label}`;
     const updateField = label === "Input" ? editInput : editOutput;
-    trackRerun(updateField(sessionId, nodeId, newData).then(() => restartRun(sessionId)));
+    trackRerun(updateField(runId, nodeId, newData).then(() => restartRun(runId)));
     setEditedFields((prev) => new Set(prev).add(key));
     setEditLock(null);
-  }, [sessionId, trackRerun]);
+  }, [runId, trackRerun]);
 
   const handleRerun = useCallback(() => {
-    trackRerun(restartRun(sessionId));
-  }, [sessionId, trackRerun]);
+    trackRerun(restartRun(runId));
+  }, [runId, trackRerun]);
 
   const handleThumbLabelToggle = useCallback((nextValue: boolean) => {
     const resolvedValue = thumbLabel === nextValue ? null : nextValue;
     setThumbLabel(resolvedValue);
-    updateThumbLabel(sessionId, resolvedValue).catch(console.error);
-  }, [sessionId, thumbLabel]);
+    updateThumbLabel(runId, resolvedValue).catch(console.error);
+  }, [runId, thumbLabel]);
 
   const handleErase = useCallback(() => {
     setEditedFields(new Set());
     setEditLock(null);
-    trackRerun(eraseRun(sessionId));
-  }, [sessionId, trackRerun]);
+    trackRerun(eraseRun(runId));
+  }, [runId, trackRerun]);
 
   useEffect(() => {
-    if (!sessionId || rerunState === "idle") return;
+    if (!runId || rerunState === "idle") return;
     let cancelled = false;
 
     async function pollRunStatus() {
       try {
-        const detail = await refreshSessionDetail();
+        const detail = await refreshRunDetail();
         if (cancelled) return;
         if (rerunState === "running" && detail.status === "finished") {
           setRerunState("idle");
@@ -202,7 +202,7 @@ export function useRunSessionState(sessionId: string) {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [refreshSessionDetail, rerunState, sessionId]);
+  }, [refreshRunDetail, rerunState, runId]);
 
     return {
       editedFields,
@@ -217,7 +217,7 @@ export function useRunSessionState(sessionId: string) {
       handleSaveEdit,
       handleStartEdit,
       loading,
-      refreshSessionDetail,
+      refreshRunDetail,
       rerunning,
       selectedTags,
       setSelectedTags,

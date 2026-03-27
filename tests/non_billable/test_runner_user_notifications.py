@@ -10,7 +10,7 @@ def test_register_notifies_user_change_when_runner_supplies_user(monkeypatch):
 
     monkeypatch.setattr(state, "notify_user_changed", lambda: notifications.append("user"))
     monkeypatch.setattr(state, "notify_project_list_changed", lambda: notifications.append("project"))
-    monkeypatch.setattr(state, "notify_experiment_list_changed", lambda: notifications.append("experiments"))
+    monkeypatch.setattr(state, "notify_run_list_changed", lambda: notifications.append("runs"))
 
     project_id = str(uuid.uuid4())
     response = register(
@@ -30,8 +30,8 @@ def test_register_notifies_user_change_when_runner_supplies_user(monkeypatch):
         state,
     )
 
-    session_id = response.get("session_id")
-    assert isinstance(session_id, str) and session_id
+    run_id = response.get("run_id")
+    assert isinstance(run_id, str) and run_id
     assert notifications.count("user") == 1
     assert notifications.count("project") == 1
-    assert notifications.count("experiments") == 1
+    assert notifications.count("runs") == 1

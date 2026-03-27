@@ -64,25 +64,25 @@ class SlowDict(dict):
 
 
 class TestSessionDataThreadSafety:
-    """_session_outputs must be safe under concurrent read+write."""
+    """_run_outputs must be safe under concurrent read+write."""
 
     def test_concurrent_iterate_and_write(self):
-        """One thread iterates _session_outputs (as find_source_nodes does)
+        """One thread iterates _run_outputs (as find_source_nodes does)
         while another writes to it (as store_output_strings does).
 
         With a plain dict and a SlowDict wrapper, the writer inserts keys
         during iteration, triggering RuntimeError.
 
-        The fix: find_source_nodes snapshots under _session_lock, store_output_strings
-        writes under _session_lock. Verify this lock-protected pattern works.
+        The fix: find_source_nodes snapshots under _run_lock, store_output_strings
+        writes under _run_lock. Verify this lock-protected pattern works.
         """
-        session_id = "test-race"
+        run_id = "test-race"
 
         # Pre-populate with some data so iteration has something to walk over
         slow = SlowDict()
         for i in range(10):
             slow[f"existing-{i}"] = [["word1", "word2", "word3"]]
-        string_matching._session_outputs[session_id] = slow
+        string_matching._run_outputs[run_id] = slow
 
         errors = []
         barrier = threading.Barrier(2)
@@ -91,8 +91,8 @@ class TestSessionDataThreadSafety:
             """Snapshot under lock then iterate (like find_source_nodes does)."""
             barrier.wait()
             try:
-                with string_matching._session_lock:
-                    outputs = dict(string_matching._get_session_outputs(session_id))
+                with string_matching._run_lock:
+                    outputs = dict(string_matching._get_run_outputs(run_id))
                 for node_id, word_lists in outputs.items():
                     for wl in word_lists:
                         _ = len(wl)
@@ -103,8 +103,8 @@ class TestSessionDataThreadSafety:
             """Write under lock (like store_output_strings does)."""
             barrier.wait()
             for i in range(10):
-                with string_matching._session_lock:
-                    outputs = string_matching._get_session_outputs(session_id)
+                with string_matching._run_lock:
+                    outputs = string_matching._get_run_outputs(run_id)
                     outputs[f"new-{i}"] = [["hello", "world"]]
                 time.sleep(0.0005)
 
@@ -116,7 +116,7 @@ class TestSessionDataThreadSafety:
             t1.join()
             t2.join()
         finally:
-            string_matching._session_outputs.pop(session_id, None)
+            string_matching._run_outputs.pop(run_id, None)
 
         assert len(errors) == 0, (
             f"RuntimeError during concurrent dict access: {errors[0]}"
@@ -127,7 +127,7 @@ class TestOccurrenceCounter:
     """Concurrent identical cache lookups must each get a distinct row."""
 
     def test_concurrent_identical_lookups_get_distinct_rows(self):
-        """5 threads calling get_in_out with the same (session_id, input_hash)
+        """5 threads calling get_in_out with the same (run_id, input_hash)
         must each get a different cached row, not all the same first row.
 
         Without the occurrence counter, all threads hit offset 0 and get
@@ -135,15 +135,15 @@ class TestOccurrenceCounter:
         """
         from sovara.server.database_manager import DB
 
-        session_id = "test-occurrence"
+        run_id = "test-occurrence"
         input_hash = "deadbeef"
 
-        # Insert 5 rows with the same (session_id, input_hash) but different node UUIDs
+        # Insert 5 rows with the same (run_id, input_hash) but different node UUIDs
         for i in range(5):
             sqlite.execute(
-                "INSERT OR IGNORE INTO llm_calls (session_id, input_hash, node_uuid, api_type) "
+                "INSERT OR IGNORE INTO llm_calls (run_id, input_hash, node_uuid, api_type) "
                 "VALUES (?, ?, ?, ?)",
-                (session_id, input_hash, f"node-{i}", "test"),
+                (run_id, input_hash, f"node-{i}", "test"),
             )
 
         DB._occurrence_counters.clear()
@@ -154,9 +154,9 @@ class TestOccurrenceCounter:
 
         def lookup():
             barrier.wait()
-            occurrence = DB._next_occurrence(session_id, input_hash)
-            row = sqlite.get_llm_call_by_session_and_hash_query(
-                session_id, input_hash, offset=occurrence,
+            occurrence = DB._next_occurrence(run_id, input_hash)
+            row = sqlite.get_llm_call_by_run_and_hash_query(
+                run_id, input_hash, offset=occurrence,
             )
             with lock:
                 node_uuids.append(row["node_uuid"] if row else None)
@@ -168,7 +168,7 @@ class TestOccurrenceCounter:
             t.join()
 
         # Clean up
-        sqlite.execute("DELETE FROM llm_calls WHERE session_id=?", (session_id,))
+        sqlite.execute("DELETE FROM llm_calls WHERE run_id=?", (run_id,))
         DB._occurrence_counters.clear()
 
         assert len(node_uuids) == 5

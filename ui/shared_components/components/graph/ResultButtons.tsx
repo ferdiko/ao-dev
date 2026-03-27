@@ -2,14 +2,14 @@ import React from 'react';
 
 interface ResultButtonsProps {
   currentResult: string;
-  sessionId: string;
+  runId: string;
   isDarkTheme: boolean;
   onResultChange: (result: string) => void;
 }
 
 export const ResultButtons: React.FC<ResultButtonsProps> = ({
   currentResult,
-  sessionId,
+  runId,
   isDarkTheme,
   onResultChange,
 }) => {

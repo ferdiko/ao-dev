@@ -32,7 +32,7 @@ so-tool record -m <module_name> [module_args...]
 ```json
 {
   "status": "completed",
-  "session_id": "uuid-here",
+  "run_id": "uuid-here",
   "exit_code": 0,
   "duration_seconds": 45.2
 }
@@ -43,7 +43,7 @@ On timeout:
 ```json
 {
   "status": "timeout",
-  "session_id": "uuid-here",
+  "run_id": "uuid-here",
   "pid": 12345
 }
 ```
@@ -52,12 +52,12 @@ On timeout:
 
 ### `so-tool probe`
 
-Queries session state, graph topology, or specific nodes.
+Queries run state, graph topology, or specific nodes.
 
 ```bash
-so-tool probe <session_id>
-so-tool probe <session_id> --node <node_id>
-so-tool probe <session_id> --nodes <id1,id2,...>
+so-tool probe <run_id>
+so-tool probe <run_id> --node <node_id>
+so-tool probe <run_id> --nodes <id1,id2,...>
 ```
 
 **Options:**
@@ -79,11 +79,11 @@ The `--key-regex` option filters the input/output dictionaries by matching again
 - `messages.*content` matches content in any message
 - `choices.0.message` matches the first choice's message
 
-**Output (default - session overview):**
+**Output (default - run overview):**
 
 ```json
 {
-  "session_id": "uuid",
+  "run_id": "uuid",
   "name": "Run 42",
   "status": "finished",
   "timestamp": "2024-01-15T10:30:00",
@@ -107,7 +107,7 @@ The `--key-regex` option filters the input/output dictionaries by matching again
 ```json
 {
   "node_id": "node-1",
-  "session_id": "uuid",
+  "run_id": "uuid",
   "api_type": "httpx.Client.send",
   "label": "GPT-4",
   "timestamp": "2024-01-15T10:30:05",
@@ -122,39 +122,39 @@ The `--key-regex` option filters the input/output dictionaries by matching again
 
 ---
 
-### `so-tool experiments`
+### `so-tool runs`
 
-Lists experiments from the database.
+Lists runs from the database.
 
 ```bash
-so-tool experiments
-so-tool experiments --range :50
-so-tool experiments --range 50:100
-so-tool experiments --regex "eval.*"
+so-tool runs
+so-tool runs --range :50
+so-tool runs --range 50:100
+so-tool runs --regex "eval.*"
 ```
 
 **Options:**
 
 | Option | Description |
 |--------|-------------|
-| `--range <start:end>` | Range of experiments (default: `:50`) |
+| `--range <start:end>` | Range of runs (default: `:50`) |
 | `--regex <pattern>` | Filter by name using regex |
 
 **Range format:**
 
-- `:50` - First 50 experiments
-- `50:100` - Experiments 50-99
+- `:50` - First 50 runs
+- `50:100` - Runs 50-99
 - `10:` - All from index 10 onwards
 
 ---
 
 ### `so-tool edit-and-rerun`
 
-Edits a single key in a node and immediately reruns the session. Always creates a new run.
+Edits a single key in a node and immediately reruns the run. Always creates a new run.
 
 ```bash
-so-tool edit-and-rerun <session_id> <node_id> --input <key> <value>
-so-tool edit-and-rerun <session_id> <node_id> --output <key> <value>
+so-tool edit-and-rerun <run_id> <node_id> --input <key> <value>
+so-tool edit-and-rerun <run_id> <node_id> --output <key> <value>
 ```
 
 **Options:**
@@ -181,7 +181,7 @@ The value can be a literal string or a path to a file. If the path exists, the f
 ```json
 {
   "status": "completed",
-  "session_id": "new-uuid",
+  "run_id": "new-uuid",
   "node_id": "node-1",
   "edited_field": "output",
   "edited_key": "choices.0.message.content",
@@ -215,7 +215,7 @@ Every node (API call) contains the following metadata:
 | Field | Type | Description |
 |-------|------|-------------|
 | `node_id` | string | Unique identifier (UUID) |
-| `session_id` | string | Parent session identifier |
+| `run_id` | string | Parent run identifier |
 | `label` | string | Model name or tool name |
 | `api_type` | string | API type (e.g., "httpx.Client.send") |
 | `timestamp` | string | When the call was made |
@@ -232,14 +232,14 @@ Every node (API call) contains the following metadata:
 
 `so-tool record` uses `subprocess.Popen` with:
 
-- Session file for IPC (agent_runner writes session_id after handshake)
+- Run file for IPC (agent_runner writes run_id after handshake)
 - Blocking wait for completion
 
 ### Database Access
 
 Most commands query the SQLite database directly via `DatabaseManager`. The database stores:
 
-- Experiments (session metadata, graph topology)
+- Runs (run metadata, graph topology)
 - LLM calls (inputs, outputs, overwrites)
 - Attachments (cached file references)
 

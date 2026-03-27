@@ -1,5 +1,5 @@
 """
-SQLite database backend for workflow experiments.
+SQLite database backend for workflow runs.
 
 Uses per-thread connections via threading.local() so readers can run concurrently
 under WAL mode. Writers still serialize at the SQLite level (WAL allows only one
@@ -31,7 +31,7 @@ def get_conn():
     if conn is not None:
         return conn
 
-    db_path = os.path.join(SOVARA_DB_PATH, "experiments.sqlite")
+    db_path = os.path.join(SOVARA_DB_PATH, "runs.sqlite")
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
     conn = sqlite3.connect(
@@ -83,12 +83,12 @@ def _init_db(conn):
     """
     )
 
-    # Create experiments table
+    # Create runs table
     c.execute(
         """
-        CREATE TABLE IF NOT EXISTS experiments (
-            session_id TEXT PRIMARY KEY,
-            parent_session_id TEXT,
+        CREATE TABLE IF NOT EXISTS runs (
+            run_id TEXT PRIMARY KEY,
+            parent_run_id TEXT,
             project_id TEXT,
             user_id TEXT,
             graph_topology TEXT,
@@ -106,10 +106,10 @@ def _init_db(conn):
             thumb_label INTEGER CHECK (thumb_label IN (0, 1)),
             notes TEXT,
             log TEXT,
-            FOREIGN KEY (parent_session_id) REFERENCES experiments (session_id),
+            FOREIGN KEY (parent_run_id) REFERENCES runs (run_id),
             FOREIGN KEY (project_id) REFERENCES projects (project_id),
             FOREIGN KEY (user_id) REFERENCES users (user_id),
-            UNIQUE (parent_session_id, name)
+            UNIQUE (parent_run_id, name)
         )
     """
     )
@@ -141,11 +141,11 @@ def _init_db(conn):
     )
     c.execute(
         """
-        CREATE TABLE IF NOT EXISTS experiment_tags (
-            session_id TEXT NOT NULL,
+        CREATE TABLE IF NOT EXISTS run_tags (
+            run_id TEXT NOT NULL,
             tag_id TEXT NOT NULL,
-            PRIMARY KEY (session_id, tag_id),
-            FOREIGN KEY (session_id) REFERENCES experiments (session_id),
+            PRIMARY KEY (run_id, tag_id),
+            FOREIGN KEY (run_id) REFERENCES runs (run_id),
             FOREIGN KEY (tag_id) REFERENCES project_tags (tag_id)
         )
     """
@@ -154,7 +154,7 @@ def _init_db(conn):
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS llm_calls (
-            session_id TEXT,
+            run_id TEXT,
             node_uuid TEXT,
             input TEXT,
             input_hash TEXT,
@@ -165,8 +165,8 @@ def _init_db(conn):
             api_type TEXT,
             stack_trace TEXT,
             timestamp TIMESTAMP DEFAULT (datetime('now')),
-            PRIMARY KEY (session_id, node_uuid),
-            FOREIGN KEY (session_id) REFERENCES experiments (session_id)
+            PRIMARY KEY (run_id, node_uuid),
+            FOREIGN KEY (run_id) REFERENCES runs (run_id)
         )
     """
     )
@@ -187,17 +187,17 @@ def _init_db(conn):
     )
     c.execute(
         """
-        CREATE INDEX IF NOT EXISTS original_input_lookup ON llm_calls(session_id, input_hash)
+        CREATE INDEX IF NOT EXISTS original_input_lookup ON llm_calls(run_id, input_hash)
     """
     )
     c.execute(
         """
-        CREATE INDEX IF NOT EXISTS experiments_timestamp_idx ON experiments(timestamp DESC)
+        CREATE INDEX IF NOT EXISTS runs_timestamp_idx ON runs(timestamp DESC)
     """
     )
     c.execute(
         """
-        CREATE INDEX IF NOT EXISTS experiments_project_idx ON experiments(project_id, timestamp DESC)
+        CREATE INDEX IF NOT EXISTS runs_project_idx ON runs(project_id, timestamp DESC)
     """
     )
     c.execute(
@@ -207,12 +207,12 @@ def _init_db(conn):
     )
     c.execute(
         """
-        CREATE INDEX IF NOT EXISTS experiment_tags_session_idx ON experiment_tags(session_id)
+        CREATE INDEX IF NOT EXISTS run_tags_run_idx ON run_tags(run_id)
     """
     )
     c.execute(
         """
-        CREATE INDEX IF NOT EXISTS experiment_tags_tag_idx ON experiment_tags(tag_id)
+        CREATE INDEX IF NOT EXISTS run_tags_tag_idx ON run_tags(tag_id)
     """
     )
 
@@ -236,11 +236,11 @@ def _init_db(conn):
         CREATE TABLE IF NOT EXISTS lessons_applied (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             lesson_id TEXT NOT NULL,
-            session_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
             node_uuid TEXT,
             applied_at TIMESTAMP DEFAULT (datetime('now')),
-            FOREIGN KEY (session_id) REFERENCES experiments (session_id),
-            UNIQUE (lesson_id, session_id, node_uuid)
+            FOREIGN KEY (run_id) REFERENCES runs (run_id),
+            UNIQUE (lesson_id, run_id, node_uuid)
         )
     """
     )
@@ -251,22 +251,22 @@ def _init_db(conn):
     )
 
     conn.commit()
-    _ensure_experiment_schema(conn)
+    _ensure_run_schema(conn)
 
 
-def _ensure_experiment_schema(conn):
+def _ensure_run_schema(conn):
     columns = {
         row["name"]
-        for row in conn.execute("PRAGMA table_info(experiments)").fetchall()
+        for row in conn.execute("PRAGMA table_info(runs)").fetchall()
     }
     if "custom_metrics" not in columns:
-        conn.execute("ALTER TABLE experiments ADD COLUMN custom_metrics TEXT NOT NULL DEFAULT '{}'")
+        conn.execute("ALTER TABLE runs ADD COLUMN custom_metrics TEXT NOT NULL DEFAULT '{}'")
     if "thumb_label" not in columns:
-        conn.execute("ALTER TABLE experiments ADD COLUMN thumb_label INTEGER CHECK (thumb_label IN (0, 1))")
+        conn.execute("ALTER TABLE runs ADD COLUMN thumb_label INTEGER CHECK (thumb_label IN (0, 1))")
     if "runtime_seconds" not in columns:
-        conn.execute("ALTER TABLE experiments ADD COLUMN runtime_seconds REAL")
+        conn.execute("ALTER TABLE runs ADD COLUMN runtime_seconds REAL")
     if "active_runtime_seconds" not in columns:
-        conn.execute("ALTER TABLE experiments ADD COLUMN active_runtime_seconds REAL")
+        conn.execute("ALTER TABLE runs ADD COLUMN active_runtime_seconds REAL")
 
     conn.execute(
         """
@@ -294,11 +294,11 @@ def _ensure_experiment_schema(conn):
     )
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS experiment_tags (
-            session_id TEXT NOT NULL,
+        CREATE TABLE IF NOT EXISTS run_tags (
+            run_id TEXT NOT NULL,
             tag_id TEXT NOT NULL,
-            PRIMARY KEY (session_id, tag_id),
-            FOREIGN KEY (session_id) REFERENCES experiments (session_id),
+            PRIMARY KEY (run_id, tag_id),
+            FOREIGN KEY (run_id) REFERENCES runs (run_id),
             FOREIGN KEY (tag_id) REFERENCES project_tags (tag_id)
         )
     """
@@ -310,12 +310,12 @@ def _ensure_experiment_schema(conn):
     )
     conn.execute(
         """
-        CREATE INDEX IF NOT EXISTS experiment_tags_session_idx ON experiment_tags(session_id)
+        CREATE INDEX IF NOT EXISTS run_tags_run_idx ON run_tags(run_id)
     """
     )
     conn.execute(
         """
-        CREATE INDEX IF NOT EXISTS experiment_tags_tag_idx ON experiment_tags(tag_id)
+        CREATE INDEX IF NOT EXISTS run_tags_tag_idx ON run_tags(tag_id)
     """
     )
     conn.commit()
@@ -374,9 +374,9 @@ def get_user_query(user_id):
     return query_one("SELECT user_id, full_name, email FROM users WHERE user_id=?", (user_id,))
 
 
-def add_experiment_query(
-    session_id,
-    parent_session_id,
+def add_run_query(
+    run_id,
+    parent_run_id,
     name,
     default_graph,
     timestamp,
@@ -389,12 +389,12 @@ def add_experiment_query(
     project_id=None,
     user_id=None,
 ):
-    """Execute SQLite-specific INSERT for experiments table"""
+    """Execute SQLite-specific INSERT for runs table"""
     execute(
-        "INSERT OR REPLACE INTO experiments (session_id, parent_session_id, project_id, user_id, name, graph_topology, timestamp, runtime_seconds, active_runtime_seconds, cwd, command, environment, version_date, custom_metrics, thumb_label, notes, log) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO runs (run_id, parent_run_id, project_id, user_id, name, graph_topology, timestamp, runtime_seconds, active_runtime_seconds, cwd, command, environment, version_date, custom_metrics, thumb_label, notes, log) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            session_id,
-            parent_session_id,
+            run_id,
+            parent_run_id,
             project_id,
             user_id,
             name,
@@ -414,144 +414,144 @@ def add_experiment_query(
     )
 
 
-def set_input_overwrite_query(input_overwrite, session_id, node_uuid):
+def set_input_overwrite_query(input_overwrite, run_id, node_uuid):
     """Execute SQLite-specific UPDATE for llm_calls input_overwrite"""
     execute(
-        "UPDATE llm_calls SET input_overwrite=?, output=NULL WHERE session_id=? AND node_uuid=?",
-        (input_overwrite, session_id, node_uuid),
+        "UPDATE llm_calls SET input_overwrite=?, output=NULL WHERE run_id=? AND node_uuid=?",
+        (input_overwrite, run_id, node_uuid),
     )
 
 
-def set_output_overwrite_query(output_overwrite, session_id, node_uuid):
+def set_output_overwrite_query(output_overwrite, run_id, node_uuid):
     """Execute SQLite-specific UPDATE for llm_calls output"""
     execute(
-        "UPDATE llm_calls SET output=? WHERE session_id=? AND node_uuid=?",
-        (output_overwrite, session_id, node_uuid),
+        "UPDATE llm_calls SET output=? WHERE run_id=? AND node_uuid=?",
+        (output_overwrite, run_id, node_uuid),
     )
 
 
-def delete_llm_calls_query(session_id):
+def delete_llm_calls_query(run_id):
     """Execute SQLite-specific DELETE for llm_calls"""
-    execute("DELETE FROM llm_calls WHERE session_id=?", (session_id,))
+    execute("DELETE FROM llm_calls WHERE run_id=?", (run_id,))
 
 
-def update_experiment_graph_topology_query(graph_json, session_id):
-    """Execute SQLite-specific UPDATE for experiments graph_topology"""
-    execute("UPDATE experiments SET graph_topology=? WHERE session_id=?", (graph_json, session_id))
+def update_run_graph_topology_query(graph_json, run_id):
+    """Execute SQLite-specific UPDATE for runs graph_topology"""
+    execute("UPDATE runs SET graph_topology=? WHERE run_id=?", (graph_json, run_id))
 
 
-def update_experiment_timestamp_query(timestamp, session_id):
-    """Execute SQLite-specific UPDATE for experiments timestamp"""
-    execute("UPDATE experiments SET timestamp=? WHERE session_id=?", (timestamp, session_id))
+def update_run_timestamp_query(timestamp, run_id):
+    """Execute SQLite-specific UPDATE for runs timestamp"""
+    execute("UPDATE runs SET timestamp=? WHERE run_id=?", (timestamp, run_id))
 
 
-def update_experiment_runtime_seconds_query(runtime_seconds, session_id):
-    """Persist the canonical completed runtime for an experiment."""
+def update_run_runtime_seconds_query(runtime_seconds, run_id):
+    """Persist the canonical completed runtime for an run."""
     execute(
-        "UPDATE experiments SET runtime_seconds=? WHERE session_id=?",
-        (runtime_seconds, session_id),
+        "UPDATE runs SET runtime_seconds=? WHERE run_id=?",
+        (runtime_seconds, run_id),
     )
 
 
-def update_experiment_active_runtime_seconds_query(active_runtime_seconds, session_id):
-    """Persist the latest runtime checkpoint for an experiment."""
+def update_run_active_runtime_seconds_query(active_runtime_seconds, run_id):
+    """Persist the latest runtime checkpoint for an run."""
     execute(
-        "UPDATE experiments SET active_runtime_seconds=? WHERE session_id=?",
-        (active_runtime_seconds, session_id),
+        "UPDATE runs SET active_runtime_seconds=? WHERE run_id=?",
+        (active_runtime_seconds, run_id),
     )
 
 
-def finalize_experiment_runtime_query(runtime_seconds, session_id):
+def finalize_run_runtime_query(runtime_seconds, run_id):
     """Finalize a run attempt without overwriting an existing canonical runtime."""
     execute(
         """
-        UPDATE experiments
+        UPDATE runs
         SET runtime_seconds=COALESCE(runtime_seconds, ?),
             active_runtime_seconds=NULL
-        WHERE session_id=?
+        WHERE run_id=?
         """,
-        (runtime_seconds, session_id),
+        (runtime_seconds, run_id),
     )
 
 
-def clear_experiment_active_runtime_seconds_query(session_id):
-    """Clear the active runtime checkpoint for an experiment."""
+def clear_run_active_runtime_seconds_query(run_id):
+    """Clear the active runtime checkpoint for an run."""
     execute(
-        "UPDATE experiments SET active_runtime_seconds=NULL WHERE session_id=?",
-        (session_id,),
+        "UPDATE runs SET active_runtime_seconds=NULL WHERE run_id=?",
+        (run_id,),
     )
 
 
-def update_experiment_name_query(run_name, session_id):
-    """Execute SQLite-specific UPDATE for experiments name"""
+def update_run_name_query(name, run_id):
+    """Execute SQLite-specific UPDATE for runs name"""
     execute(
-        "UPDATE experiments SET name=? WHERE session_id=?",
-        (run_name, session_id),
+        "UPDATE runs SET name=? WHERE run_id=?",
+        (name, run_id),
     )
 
 
-def update_experiment_notes_query(notes, session_id):
-    """Execute SQLite-specific UPDATE for experiments notes"""
+def update_run_notes_query(notes, run_id):
+    """Execute SQLite-specific UPDATE for runs notes"""
     execute(
-        "UPDATE experiments SET notes=? WHERE session_id=?",
-        (notes, session_id),
+        "UPDATE runs SET notes=? WHERE run_id=?",
+        (notes, run_id),
     )
 
 
-def update_experiment_command_query(command, session_id):
-    """Execute SQLite-specific UPDATE for experiments command"""
+def update_run_command_query(command, run_id):
+    """Execute SQLite-specific UPDATE for runs command"""
     execute(
-        "UPDATE experiments SET command=? WHERE session_id=?",
-        (command, session_id),
+        "UPDATE runs SET command=? WHERE run_id=?",
+        (command, run_id),
     )
 
 
-def update_experiment_version_date_query(version_date, session_id):
-    """Execute SQLite-specific UPDATE for experiments version_date"""
+def update_run_version_date_query(version_date, run_id):
+    """Execute SQLite-specific UPDATE for runs version_date"""
     execute(
-        "UPDATE experiments SET version_date=? WHERE session_id=?",
-        (version_date, session_id),
+        "UPDATE runs SET version_date=? WHERE run_id=?",
+        (version_date, run_id),
     )
 
 
-def update_experiment_log_query(updated_log, graph_json, session_id):
-    """Execute SQLite-specific UPDATE for experiments log and graph_topology"""
+def update_run_log_query(updated_log, graph_json, run_id):
+    """Execute SQLite-specific UPDATE for runs log and graph_topology"""
     execute(
-        "UPDATE experiments SET log=?, graph_topology=? WHERE session_id=?",
-        (updated_log, graph_json, session_id),
+        "UPDATE runs SET log=?, graph_topology=? WHERE run_id=?",
+        (updated_log, graph_json, run_id),
     )
 
 
-def update_experiment_custom_metrics_query(custom_metrics_json, session_id):
-    """Execute SQLite-specific UPDATE for experiments custom_metrics."""
+def update_run_custom_metrics_query(custom_metrics_json, run_id):
+    """Execute SQLite-specific UPDATE for runs custom_metrics."""
     execute(
-        "UPDATE experiments SET custom_metrics=? WHERE session_id=?",
-        (custom_metrics_json, session_id),
+        "UPDATE runs SET custom_metrics=? WHERE run_id=?",
+        (custom_metrics_json, run_id),
     )
 
 
-def update_experiment_thumb_label_query(thumb_label, session_id):
-    """Execute SQLite-specific UPDATE for experiments thumb_label."""
+def update_run_thumb_label_query(thumb_label, run_id):
+    """Execute SQLite-specific UPDATE for runs thumb_label."""
     db_value = None if thumb_label is None else int(thumb_label)
     execute(
-        "UPDATE experiments SET thumb_label=? WHERE session_id=?",
-        (db_value, session_id),
+        "UPDATE runs SET thumb_label=? WHERE run_id=?",
+        (db_value, run_id),
     )
 
 
-def get_experiment_metrics_context_query(session_id):
-    """Get project_id and custom_metrics for an experiment."""
+def get_run_metrics_context_query(run_id):
+    """Get project_id and custom_metrics for an run."""
     return query_one(
-        "SELECT project_id, custom_metrics FROM experiments WHERE session_id=?",
-        (session_id,),
+        "SELECT project_id, custom_metrics FROM runs WHERE run_id=?",
+        (run_id,),
     )
 
 
-def get_experiment_tag_context_query(session_id):
-    """Get project_id and user_id for an experiment."""
+def get_run_tag_context_query(run_id):
+    """Get project_id and user_id for an run."""
     return query_one(
-        "SELECT project_id, user_id FROM experiments WHERE session_id=?",
-        (session_id,),
+        "SELECT project_id, user_id FROM runs WHERE run_id=?",
+        (run_id,),
     )
 
 
@@ -621,36 +621,36 @@ def insert_project_tag_query(tag_id, project_id, name, color):
 
 def delete_project_tag_query(project_id, tag_id):
     """Delete a project tag and all run assignments for it."""
-    execute("DELETE FROM experiment_tags WHERE tag_id=?", (tag_id,))
+    execute("DELETE FROM run_tags WHERE tag_id=?", (tag_id,))
     execute("DELETE FROM project_tags WHERE project_id=? AND tag_id=?", (project_id, tag_id))
 
 
-def get_tags_for_sessions_query(session_ids):
-    """Get assigned tags for one or more sessions."""
-    if not session_ids:
+def get_tags_for_runs_query(run_ids):
+    """Get assigned tags for one or more runs."""
+    if not run_ids:
         return []
-    placeholders = ",".join("?" * len(session_ids))
+    placeholders = ",".join("?" * len(run_ids))
     return query_all(
         f"""
-        SELECT et.session_id, pt.tag_id, pt.project_id, pt.name, pt.color, pt.created_at
-        FROM experiment_tags et
+        SELECT et.run_id, pt.tag_id, pt.project_id, pt.name, pt.color, pt.created_at
+        FROM run_tags et
         JOIN project_tags pt ON pt.tag_id = et.tag_id
-        WHERE et.session_id IN ({placeholders})
+        WHERE et.run_id IN ({placeholders})
         ORDER BY LOWER(pt.name) ASC, pt.tag_id ASC
         """,
-        tuple(session_ids),
+        tuple(run_ids),
     )
 
 
-def replace_experiment_tags_query(session_id, tag_ids):
+def replace_run_tags_query(run_id, tag_ids):
     """Replace the complete tag assignment set for a run."""
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM experiment_tags WHERE session_id=?", (session_id,))
+    cursor.execute("DELETE FROM run_tags WHERE run_id=?", (run_id,))
     if tag_ids:
         cursor.executemany(
-            "INSERT INTO experiment_tags (session_id, tag_id) VALUES (?, ?)",
-            [(session_id, tag_id) for tag_id in tag_ids],
+            "INSERT INTO run_tags (run_id, tag_id) VALUES (?, ?)",
+            [(run_id, tag_id) for tag_id in tag_ids],
         )
     conn.commit()
 
@@ -700,44 +700,44 @@ def get_attachment_file_path_query(file_id):
 
 
 # Subrun queries
-def get_subrun_by_parent_and_name_query(parent_session_id, name):
-    """Get subrun session_id by parent session and name."""
+def get_subrun_by_parent_and_name_query(parent_run_id, name):
+    """Get subrun run_id by parent run and name."""
     return query_one(
-        "SELECT session_id FROM experiments WHERE parent_session_id = ? AND name = ?",
-        (parent_session_id, name),
+        "SELECT run_id FROM runs WHERE parent_run_id = ? AND name = ?",
+        (parent_run_id, name),
     )
 
 
-def get_parent_session_id_query(session_id):
-    """Get parent session ID for a given session."""
-    return query_one("SELECT parent_session_id FROM experiments WHERE session_id=?", (session_id,))
+def get_parent_run_id_query(run_id):
+    """Get parent run ID for a given run."""
+    return query_one("SELECT parent_run_id FROM runs WHERE run_id=?", (run_id,))
 
 
 # LLM calls queries
-def get_llm_call_by_session_and_hash_query(session_id, input_hash, offset=0):
-    """Get LLM call by session_id and input_hash. offset selects the Nth match."""
+def get_llm_call_by_run_and_hash_query(run_id, input_hash, offset=0):
+    """Get LLM call by run_id and input_hash. offset selects the Nth match."""
     return query_one(
-        "SELECT node_uuid, input_overwrite, output FROM llm_calls WHERE session_id=? AND input_hash=? ORDER BY rowid LIMIT 1 OFFSET ?",
-        (session_id, input_hash, offset),
+        "SELECT node_uuid, input_overwrite, output FROM llm_calls WHERE run_id=? AND input_hash=? ORDER BY rowid LIMIT 1 OFFSET ?",
+        (run_id, input_hash, offset),
     )
 
 
 def insert_llm_call_with_output_query(
-    session_id, input_pickle, input_hash, node_uuid, api_type, output_pickle, stack_trace=None
+    run_id, input_pickle, input_hash, node_uuid, api_type, output_pickle, stack_trace=None
 ):
     """Insert new LLM call record with output in a single operation (upsert)."""
     execute(
         """
-        INSERT INTO llm_calls (session_id, input, input_hash, node_uuid, api_type, output, stack_trace)
+        INSERT INTO llm_calls (run_id, input, input_hash, node_uuid, api_type, output, stack_trace)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (session_id, node_uuid)
+        ON CONFLICT (run_id, node_uuid)
         DO UPDATE SET output = excluded.output, stack_trace = excluded.stack_trace
         """,
-        (session_id, input_pickle, input_hash, node_uuid, api_type, output_pickle, stack_trace),
+        (run_id, input_pickle, input_hash, node_uuid, api_type, output_pickle, stack_trace),
     )
 
 
-# Experiment list and graph queries
+# Run list and graph queries
 def get_finished_runs_query(project_id=None, user_id=None):
     """Get all finished runs ordered by timestamp."""
     conditions, params = [], []
@@ -748,11 +748,11 @@ def get_finished_runs_query(project_id=None, user_id=None):
         conditions.append("user_id=?")
         params.append(user_id)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    return query_all(f"SELECT session_id, timestamp FROM experiments{where} ORDER BY timestamp DESC", tuple(params))
+    return query_all(f"SELECT run_id, timestamp FROM runs{where} ORDER BY timestamp DESC", tuple(params))
 
 
-def get_all_experiments_sorted_query(limit=None, offset=0, project_id=None, user_id=None):
-    """Get experiments sorted by timestamp desc, with optional pagination."""
+def get_all_runs_sorted_query(limit=None, offset=0, project_id=None, user_id=None):
+    """Get runs sorted by timestamp desc, with optional pagination."""
     conditions, params = [], []
     if project_id:
         conditions.append("project_id=?")
@@ -761,20 +761,20 @@ def get_all_experiments_sorted_query(limit=None, offset=0, project_id=None, user
         conditions.append("user_id=?")
         params.append(user_id)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    sql = f"SELECT session_id, project_id, timestamp, runtime_seconds, active_runtime_seconds, color_preview, name, version_date, custom_metrics, thumb_label FROM experiments{where} ORDER BY timestamp DESC"
+    sql = f"SELECT run_id, project_id, timestamp, runtime_seconds, active_runtime_seconds, color_preview, name, version_date, custom_metrics, thumb_label FROM runs{where} ORDER BY timestamp DESC"
     if limit is not None:
         sql += " LIMIT ? OFFSET ?"
         params.extend([limit, offset])
     return query_all(sql, tuple(params))
 
 
-def get_experiments_by_ids_query(session_ids, project_id=None, user_id=None):
-    """Get experiments for specific session IDs, sorted by timestamp desc."""
-    if not session_ids:
+def get_runs_by_ids_query(run_ids, project_id=None, user_id=None):
+    """Get runs for specific run IDs, sorted by timestamp desc."""
+    if not run_ids:
         return []
-    placeholders = ",".join("?" * len(session_ids))
-    params = list(session_ids)
-    sql = f"SELECT session_id, project_id, timestamp, runtime_seconds, active_runtime_seconds, color_preview, name, version_date, custom_metrics, thumb_label FROM experiments WHERE session_id IN ({placeholders})"
+    placeholders = ",".join("?" * len(run_ids))
+    params = list(run_ids)
+    sql = f"SELECT run_id, project_id, timestamp, runtime_seconds, active_runtime_seconds, color_preview, name, version_date, custom_metrics, thumb_label FROM runs WHERE run_id IN ({placeholders})"
     if project_id:
         sql += " AND project_id=?"
         params.append(project_id)
@@ -785,33 +785,33 @@ def get_experiments_by_ids_query(session_ids, project_id=None, user_id=None):
     return query_all(sql, tuple(params))
 
 
-def get_experiments_excluding_ids_query(session_ids, limit=None, offset=0, project_id=None, user_id=None):
-    """Get experiments excluding specific session IDs, sorted by timestamp desc."""
-    if not session_ids:
-        return get_all_experiments_sorted_query(limit=limit, offset=offset, project_id=project_id, user_id=user_id)
-    placeholders = ",".join("?" * len(session_ids))
-    params = list(session_ids)
-    conditions = [f"session_id NOT IN ({placeholders})"]
+def get_runs_excluding_ids_query(run_ids, limit=None, offset=0, project_id=None, user_id=None):
+    """Get runs excluding specific run IDs, sorted by timestamp desc."""
+    if not run_ids:
+        return get_all_runs_sorted_query(limit=limit, offset=offset, project_id=project_id, user_id=user_id)
+    placeholders = ",".join("?" * len(run_ids))
+    params = list(run_ids)
+    conditions = [f"run_id NOT IN ({placeholders})"]
     if project_id:
         conditions.append("project_id=?")
         params.append(project_id)
     if user_id:
         conditions.append("user_id=?")
         params.append(user_id)
-    sql = f"SELECT session_id, project_id, timestamp, runtime_seconds, active_runtime_seconds, color_preview, name, version_date, custom_metrics, thumb_label FROM experiments WHERE {' AND '.join(conditions)} ORDER BY timestamp DESC"
+    sql = f"SELECT run_id, project_id, timestamp, runtime_seconds, active_runtime_seconds, color_preview, name, version_date, custom_metrics, thumb_label FROM runs WHERE {' AND '.join(conditions)} ORDER BY timestamp DESC"
     if limit is not None:
         sql += " LIMIT ? OFFSET ?"
         params.extend([limit, offset])
     return query_all(sql, tuple(params))
 
 
-def get_experiment_count_excluding_ids_query(session_ids, project_id=None, user_id=None):
-    """Get count of experiments excluding specific session IDs."""
-    if not session_ids:
-        return get_experiment_count_query(project_id=project_id, user_id=user_id)
-    placeholders = ",".join("?" * len(session_ids))
-    params = list(session_ids)
-    conditions = [f"session_id NOT IN ({placeholders})"]
+def get_run_count_excluding_ids_query(run_ids, project_id=None, user_id=None):
+    """Get count of runs excluding specific run IDs."""
+    if not run_ids:
+        return get_run_count_query(project_id=project_id, user_id=user_id)
+    placeholders = ",".join("?" * len(run_ids))
+    params = list(run_ids)
+    conditions = [f"run_id NOT IN ({placeholders})"]
     if project_id:
         conditions.append("project_id=?")
         params.append(project_id)
@@ -819,14 +819,14 @@ def get_experiment_count_excluding_ids_query(session_ids, project_id=None, user_
         conditions.append("user_id=?")
         params.append(user_id)
     row = query_one(
-        f"SELECT COUNT(*) as count FROM experiments WHERE {' AND '.join(conditions)}",
+        f"SELECT COUNT(*) as count FROM runs WHERE {' AND '.join(conditions)}",
         tuple(params),
     )
     return row["count"] if row else 0
 
 
-def get_experiment_count_query(project_id=None, user_id=None):
-    """Get total number of experiments."""
+def get_run_count_query(project_id=None, user_id=None):
+    """Get total number of runs."""
     conditions, params = [], []
     if project_id:
         conditions.append("project_id=?")
@@ -835,14 +835,14 @@ def get_experiment_count_query(project_id=None, user_id=None):
         conditions.append("user_id=?")
         params.append(user_id)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    row = query_one(f"SELECT COUNT(*) as count FROM experiments{where}", tuple(params))
+    row = query_one(f"SELECT COUNT(*) as count FROM runs{where}", tuple(params))
     return row["count"] if row else 0
 
 
-# Filtered experiment queries for server-side pagination/sorting/filtering
-_EXPERIMENT_SORT_COLUMNS = {
+# Filtered run queries for server-side pagination/sorting/filtering
+_RUN_SORT_COLUMNS = {
     "timestamp",
-    "session_id",
+    "run_id",
     "name",
     "version_date",
     "thumb_label",
@@ -861,16 +861,16 @@ def _normalize_timestamp_filter_value(value, end_of_range=False):
     return normalized
 
 
-def _build_experiment_filters(filters):
+def _build_run_filters(filters):
     """Build WHERE conditions and params from a filter dict."""
     conditions = []
     params = []
     if filters.get("name"):
         conditions.append("LOWER(name) LIKE ?")
         params.append(f"%{filters['name'].lower()}%")
-    if filters.get("session_id"):
-        conditions.append("LOWER(session_id) LIKE ?")
-        params.append(f"%{filters['session_id'].lower()}%")
+    if filters.get("run_id"):
+        conditions.append("LOWER(run_id) LIKE ?")
+        params.append(f"%{filters['run_id'].lower()}%")
     if filters.get("version_date"):
         values = filters["version_date"]
         placeholders = ",".join("?" * len(values))
@@ -885,8 +885,8 @@ def _build_experiment_filters(filters):
     return conditions, params
 
 
-def query_experiments_filtered(project_id, exclude_ids, filters, sort_col, sort_dir, limit, offset, user_id=None):
-    """Query experiments with filtering, sorting, and pagination. Returns (rows, total_count)."""
+def query_runs_filtered(project_id, exclude_ids, filters, sort_col, sort_dir, limit, offset, user_id=None):
+    """Query runs with filtering, sorting, and pagination. Returns (rows, total_count)."""
     conditions = []
     params = []
     if project_id:
@@ -897,18 +897,18 @@ def query_experiments_filtered(project_id, exclude_ids, filters, sort_col, sort_
         params.append(user_id)
     if exclude_ids:
         placeholders = ",".join("?" * len(exclude_ids))
-        conditions.append(f"session_id NOT IN ({placeholders})")
+        conditions.append(f"run_id NOT IN ({placeholders})")
         params.extend(exclude_ids)
-    filter_conditions, filter_params = _build_experiment_filters(filters)
+    filter_conditions, filter_params = _build_run_filters(filters)
     conditions.extend(filter_conditions)
     params.extend(filter_params)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    if sort_col not in _EXPERIMENT_SORT_COLUMNS:
+    if sort_col not in _RUN_SORT_COLUMNS:
         sort_col = "timestamp"
     sort_dir = "DESC" if sort_dir.upper() != "ASC" else "ASC"
-    count_row = query_one(f"SELECT COUNT(*) as count FROM experiments{where}", tuple(params))
+    count_row = query_one(f"SELECT COUNT(*) as count FROM runs{where}", tuple(params))
     total = count_row["count"] if count_row else 0
-    sql = f"SELECT session_id, project_id, timestamp, runtime_seconds, active_runtime_seconds, color_preview, name, version_date, custom_metrics, thumb_label FROM experiments{where} ORDER BY {sort_col} {sort_dir}"
+    sql = f"SELECT run_id, project_id, timestamp, runtime_seconds, active_runtime_seconds, color_preview, name, version_date, custom_metrics, thumb_label FROM runs{where} ORDER BY {sort_col} {sort_dir}"
     data_params = list(params)
     if limit is not None:
         sql += " LIMIT ? OFFSET ?"
@@ -928,69 +928,69 @@ def get_distinct_versions_query(project_id=None, user_id=None):
         conditions.append("user_id=?")
         params.append(user_id)
     return query_all(
-        f"SELECT DISTINCT version_date FROM experiments WHERE {' AND '.join(conditions)} ORDER BY version_date DESC",
+        f"SELECT DISTINCT version_date FROM runs WHERE {' AND '.join(conditions)} ORDER BY version_date DESC",
         tuple(params),
     )
 
 
-def get_experiment_detail_query(session_id):
-    """Get detail fields for a single experiment."""
+def get_run_detail_query(run_id):
+    """Get detail fields for a single run."""
     return query_one(
-        "SELECT session_id, project_id, name, timestamp, runtime_seconds, active_runtime_seconds, custom_metrics, thumb_label, notes, log, version_date FROM experiments WHERE session_id=?",
-        (session_id,),
+        "SELECT run_id, project_id, name, timestamp, runtime_seconds, active_runtime_seconds, custom_metrics, thumb_label, notes, log, version_date FROM runs WHERE run_id=?",
+        (run_id,),
     )
 
 
-def get_experiment_graph_topology_query(session_id):
-    """Get graph topology for an experiment."""
-    return query_one("SELECT graph_topology FROM experiments WHERE session_id=?", (session_id,))
+def get_run_graph_topology_query(run_id):
+    """Get graph topology for an run."""
+    return query_one("SELECT graph_topology FROM runs WHERE run_id=?", (run_id,))
 
 
-def get_experiment_color_preview_query(session_id):
-    """Get color preview for an experiment."""
-    return query_one("SELECT color_preview FROM experiments WHERE session_id=?", (session_id,))
+def get_run_color_preview_query(run_id):
+    """Get color preview for an run."""
+    return query_one("SELECT color_preview FROM runs WHERE run_id=?", (run_id,))
 
 
-def get_experiment_environment_query(parent_session_id):
-    """Get experiment cwd, command, and environment."""
+def get_run_environment_query(parent_run_id):
+    """Get run cwd, command, and environment."""
     return query_one(
-        "SELECT cwd, command, environment FROM experiments WHERE session_id=?", (parent_session_id,)
+        "SELECT cwd, command, environment FROM runs WHERE run_id=?", (parent_run_id,)
     )
 
 
-def update_experiment_color_preview_query(color_preview_json, session_id):
-    """Update experiment color preview."""
+def update_run_color_preview_query(color_preview_json, run_id):
+    """Update run color preview."""
     execute(
-        "UPDATE experiments SET color_preview=? WHERE session_id=?",
-        (color_preview_json, session_id),
+        "UPDATE runs SET color_preview=? WHERE run_id=?",
+        (color_preview_json, run_id),
     )
 
 
-def get_experiment_exec_info_query(session_id):
-    """Get experiment execution info (cwd, command, environment)."""
+def get_run_exec_info_query(run_id):
+    """Get run execution info (cwd, command, environment)."""
     return query_one(
-        "SELECT cwd, command, environment FROM experiments WHERE session_id=?", (session_id,)
+        "SELECT cwd, command, environment FROM runs WHERE run_id=?", (run_id,)
     )
 
 
 # Copy queries
-def copy_llm_calls_query(old_session_id, new_session_id):
-    """Copy all llm_calls from one session to another with a new session_id."""
+def copy_llm_calls_query(old_run_id, new_run_id):
+    """Copy all llm_calls from one run to another with a new run_id."""
     execute(
         """
-        INSERT INTO llm_calls (session_id, node_uuid, input, input_hash, input_overwrite, output, color, label, api_type, stack_trace, timestamp)
+        INSERT INTO llm_calls (run_id, node_uuid, input, input_hash, input_overwrite, output, color, label, api_type, stack_trace, timestamp)
         SELECT ?, node_uuid, input, input_hash, input_overwrite, output, color, label, api_type, stack_trace, timestamp
-        FROM llm_calls WHERE session_id=?
+        FROM llm_calls WHERE run_id=?
         """,
-        (new_session_id, old_session_id),
+        (new_run_id, old_run_id),
     )
 
 
 # Database cleanup queries
-def delete_all_experiments_query():
-    """Delete all records from experiments table."""
-    execute("DELETE FROM experiment_tags")
-    execute("DELETE FROM experiments")
+def delete_all_runs_query():
+    """Delete all records from runs table."""
+    execute("DELETE FROM run_tags")
+    execute("DELETE FROM runs")
 
 
 def delete_all_llm_calls_query():
@@ -998,47 +998,47 @@ def delete_all_llm_calls_query():
     execute("DELETE FROM llm_calls")
 
 
-def _delete_sessions_data(session_ids):
-    """Delete llm_calls, lessons_applied, and experiments for the given session IDs."""
-    if not session_ids:
+def _delete_runs_data(run_ids):
+    """Delete llm_calls, lessons_applied, and runs for the given run IDs."""
+    if not run_ids:
         return
-    placeholders = ",".join("?" * len(session_ids))
-    ids = tuple(session_ids)
-    execute(f"DELETE FROM experiment_tags WHERE session_id IN ({placeholders})", ids)
-    execute(f"DELETE FROM llm_calls WHERE session_id IN ({placeholders})", ids)
-    execute(f"DELETE FROM lessons_applied WHERE session_id IN ({placeholders})", ids)
-    execute(f"DELETE FROM experiments WHERE session_id IN ({placeholders})", ids)
+    placeholders = ",".join("?" * len(run_ids))
+    ids = tuple(run_ids)
+    execute(f"DELETE FROM run_tags WHERE run_id IN ({placeholders})", ids)
+    execute(f"DELETE FROM llm_calls WHERE run_id IN ({placeholders})", ids)
+    execute(f"DELETE FROM lessons_applied WHERE run_id IN ({placeholders})", ids)
+    execute(f"DELETE FROM runs WHERE run_id IN ({placeholders})", ids)
 
 
-def delete_experiments_by_ids_query(session_ids, user_id=None):
-    """Delete experiments by session ID, optionally scoped to a user. Returns deleted count."""
-    if not session_ids:
+def delete_runs_by_ids_query(run_ids, user_id=None):
+    """Delete runs by run ID, optionally scoped to a user. Returns deleted count."""
+    if not run_ids:
         return 0
 
-    unique_ids = list(dict.fromkeys(session_ids))
+    unique_ids = list(dict.fromkeys(run_ids))
     if user_id:
         placeholders = ",".join("?" * len(unique_ids))
         rows = query_all(
-            f"SELECT session_id FROM experiments WHERE user_id=? AND session_id IN ({placeholders})",
+            f"SELECT run_id FROM runs WHERE user_id=? AND run_id IN ({placeholders})",
             (user_id, *unique_ids),
         )
-        unique_ids = [row["session_id"] for row in rows]
+        unique_ids = [row["run_id"] for row in rows]
 
     if not unique_ids:
         return 0
 
     placeholders = ",".join("?" * len(unique_ids))
     project_rows = query_all(
-        f"SELECT DISTINCT project_id FROM experiments WHERE session_id IN ({placeholders}) AND project_id IS NOT NULL",
+        f"SELECT DISTINCT project_id FROM runs WHERE run_id IN ({placeholders}) AND project_id IS NOT NULL",
         tuple(unique_ids),
     )
     project_ids = [row["project_id"] for row in project_rows]
 
-    _delete_sessions_data(unique_ids)
+    _delete_runs_data(unique_ids)
 
     for project_id in project_ids:
         row = query_one(
-            "SELECT MAX(timestamp) AS last_run_at FROM experiments WHERE project_id=?",
+            "SELECT MAX(timestamp) AS last_run_at FROM runs WHERE project_id=?",
             (project_id,),
         )
         execute(
@@ -1050,16 +1050,16 @@ def delete_experiments_by_ids_query(session_ids, user_id=None):
 
 
 def delete_project_query(project_id):
-    """Delete a project and all associated experiments, llm_calls, lessons_applied, and locations."""
-    sessions = query_all("SELECT session_id FROM experiments WHERE project_id=?", (project_id,))
-    _delete_sessions_data([s["session_id"] for s in sessions])
+    """Delete a project and all associated runs, llm_calls, lessons_applied, and locations."""
+    runs = query_all("SELECT run_id FROM runs WHERE project_id=?", (project_id,))
+    _delete_runs_data([run["run_id"] for run in runs])
     execute("DELETE FROM project_tags WHERE project_id=?", (project_id,))
     execute("DELETE FROM user_project_locations WHERE project_id=?", (project_id,))
     execute("DELETE FROM projects WHERE project_id=?", (project_id,))
 
 
 def delete_user_query(user_id):
-    """Delete a user and all associated experiments, llm_calls, lessons_applied, and locations."""
+    """Delete a user and all associated runs, llm_calls, lessons_applied, and locations."""
     # 1. Get projects associated to this user
     project_ids = [
         r["project_id"]
@@ -1078,38 +1078,38 @@ def delete_user_query(user_id):
     for pid, users in project_users.items():
         if users == {user_id}:
             delete_project_query(pid)
-    sessions = query_all("SELECT session_id FROM experiments WHERE user_id=?", (user_id,))
-    _delete_sessions_data([s["session_id"] for s in sessions])
+    runs = query_all("SELECT run_id FROM runs WHERE user_id=?", (user_id,))
+    _delete_runs_data([run["run_id"] for run in runs])
     execute("DELETE FROM user_project_locations WHERE user_id=?", (user_id,))
     execute("DELETE FROM users WHERE user_id=?", (user_id,))
 
 
-def get_session_name_query(session_id):
-    """Get session name by session_id."""
-    return query_one("SELECT name FROM experiments WHERE session_id=?", (session_id,))
+def get_run_name_query(run_id):
+    """Get run name by run_id."""
+    return query_one("SELECT name FROM runs WHERE run_id=?", (run_id,))
 
 
-def get_llm_call_input_api_type_query(session_id, node_uuid):
-    """Get input and api_type from llm_calls by session_id and node_uuid."""
+def get_llm_call_input_api_type_query(run_id, node_uuid):
+    """Get input and api_type from llm_calls by run_id and node_uuid."""
     return query_one(
-        "SELECT input, api_type FROM llm_calls WHERE session_id=? AND node_uuid=?",
-        (session_id, node_uuid),
+        "SELECT input, api_type FROM llm_calls WHERE run_id=? AND node_uuid=?",
+        (run_id, node_uuid),
     )
 
 
-def get_llm_call_output_api_type_query(session_id, node_uuid):
-    """Get output and api_type from llm_calls by session_id and node_uuid."""
+def get_llm_call_output_api_type_query(run_id, node_uuid):
+    """Get output and api_type from llm_calls by run_id and node_uuid."""
     return query_one(
-        "SELECT output, api_type FROM llm_calls WHERE session_id=? AND node_uuid=?",
-        (session_id, node_uuid),
+        "SELECT output, api_type FROM llm_calls WHERE run_id=? AND node_uuid=?",
+        (run_id, node_uuid),
     )
 
 
-def get_experiment_log_success_graph_query(session_id):
-    """Get log and graph_topology from experiments by session_id."""
+def get_run_log_success_graph_query(run_id):
+    """Get log and graph_topology from runs by run_id."""
     return query_one(
-        "SELECT log, graph_topology FROM experiments WHERE session_id=?",
-        (session_id,),
+        "SELECT log, graph_topology FROM runs WHERE run_id=?",
+        (run_id,),
     )
 
 
@@ -1123,38 +1123,38 @@ def get_next_run_index_query(project_id=None, user_id=None):
         conditions.append("user_id=?")
         params.append(user_id)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    row = query_one(f"SELECT COUNT(*) as count FROM experiments{where}", tuple(params))
+    row = query_one(f"SELECT COUNT(*) as count FROM runs{where}", tuple(params))
     if row:
         return row["count"] + 1
     return 1
 
 
 # Probe-related queries for so-tool
-def get_experiment_metadata_query(session_id):
-    """Get experiment metadata for probe command."""
+def get_run_metadata_query(run_id):
+    """Get run metadata for probe command."""
     return query_one(
-        """SELECT session_id, parent_session_id, name, timestamp, custom_metrics, thumb_label, notes, log,
+        """SELECT run_id, parent_run_id, name, timestamp, custom_metrics, thumb_label, notes, log,
                   graph_topology, version_date
-           FROM experiments WHERE session_id=?""",
-        (session_id,),
+           FROM runs WHERE run_id=?""",
+        (run_id,),
     )
 
 
-def get_llm_calls_for_session_query(session_id):
-    """Get all LLM calls for a session, ordered by insertion time."""
+def get_llm_calls_for_run_query(run_id):
+    """Get all LLM calls for a run, ordered by insertion time."""
     return query_all(
         """SELECT node_uuid, input, input_overwrite, output, api_type, label, timestamp
-           FROM llm_calls WHERE session_id=? ORDER BY rowid""",
-        (session_id,),
+           FROM llm_calls WHERE run_id=? ORDER BY rowid""",
+        (run_id,),
     )
 
 
-def get_llm_call_full_query(session_id, node_uuid):
+def get_llm_call_full_query(run_id, node_uuid):
     """Get full LLM call data including input, output, overwrites, and stack_trace."""
     return query_one(
         """SELECT node_uuid, input, input_hash, input_overwrite, output, api_type, label, timestamp, stack_trace
-           FROM llm_calls WHERE session_id=? AND node_uuid=?""",
-        (session_id, node_uuid),
+           FROM llm_calls WHERE run_id=? AND node_uuid=?""",
+        (run_id, node_uuid),
     )
 # ============================================================
 # Lessons queries
@@ -1166,27 +1166,27 @@ def get_llm_call_full_query(session_id, node_uuid):
 # ============================================================
 
 
-def get_lessons_applied_for_session_query(session_id):
-    """Get lesson application records for a specific session."""
+def get_lessons_applied_for_run_query(run_id):
+    """Get lesson application records for a specific run."""
     return query_all(
         """
-        SELECT la.lesson_id, la.session_id, la.node_uuid, e.name as run_name
+        SELECT la.lesson_id, la.run_id, la.node_uuid, e.name as name
         FROM lessons_applied la
-        LEFT JOIN experiments e ON la.session_id = e.session_id
-        WHERE la.session_id = ?
+        LEFT JOIN runs e ON la.run_id = e.run_id
+        WHERE la.run_id = ?
         ORDER BY la.applied_at DESC
         """,
-        (session_id,),
+        (run_id,),
     )
 
 
 def get_lessons_applied_query(lesson_id):
-    """Get all sessions/nodes where a specific lesson was applied."""
+    """Get all runs/nodes where a specific lesson was applied."""
     return query_all(
         """
-        SELECT la.session_id, la.node_uuid, e.name as run_name
+        SELECT la.run_id, la.node_uuid, e.name as name
         FROM lessons_applied la
-        LEFT JOIN experiments e ON la.session_id = e.session_id
+        LEFT JOIN runs e ON la.run_id = e.run_id
         WHERE la.lesson_id = ?
         ORDER BY la.applied_at DESC
         """,
@@ -1194,28 +1194,28 @@ def get_lessons_applied_query(lesson_id):
     )
 
 
-def add_lesson_applied_query(lesson_id, session_id, node_uuid=None):
-    """Record that a lesson was applied to a session/node."""
+def add_lesson_applied_query(lesson_id, run_id, node_uuid=None):
+    """Record that a lesson was applied to a run/node."""
     execute(
         """
-        INSERT OR IGNORE INTO lessons_applied (lesson_id, session_id, node_uuid)
+        INSERT OR IGNORE INTO lessons_applied (lesson_id, run_id, node_uuid)
         VALUES (?, ?, ?)
         """,
-        (lesson_id, session_id, node_uuid),
+        (lesson_id, run_id, node_uuid),
     )
 
 
-def remove_lesson_applied_query(lesson_id, session_id, node_uuid=None):
+def remove_lesson_applied_query(lesson_id, run_id, node_uuid=None):
     """Remove a lesson application record."""
     if node_uuid:
         execute(
-            "DELETE FROM lessons_applied WHERE lesson_id = ? AND session_id = ? AND node_uuid = ?",
-            (lesson_id, session_id, node_uuid),
+            "DELETE FROM lessons_applied WHERE lesson_id = ? AND run_id = ? AND node_uuid = ?",
+            (lesson_id, run_id, node_uuid),
         )
     else:
         execute(
-            "DELETE FROM lessons_applied WHERE lesson_id = ? AND session_id = ? AND node_uuid IS NULL",
-            (lesson_id, session_id),
+            "DELETE FROM lessons_applied WHERE lesson_id = ? AND run_id = ? AND node_uuid IS NULL",
+            (lesson_id, run_id),
         )
 
 

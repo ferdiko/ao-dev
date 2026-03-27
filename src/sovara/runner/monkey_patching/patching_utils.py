@@ -6,7 +6,7 @@ import threading
 import traceback
 from collections import defaultdict
 from typing import Optional, Dict, Any
-from sovara.runner.context_manager import get_session_id
+from sovara.runner.context_manager import get_run_id
 from sovara.common.constants import (
     CERTAINTY_UNKNOWN,
     COMPILED_ENDPOINT_PATTERNS,
@@ -328,19 +328,19 @@ def send_graph_node_and_edges(
     output_string = json.dumps(json.loads(output_full_str)["to_show"])
     model = get_raw_model_name(input_dict, api_type)
     label = get_node_label(input_dict, api_type)
-    session_id = get_session_id()
+    run_id = get_run_id()
 
     # Store input for this node (needed for containment checks)
     from sovara.runner.string_matching import store_input_strings, output_contained_in_input
 
-    store_input_strings(session_id, node_id, input_dict, api_type)
+    store_input_strings(run_id, node_id, input_dict, api_type)
 
     # Update reachability and filter redundant edges under lock
     with _graph_lock:
         for source_node_id in source_node_ids:
-            _graph_reachable_set[session_id][source_node_id].add(node_id)
+            _graph_reachable_set[run_id][source_node_id].add(node_id)
 
-        for reachable_by_a in _graph_reachable_set[session_id].values():
+        for reachable_by_a in _graph_reachable_set[run_id].values():
             if any(source_node_id in reachable_by_a for source_node_id in source_node_ids):
                 reachable_by_a.add(node_id)
 
@@ -349,15 +349,15 @@ def send_graph_node_and_edges(
         nodes_to_remove = set()
         for node_a in source_node_ids:
             for node_b in source_node_ids:
-                if node_a != node_b and node_b in _graph_reachable_set[session_id][node_a]:
-                    if output_contained_in_input(session_id, node_a, node_b):
+                if node_a != node_b and node_b in _graph_reachable_set[run_id][node_a]:
+                    if output_contained_in_input(run_id, node_a, node_b):
                         nodes_to_remove.add(node_a)
         source_node_ids = [n for n in source_node_ids if n not in nodes_to_remove]
 
     # Send node
     node_msg = {
         "type": "add_node",
-        "session_id": session_id,
+        "run_id": run_id,
         "node": {
             "uuid": node_id,
             "input": input_string,

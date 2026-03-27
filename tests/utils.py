@@ -9,8 +9,8 @@ def cleanup_test_db():
     DB.execute("DELETE FROM attachments")
 
     # Clean up environment variables
-    if "SOVARA_SESSION_ID" in os.environ:
-        del os.environ["SOVARA_SESSION_ID"]
+    if "SOVARA_RUN_ID" in os.environ:
+        del os.environ["SOVARA_RUN_ID"]
 
 
 def restart_server():
@@ -22,21 +22,21 @@ def restart_server():
     time.sleep(1)
 
 
-def setup_test_session(session_id, name="Test Session", parent_session_id=None):
+def setup_test_run(run_id, name="Test Run", parent_run_id=None):
     """
     Helper to create necessary database records for testing.
 
     Args:
-        session_id: The session ID to create
-        name: Name for the test session
-        parent_session_id: Parent session ID (defaults to session_id if None)
+        run_id: The run ID to create
+        name: Name for the test run
+        parent_run_id: Parent run ID (defaults to run_id if None)
     """
-    DB.add_experiment(
-        session_id=session_id,
+    DB.add_run(
+        run_id=run_id,
         name=name,
         timestamp=datetime.now(timezone.utc),
         cwd=os.getcwd(),
         command="test",
         environment={"TEST": "true"},
-        parent_session_id=parent_session_id or session_id,
+        parent_run_id=parent_run_id or run_id,
     )

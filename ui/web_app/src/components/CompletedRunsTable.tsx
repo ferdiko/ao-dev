@@ -33,9 +33,9 @@ export function CompletedRunsTable({
   formatCodeVersion: (raw: string) => string;
   formatTimestamp: (raw: string) => string;
   metricColumns: CustomMetricColumn[];
-  onOpenRun: (sessionId: string) => void;
-  onRowKeyDown: (event: KeyboardEvent<HTMLTableRowElement>, sessionId: string) => void;
-  onRowContextMenu: (event: MouseEvent<HTMLTableRowElement>, sessionId: string) => void;
+  onOpenRun: (runId: string) => void;
+  onRowKeyDown: (event: KeyboardEvent<HTMLTableRowElement>, runId: string) => void;
+  onRowContextMenu: (event: MouseEvent<HTMLTableRowElement>, runId: string) => void;
   onSort: (key: string) => void;
   onToggleSelect: (id: string) => void;
   onToggleSelectAll: () => void;
@@ -88,9 +88,9 @@ export function CompletedRunsTable({
           <tr
             key={run.id}
             className="clickable-row"
-            onClick={() => onOpenRun(run.sessionId)}
-            onContextMenu={(event) => onRowContextMenu(event, run.sessionId)}
-            onKeyDown={(event) => onRowKeyDown(event, run.sessionId)}
+            onClick={() => onOpenRun(run.runId)}
+            onContextMenu={(event) => onRowContextMenu(event, run.runId)}
+            onKeyDown={(event) => onRowKeyDown(event, run.runId)}
             tabIndex={0}
             role="link"
             aria-label={`Open run ${run.name}`}

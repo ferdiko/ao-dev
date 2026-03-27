@@ -5,7 +5,7 @@ import { formatUtcTimestamp } from "../../utils/timeSpan";
 
 interface Props extends WorkflowRunDetailsPanelProps {
   onBack?: () => void;
-  sessionId?: string;
+  runId?: string;
   isDarkTheme?: boolean;
 }
 
@@ -23,7 +23,7 @@ export const WorkflowRunDetailsPanel: React.FC<Props> = ({
   codeVersion = "",
   onOpenInTab,
   onBack,
-  sessionId = "",
+  runId = "",
   isDarkTheme: isDarkThemeProp,
   messageSender,
 }) => {
@@ -51,21 +51,21 @@ export const WorkflowRunDetailsPanel: React.FC<Props> = ({
 
   const handleRunNameChange = (value: string) => {
     setLocalRunName(value);
-    if (messageSender && sessionId) {
+    if (messageSender && runId) {
       messageSender.send({
-        type: "update_run_name",
-        session_id: sessionId,
-        run_name: value,
+        type: "update_name",
+        run_id: runId,
+        name: value,
       });
     }
   };
 
   const handleResultChange = (value: string) => {
     setLocalResult(value);
-    if (messageSender && sessionId) {
+    if (messageSender && runId) {
       messageSender.send({
         type: "update_result",
-        session_id: sessionId,
+        run_id: runId,
         result: value,
       });
     }
@@ -73,10 +73,10 @@ export const WorkflowRunDetailsPanel: React.FC<Props> = ({
 
   const handleNotesChange = (value: string) => {
     setLocalNotes(value);
-    if (messageSender && sessionId) {
+    if (messageSender && runId) {
       messageSender.send({
         type: "update_notes",
-        session_id: sessionId,
+        run_id: runId,
         notes: value,
       });
     }

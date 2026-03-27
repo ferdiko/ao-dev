@@ -94,7 +94,7 @@ export function ProjectSettingsModal({
               <div className="modal-danger-confirm">
                 <p className="modal-danger-warning">
                   This will permanently delete this project and all
-                  associated data (experiments, runs, cached LLM calls). This
+                  associated data (runs, runs, cached LLM calls). This
                   action cannot be undone.
                 </p>
                 <p className="modal-danger-prompt">

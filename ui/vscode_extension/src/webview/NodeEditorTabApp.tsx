@@ -17,7 +17,7 @@ declare global {
     };
     nodeEditorContext?: {
       nodeId: string;
-      sessionId: string;
+      runId: string;
       field: 'input' | 'output';
       label: string;
       inputValue: string;
@@ -146,7 +146,7 @@ export const NodeEditorTabApp: React.FC = () => {
     if (inputChanged) {
       window.vscode.postMessage({
         type: 'edit_input',
-        session_id: context.sessionId,
+        run_id: context.runId,
         node_uuid: context.nodeId,
         value: safeStringify(inputData),
       });
@@ -157,7 +157,7 @@ export const NodeEditorTabApp: React.FC = () => {
     if (outputChanged) {
       window.vscode.postMessage({
         type: 'edit_output',
-        session_id: context.sessionId,
+        run_id: context.runId,
         node_uuid: context.nodeId,
         value: safeStringify(outputData),
       });

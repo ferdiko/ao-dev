@@ -37,7 +37,7 @@ When you extract new shared hooks or helper modules, add targeted tests there in
 
 - `src/pages`: route-level screens such as `ProjectPage` and `RunView`
 - `src/components`: reusable UI sections extracted from the page files
-- `src/hooks`: shared state/effect logic for selection, sorting, run layout, and run session state
+- `src/hooks`: shared state/effect logic for selection, sorting, run layout, and run state
 - `src/projectRuns.ts`: shared row mapping, timestamp, and sorting helpers for project run tables
 - `src/projectFilters.ts`: shared filter types and helpers for the project page
 - `src/serverEvents.ts`: websocket event bus used by the frontend

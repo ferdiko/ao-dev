@@ -1,7 +1,7 @@
 from functools import wraps
 from sovara.runner.monkey_patching.patching_utils import get_input_dict, send_graph_node_and_edges
 from sovara.runner.string_matching import find_source_nodes, store_output_strings
-from sovara.runner.context_manager import get_session_id
+from sovara.runner.context_manager import get_run_id
 from sovara.server.database_manager import DB
 from sovara.common.logger import logger
 
@@ -41,8 +41,8 @@ def patch_mcp_send_request(bound_obj, bound_cls):
             return await original_function(*args, **kwargs)
 
         # Content-based edge detection BEFORE get_in_out (uses original input)
-        session_id = get_session_id()
-        source_node_ids = find_source_nodes(session_id, input_dict, api_type)
+        run_id = get_run_id()
+        source_node_ids = find_source_nodes(run_id, input_dict, api_type)
 
         # Get result from cache or call tool
         cache_output = DB.get_in_out(input_dict, api_type)
@@ -54,7 +54,7 @@ def patch_mcp_send_request(bound_obj, bound_cls):
 
         # Store output strings for future matching
         store_output_strings(
-            cache_output.session_id, cache_output.node_uuid, cache_output.output, api_type
+            cache_output.run_id, cache_output.node_uuid, cache_output.output, api_type
         )
 
         # Send graph node to server

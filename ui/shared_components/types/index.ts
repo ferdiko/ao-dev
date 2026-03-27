@@ -63,11 +63,11 @@ export interface GraphData {
 }
 
 export interface ProcessInfo {
-    session_id: string;
+    run_id: string;
     status: string;
     timestamp?: string;
     color_preview?: string[];
-    run_name?: string;
+    name?: string;
     result?: string;
     notes?: string;
     log?: string;

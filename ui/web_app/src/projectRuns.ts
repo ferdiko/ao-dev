@@ -1,10 +1,10 @@
-import type { Experiment } from "./api";
+import type { Run } from "./api";
 import type { SortState } from "./hooks/useStoredSortState";
 import type { Tag } from "./tags";
 
 export interface ProjectRun {
   id: string;
-  sessionId: string;
+  runId: string;
   name: string;
   status: "running" | "finished";
   timestamp: string;
@@ -28,24 +28,24 @@ export function formatRuntimeSeconds(value: number | null | undefined): string {
   return `${normalized.toFixed(1)}s`;
 }
 
-export function experimentToProjectRun(experiment: Experiment): ProjectRun {
-  const activeRuntimeSeconds = normalizeRuntimeSeconds(experiment.active_runtime_seconds);
-  const latencySeconds = experiment.status === "running"
+export function runToProjectRun(run: Run): ProjectRun {
+  const activeRuntimeSeconds = normalizeRuntimeSeconds(run.active_runtime_seconds);
+  const latencySeconds = run.status === "running"
     ? activeRuntimeSeconds
-    : normalizeRuntimeSeconds(experiment.runtime_seconds) ?? activeRuntimeSeconds;
+    : normalizeRuntimeSeconds(run.runtime_seconds) ?? activeRuntimeSeconds;
   return {
-    id: experiment.session_id,
-    sessionId: experiment.session_id,
-    name: experiment.run_name,
-    status: experiment.status === "running" ? "running" : "finished",
-    timestamp: experiment.timestamp,
-    codeVersion: experiment.version_date ?? "",
-    thumbLabel: experiment.thumb_label,
-    customMetrics: experiment.custom_metrics ?? {},
+    id: run.run_id,
+    runId: run.run_id,
+    name: run.name,
+    status: run.status === "running" ? "running" : "finished",
+    timestamp: run.timestamp,
+    codeVersion: run.version_date ?? "",
+    thumbLabel: run.thumb_label,
+    customMetrics: run.custom_metrics ?? {},
     latency: formatRuntimeSeconds(latencySeconds),
     latencySeconds,
     activeRuntimeSeconds,
-    tags: experiment.tags ?? [],
+    tags: run.tags ?? [],
   };
 }
 
@@ -78,8 +78,8 @@ function compareProjectRuns(a: ProjectRun, b: ProjectRun, key: string): number {
   switch (key) {
     case "timestamp":
       return a.timestamp.localeCompare(b.timestamp);
-    case "sessionId":
-      return a.sessionId.localeCompare(b.sessionId);
+    case "runId":
+      return a.runId.localeCompare(b.runId);
     case "name": {
       const numberA = parseInt(a.name.replace(/^Run\s*/, ""), 10);
       const numberB = parseInt(b.name.replace(/^Run\s*/, ""), 10);

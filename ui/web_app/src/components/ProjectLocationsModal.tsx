@@ -169,7 +169,7 @@ export function ProjectLocationsModal({
               <div className="modal-danger-confirm">
                 <p className="modal-danger-warning">
                   This is the last location for this project. Removing it will
-                  delete the project and all associated data (experiments, runs,
+                  delete the project and all associated data (runs, runs,
                   cached LLM calls). This action cannot be undone.
                 </p>
                 <p className="modal-danger-prompt">

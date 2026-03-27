@@ -19,7 +19,7 @@ import { RunTraceFlow } from "../components/RunTraceFlow";
 import { RunTabsHeader } from "../components/RunTabsHeader";
 import {
   fetchProject,
-  fetchExperimentDetail,
+  fetchRunDetail,
   fetchProjectTags,
   createProjectTag,
   deleteProjectTag,
@@ -31,7 +31,7 @@ import { Sparkles, RotateCcw, Loader2, Undo2, ThumbsUp, ThumbsDown, ChevronRight
 import { TraceChat } from "../components/TraceChat";
 import { useRunGraphFocus, type GraphFocusApiHandle } from "../hooks/useRunGraphFocus";
 import { useResize } from "../hooks/useResize";
-import { useRunSessionState } from "../hooks/useRunSessionState";
+import { useRunState } from "../hooks/useRunState";
 import { useRunViewLayout, type RunViewLayoutState } from "../hooks/useRunViewLayout";
 import { TagDropdown } from "../components/TagDropdown";
 import type { Tag } from "../tags";
@@ -111,13 +111,13 @@ function GraphApi({ apiRef }: { apiRef: React.MutableRefObject<GraphFocusApiHand
 // ── Main RunView (tab shell) ──────────────────────────
 
 export function RunView() {
-  const { projectId, sessionId: rawSessionIds } = useParams();
+  const { projectId, runId: rawRunIds } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [layoutState, setLayoutState, persistLayout] = useRunViewLayout();
 
-  const sessionIds = useMemo(() => rawSessionIds?.split(",").filter(Boolean) ?? [], [rawSessionIds]);
-  const activeSessionId = searchParams.get("active") ?? sessionIds[0];
+  const runIds = useMemo(() => rawRunIds?.split(",").filter(Boolean) ?? [], [rawRunIds]);
+  const activeRunId = searchParams.get("active") ?? runIds[0];
 
   // Fetch project name once for breadcrumb
   const [projectName, setProjectName] = useState("");
@@ -128,37 +128,37 @@ export function RunView() {
 
   // Fetch run names for all open tabs
   const [tabNames, setTabNames] = useState<Map<string, string>>(new Map());
-  const sessionIdsKey = sessionIds.join(",");
+  const runIdsKey = runIds.join(",");
   useEffect(() => {
-    if (!sessionIds.length) return;
+    if (!runIds.length) return;
     let cancelled = false;
-    Promise.all(sessionIds.map((id) =>
-      fetchExperimentDetail(id).then((d) => [id, d.run_name] as const).catch(() => [id, ""] as const)
+    Promise.all(runIds.map((id) =>
+      fetchRunDetail(id).then((d) => [id, d.name] as const).catch(() => [id, ""] as const)
     )).then((pairs) => {
       if (!cancelled) setTabNames(new Map(pairs));
     });
     return () => { cancelled = true; };
-  }, [sessionIds]);
+  }, [runIds]);
 
   const switchTab = useCallback((id: string) => {
     setSearchParams({ active: id });
   }, [setSearchParams]);
 
   const closeTab = useCallback((id: string) => {
-    const remaining = sessionIds.filter((s) => s !== id);
+    const remaining = runIds.filter((s) => s !== id);
     if (remaining.length === 0) {
       navigate(`/project/${projectId}`);
       return;
     }
-    const newActive = id === activeSessionId
-      ? remaining[Math.min(sessionIds.indexOf(id), remaining.length - 1)]
-      : activeSessionId;
+    const newActive = id === activeRunId
+      ? remaining[Math.min(runIds.indexOf(id), remaining.length - 1)]
+      : activeRunId;
     navigate(`/project/${projectId}/run/${remaining.join(",")}?active=${newActive}`);
-  }, [sessionIds, activeSessionId, projectId, navigate]);
+  }, [runIds, activeRunId, projectId, navigate]);
 
-  const isMultiTab = sessionIds.length > 1;
+  const isMultiTab = runIds.length > 1;
 
-  if (!activeSessionId) {
+  if (!activeRunId) {
     return (
       <div className="run-view">
         <div className="empty-state">
@@ -174,12 +174,12 @@ export function RunView() {
         <Breadcrumb items={[
           { label: "Projects", to: "/" },
           { label: projectName || "Project", to: `/project/${projectId}` },
-          { label: tabNames.get(sessionIds[0]) || sessionIds[0] || "Run" },
+          { label: tabNames.get(runIds[0]) || runIds[0] || "Run" },
         ]} />
         <RunViewContent
-          key={activeSessionId}
+          key={activeRunId}
           projectId={projectId}
-          sessionId={activeSessionId}
+          runId={activeRunId}
           layoutState={layoutState}
           setLayoutState={setLayoutState}
           persistLayout={persistLayout}
@@ -192,19 +192,19 @@ export function RunView() {
     <div className="run-view">
       <div className="run-view-panel">
         <RunTabsHeader
-          activeSessionId={activeSessionId}
+          activeRunId={activeRunId}
           onCloseTab={closeTab}
           onSwitchTab={switchTab}
           projectId={projectId}
           projectName={projectName}
-          sessionIds={sessionIds}
-          sessionIdsKey={sessionIdsKey}
+          runIds={runIds}
+          runIdsKey={runIdsKey}
           tabNames={tabNames}
         />
         <RunViewContent
-          key={activeSessionId}
+          key={activeRunId}
           projectId={projectId}
-          sessionId={activeSessionId}
+          runId={activeRunId}
           layoutState={layoutState}
           setLayoutState={setLayoutState}
           persistLayout={persistLayout}
@@ -218,13 +218,13 @@ export function RunView() {
 
 function RunViewContent({
   projectId,
-  sessionId,
+  runId,
   layoutState,
   setLayoutState,
   persistLayout,
 }: {
   projectId?: string;
-  sessionId: string;
+  runId: string;
   layoutState: RunViewLayoutState;
   setLayoutState: React.Dispatch<React.SetStateAction<RunViewLayoutState>>;
   persistLayout: () => void;
@@ -244,12 +244,12 @@ function RunViewContent({
     handleSaveEdit,
     handleStartEdit,
     loading,
-    refreshSessionDetail,
+    refreshRunDetail,
     rerunning,
     selectedTags,
     setSelectedTags,
     thumbLabel,
-  } = useRunSessionState(sessionId);
+  } = useRunState(runId);
   const [projectTags, setProjectTags] = useState<Tag[]>([]);
   const [tagPendingDelete, setTagPendingDelete] = useState<Tag | null>(null);
   const [deletingTag, setDeletingTag] = useState(false);
@@ -262,8 +262,8 @@ function RunViewContent({
   const chatPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    prefetchTrace(sessionId);
-  }, [sessionId]);
+    prefetchTrace(runId);
+  }, [runId]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -284,10 +284,10 @@ function RunViewContent({
     if (!projectId) return;
     const [tags] = await Promise.all([
       fetchProjectTags(projectId).then(sortTagsByName),
-      refreshSessionDetail(),
+      refreshRunDetail(),
     ]);
     setProjectTags(tags);
-  }, [projectId, refreshSessionDetail]);
+  }, [projectId, refreshRunDetail]);
 
   const handleToggleTag = useCallback((tag: Tag) => {
     const alreadySelected = selectedTags.some((item) => item.tag_id === tag.tag_id);
@@ -297,12 +297,12 @@ function RunViewContent({
         : [...selectedTags, tag],
     );
     setSelectedTags(nextTags);
-    updateRunTags(sessionId, nextTags.map((item) => item.tag_id))
+    updateRunTags(runId, nextTags.map((item) => item.tag_id))
       .catch(async (error) => {
         console.error("Failed to update run tags:", error);
         await reloadTags().catch(console.error);
       });
-  }, [reloadTags, selectedTags, sessionId, setSelectedTags]);
+  }, [reloadTags, selectedTags, runId, setSelectedTags]);
 
   const handleCreateTag = useCallback((name: string, color: string) => {
     if (!projectId) return;
@@ -312,13 +312,13 @@ function RunViewContent({
         const nextSelectedTags = sortTagsByName([...selectedTags, tag]);
         setProjectTags(nextProjectTags);
         setSelectedTags(nextSelectedTags);
-        await updateRunTags(sessionId, nextSelectedTags.map((item) => item.tag_id));
+        await updateRunTags(runId, nextSelectedTags.map((item) => item.tag_id));
       })
       .catch(async (error) => {
         console.error("Failed to create tag:", error);
         await reloadTags().catch(console.error);
       });
-  }, [projectId, projectTags, reloadTags, selectedTags, sessionId, setSelectedTags]);
+  }, [projectId, projectTags, reloadTags, selectedTags, runId, setSelectedTags]);
 
   const handleDeleteTag = useCallback((tag: Tag) => {
     setDeleteTagError(null);
@@ -628,7 +628,7 @@ function RunViewContent({
           </div>
         ) : (
           <TraceChat
-            sessionId={sessionId}
+            runId={runId}
             onCollapse={() => setLayoutState((prev) => ({ ...prev, chatCollapsed: true }))}
             onStepLabelClick={onStepLabelClick}
           />

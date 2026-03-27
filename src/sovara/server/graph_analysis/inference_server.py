@@ -16,12 +16,12 @@ import json
 import os
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from sovara.server.graph_models import SessionGraph
+from sovara.server.graph_models import RunGraph
 
 # ============================================================
 # Sub-server app
@@ -75,18 +75,23 @@ def _to_show_to_trace_fields(to_show_in: dict, to_show_out: dict) -> tuple[str, 
 # Trace cache and background prefetch pool
 # ============================================================
 
-# _trace_cache stores {"trace": Trace, "fp": str} per session_id.
+# _trace_cache stores {"trace": Trace, "fp": str} per run_id.
 # The fingerprint hashes graph node content (input/output) so the cache
 # is invalidated on edits and reruns (which rebuild the graph).
 _trace_cache: dict = {}
-_prefetch_futures: dict = {}
+_prefetch_futures: dict[tuple[str, str], Future] = {}
 _pool = ThreadPoolExecutor(max_workers=4)
 
 
 def _graph_fingerprint(graph_data: dict) -> str:
     """Hash graph node content to detect trace-relevant changes."""
+    def _node_identity(node: dict) -> str:
+        # Persisted graph nodes use `uuid`; keep `id` as a fallback for any
+        # older payloads that may still flow through this code path.
+        return str(node.get("uuid") or node.get("id") or "")
+
     content = "\n".join(
-        f"{n['id']}|{n.get('input', '')}|{n.get('output', '')}"
+        f"{_node_identity(n)}|{n.get('input', '')}|{n.get('output', '')}"
         for n in graph_data.get("nodes", [])
     )
     return hashlib.md5(content.encode()).hexdigest()
@@ -100,7 +105,7 @@ def _build_trace_from_graph(graph_data: dict):
     """
     from sovara.server.graph_analysis.trace_chat.utils.trace import Trace
 
-    graph = SessionGraph.from_dict(graph_data)
+    graph = RunGraph.from_dict(graph_data)
     nodes = sorted(graph.nodes, key=lambda node: (node.step_id, node.uuid))
     if not nodes:
         return None
@@ -129,30 +134,61 @@ def _build_trace_from_graph(graph_data: dict):
     return Trace.from_string("\n".join(lines))
 
 
-def _get_trace_for_session(session_id: str):
+def _get_trace_for_run(run_id: str):
     """Return (trace, is_new) — is_new=True when the trace was rebuilt."""
     from sovara.server.database_manager import DB
 
-    graph_row = DB.get_graph(session_id)
+    graph_row = DB.get_graph(run_id)
     if not graph_row or not graph_row["graph_topology"]:
         return None, False
 
-    graph = SessionGraph.from_json_string(graph_row["graph_topology"])
+    graph = RunGraph.from_json_string(graph_row["graph_topology"])
     graph_data = graph.to_dict()
     if not graph_data.get("nodes"):
         return None, False
 
     fp = _graph_fingerprint(graph_data)
 
-    cached = _trace_cache.get(session_id)
+    cached = _trace_cache.get(run_id)
     if cached and cached["fp"] == fp:
         return cached["trace"], False
 
     trace = _build_trace_from_graph(graph_data)
     if trace:
-        trace.session_id = session_id
-        _trace_cache[session_id] = {"trace": trace, "fp": fp}
+        trace.run_id = run_id
+        _trace_cache[run_id] = {"trace": trace, "fp": fp}
     return trace, True
+
+
+def _invalidate_prefetch_futures(run_id: str) -> None:
+    stale_keys = [key for key in _prefetch_futures if key[0] == run_id]
+    for key in stale_keys:
+        _prefetch_futures.pop(key, None)
+
+
+def _ensure_prefetch_future(run_id: str, trace, model: str, *, is_new: bool) -> Future:
+    if is_new:
+        _invalidate_prefetch_futures(run_id)
+
+    key = (run_id, model)
+    future = _prefetch_futures.get(key)
+    if future is not None:
+        if future.cancelled():
+            future = None
+        elif future.done():
+            try:
+                if future.exception() is not None:
+                    future = None
+            except Exception:
+                future = None
+
+    if future is None:
+        from sovara.server.graph_analysis.trace_chat.tools.summarize_trace import _generate_summary
+
+        future = _pool.submit(_generate_summary, trace, model)
+        _prefetch_futures[key] = future
+
+    return future
 
 
 # ============================================================
@@ -165,35 +201,31 @@ class ChatRequest(BaseModel):
     model: str = "anthropic/claude-sonnet-4-6"
 
 
-@app.post("/prefetch/{session_id}", status_code=202)
-def prefetch(session_id: str, model: str = "anthropic/claude-sonnet-4-6"):
+@app.post("/prefetch/{run_id}", status_code=202)
+def prefetch(run_id: str, model: str = "anthropic/claude-sonnet-4-6"):
     """Fire-and-forget: build trace + start summary prefetch. Returns immediately."""
     def _do():
-        trace, is_new = _get_trace_for_session(session_id)
+        trace, is_new = _get_trace_for_run(run_id)
         if trace is None:
             return
-        if is_new or session_id not in _prefetch_futures:
-            from sovara.server.graph_analysis.trace_chat.tools.summarize_trace import _generate_summary
-            _prefetch_futures[session_id] = _pool.submit(_generate_summary, trace, model)
+        _ensure_prefetch_future(run_id, trace, model, is_new=is_new)
     _pool.submit(_do)
     return {"status": "prefetching"}
 
 
-@app.post("/chat/{session_id}")
-async def chat(session_id: str, req: ChatRequest):
-    trace, is_new = await asyncio.to_thread(_get_trace_for_session, session_id)
+@app.post("/chat/{run_id}")
+async def chat(run_id: str, req: ChatRequest):
+    trace, is_new = await asyncio.to_thread(_get_trace_for_run, run_id)
     if trace is None:
-        raise HTTPException(400, "No LLM calls found for this session")
+        raise HTTPException(400, "No LLM calls found for this run")
 
     # (Re-)prefetch summary on first request or when the trace changed after a rerun/edit
-    if is_new or session_id not in _prefetch_futures:
-        from sovara.server.graph_analysis.trace_chat.tools.summarize_trace import _generate_summary
-        _prefetch_futures[session_id] = _pool.submit(_generate_summary, trace, req.model)
+    prefetch_future = _ensure_prefetch_future(run_id, trace, req.model, is_new=is_new)
 
     from sovara.server.graph_analysis.trace_chat.main import handle_question
     result = await asyncio.to_thread(
         handle_question, req.message, trace, req.history, req.model,
-        _prefetch_futures.get(session_id),
+        prefetch_future,
     )
     return result
 

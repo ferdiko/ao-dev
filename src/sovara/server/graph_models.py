@@ -115,18 +115,18 @@ class GraphEdge:
 
 
 @dataclass(slots=True)
-class SessionGraph:
-    """Typed session graph persisted to graph_topology and served to UIs."""
+class RunGraph:
+    """Typed run graph persisted to graph_topology and served to UIs."""
 
     nodes: list[GraphNode] = field(default_factory=list)
     edges: list[GraphEdge] = field(default_factory=list)
 
     @classmethod
-    def empty(cls) -> "SessionGraph":
+    def empty(cls) -> "RunGraph":
         return cls(nodes=[], edges=[])
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "SessionGraph":
+    def from_dict(cls, data: dict[str, Any] | None) -> "RunGraph":
         if not data:
             return cls.empty()
         return cls(
@@ -141,7 +141,7 @@ class SessionGraph:
         }
 
     @classmethod
-    def from_json_string(cls, data: str | None) -> "SessionGraph":
+    def from_json_string(cls, data: str | None) -> "RunGraph":
         if not data:
             return cls.empty()
         return cls.from_dict(json.loads(data))

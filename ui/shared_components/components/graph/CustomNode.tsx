@@ -25,7 +25,7 @@ function truncateLabel(label: string): string {
 interface CustomNodeData extends GraphNode {
   attachments: any;
   onUpdate: (nodeId: string, field: string, value: string) => void;
-  session_id?: string;
+  run_id?: string;
   messageSender: MessageSender;
   isDarkTheme?: boolean;
   onHover?: (nodeId: string | null) => void;
@@ -66,7 +66,7 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
         data.messageSender.send({
           type: "openNodeEditorTab",
           nodeId: id,
-          sessionId: data.session_id,
+          runId: data.run_id,
           field: "input",
           label: data.label || "Node",
           inputValue: data.input,
@@ -77,7 +77,7 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
         data.messageSender.send({
           type: "openNodeEditorTab",
           nodeId: id,
-          sessionId: data.session_id,
+          runId: data.run_id,
           field: "output",
           label: data.label || "Node",
           inputValue: data.input,

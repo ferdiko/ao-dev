@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import type { Experiment } from "./api";
+import type { Run } from "./api";
 import type { ProjectRun } from "./projectRuns";
 import {
-  experimentToProjectRun,
+  runToProjectRun,
   formatCodeVersionTimestamp,
   parseProjectRunTimestamp,
   sortProjectRuns,
@@ -11,17 +11,17 @@ import {
 import type { Tag } from "./tags";
 
 describe("projectRuns", () => {
-  it("maps experiments into project rows with UI defaults", () => {
+  it("maps runs into project rows with UI defaults", () => {
     const tags: Tag[] = [
       { tag_id: "tag-1", name: "baseline", color: "#6F7C8B" },
     ];
-    const experiment: Experiment = {
+    const run: Run = {
       active_runtime_seconds: null,
       color_preview: [],
       custom_metrics: { confidence: 0.95, success: true },
-      run_name: "Run 12",
+      name: "Run 12",
       runtime_seconds: 12.4,
-      session_id: "session-12",
+      run_id: "run-12",
       status: "finished",
       tags,
       timestamp: "2026-03-23 10:11:12",
@@ -29,15 +29,15 @@ describe("projectRuns", () => {
       version_date: null,
     };
 
-    expect(experimentToProjectRun(experiment)).toEqual({
+    expect(runToProjectRun(run)).toEqual({
       codeVersion: "",
       customMetrics: { confidence: 0.95, success: true },
       activeRuntimeSeconds: null,
-      id: "session-12",
+      id: "run-12",
       latency: "12.4s",
       latencySeconds: 12.4,
       name: "Run 12",
-      sessionId: "session-12",
+      runId: "run-12",
       status: "finished",
       tags,
       timestamp: "2026-03-23 10:11:12",
@@ -58,13 +58,13 @@ describe("projectRuns", () => {
   });
 
   it("uses the active runtime checkpoint for running rows", () => {
-    const experiment: Experiment = {
+    const run: Run = {
       active_runtime_seconds: 3.2,
       color_preview: [],
       custom_metrics: {},
-      run_name: "Run 13",
+      name: "Run 13",
       runtime_seconds: 12.4,
-      session_id: "session-13",
+      run_id: "run-13",
       status: "running",
       tags: [],
       timestamp: "2026-03-23 10:11:12",
@@ -72,7 +72,7 @@ describe("projectRuns", () => {
       version_date: null,
     };
 
-    expect(experimentToProjectRun(experiment)).toMatchObject({
+    expect(runToProjectRun(run)).toMatchObject({
       activeRuntimeSeconds: 3.2,
       latency: "3.2s",
       latencySeconds: 3.2,
@@ -80,7 +80,7 @@ describe("projectRuns", () => {
   });
 
   it("sorts numbered run names numerically", () => {
-    const baseRun: Omit<ProjectRun, "name" | "sessionId" | "id"> = {
+    const baseRun: Omit<ProjectRun, "name" | "runId" | "id"> = {
       activeRuntimeSeconds: null,
       codeVersion: "—",
       customMetrics: {},
@@ -93,9 +93,9 @@ describe("projectRuns", () => {
     };
 
     const runs: ProjectRun[] = [
-      { ...baseRun, id: "s-10", name: "Run 10", sessionId: "s-10" },
-      { ...baseRun, id: "s-2", name: "Run 2", sessionId: "s-2" },
-      { ...baseRun, id: "s-3", name: "Run 3", sessionId: "s-3" },
+      { ...baseRun, id: "s-10", name: "Run 10", runId: "s-10" },
+      { ...baseRun, id: "s-2", name: "Run 2", runId: "s-2" },
+      { ...baseRun, id: "s-3", name: "Run 3", runId: "s-3" },
     ];
 
     const sorted = sortProjectRuns(runs, { direction: "asc", key: "name" });

@@ -4,7 +4,7 @@ import { Lesson } from '../lessons/LessonsView';
 interface GraphHeaderProps {
   runName: string;
   isDarkTheme: boolean;
-  sessionId?: string;
+  runId?: string;
   lessons?: Lesson[];
   lessonsAppliedCount?: number;
   onNavigateToLessons?: () => void;
@@ -14,20 +14,20 @@ interface GraphHeaderProps {
 export const GraphHeader: React.FC<GraphHeaderProps> = ({
   runName,
   isDarkTheme,
-  sessionId,
+  runId,
   lessons = [],
   lessonsAppliedCount,
   onNavigateToLessons,
   onNavigateToAppliedLessons,
 }) => {
   // Count lessons extracted from this graph
-  const lessonsExtractedFrom = sessionId
-    ? lessons.filter((lesson) => lesson.extractedFrom?.sessionId === sessionId).length
+  const lessonsExtractedFrom = runId
+    ? lessons.filter((lesson) => lesson.extractedFrom?.runId === runId).length
     : 0;
 
   // Count lessons applied to this graph (from server, or fallback to filtering lessons)
-  const lessonsAppliedTo = lessonsAppliedCount ?? (sessionId
-    ? lessons.filter((lesson) => lesson.appliedTo?.some((app) => app.sessionId === sessionId)).length
+  const lessonsAppliedTo = lessonsAppliedCount ?? (runId
+    ? lessons.filter((lesson) => lesson.appliedTo?.some((app) => app.runId === runId)).length
     : 0);
 
   return (
@@ -66,7 +66,7 @@ export const GraphHeader: React.FC<GraphHeaderProps> = ({
         </div>
 
         {/* Horizontal Line */}
-        {sessionId && (
+        {runId && (
           <div
             style={{
               width: '280px',
@@ -78,7 +78,7 @@ export const GraphHeader: React.FC<GraphHeaderProps> = ({
         )}
 
         {/* Lesson Stats */}
-        {sessionId && (
+        {runId && (
           <div
             style={{
               display: 'inline-flex',

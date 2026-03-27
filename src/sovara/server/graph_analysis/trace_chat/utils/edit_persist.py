@@ -14,23 +14,23 @@ from .trace import Trace, _prompt_hash
 RERUN_MSG = "\n\nEdit applied and saved."
 
 
-def _read_to_show(session_id: str, node_uuid: str) -> dict | None:
+def _read_to_show(run_id: str, node_uuid: str) -> dict | None:
     """Return the current to_show dict for a node, or None if unavailable."""
     from sovara.server.database_manager import DB
-    row = DB.query_one_llm_call_input(session_id, node_uuid)
+    row = DB.query_one_llm_call_input(run_id, node_uuid)
     if not row:
         return None
     inp = json.loads(dict(row)["input"] or "{}")
     return inp.get("to_show")
 
 
-def _post_edit_input(session_id: str, node_uuid: str, to_show: dict) -> bool:
+def _post_edit_input(run_id: str, node_uuid: str, to_show: dict) -> bool:
     """Call POST /ui/edit-input on the main server. Returns True on success."""
     from sovara.common.constants import HOST, PORT
     try:
         resp = httpx.post(
             f"http://{HOST}:{PORT}/ui/edit-input",
-            json={"session_id": session_id, "node_uuid": node_uuid, "value": json.dumps(to_show)},
+            json={"run_id": run_id, "node_uuid": node_uuid, "value": json.dumps(to_show)},
             timeout=10.0,
         )
         return resp.is_success
@@ -46,7 +46,7 @@ def write_prompt_edit(trace: Trace, prompt_id: str) -> str:
     Handles both Anthropic format (body.system) and OpenAI format (role=system
     message in body.messages).
     """
-    if not trace.session_id:
+    if not trace.run_id:
         return ""  # Not built from DB; skip silently (e.g. CLI usage)
 
     new_prompt = trace.prompt_registry[prompt_id]
@@ -57,7 +57,7 @@ def write_prompt_edit(trace: Trace, prompt_id: str) -> str:
 
     failed = []
     for r in affected:
-        to_show = _read_to_show(trace.session_id, r.node_uuid)
+        to_show = _read_to_show(trace.run_id, r.node_uuid)
         if to_show is None:
             failed.append(str(r.index))
             continue
@@ -68,7 +68,7 @@ def write_prompt_edit(trace: Trace, prompt_id: str) -> str:
                 if m.get("role") == "system":
                     m["content"] = new_prompt
                     break
-        if not _post_edit_input(trace.session_id, r.node_uuid, to_show):
+        if not _post_edit_input(trace.run_id, r.node_uuid, to_show):
             failed.append(str(r.index))
 
     if failed:
@@ -92,7 +92,7 @@ def write_input_sections_edit(trace: Trace, turn_index: int) -> str:
     Groups sections by msg_index, reassembles each message's content,
     and splices edited messages back into to_show["body.messages"].
     """
-    if not trace.session_id:
+    if not trace.run_id:
         return ""
 
     from collections import defaultdict
@@ -117,7 +117,7 @@ def write_input_sections_edit(trace: Trace, turn_index: int) -> str:
     if not record.node_uuid:
         return "\n\nError: step has no DB node reference."
 
-    to_show = _read_to_show(trace.session_id, record.node_uuid)
+    to_show = _read_to_show(trace.run_id, record.node_uuid)
     if to_show is None:
         return "\n\nError: could not read original input from database."
 
@@ -125,6 +125,6 @@ def write_input_sections_edit(trace: Trace, turn_index: int) -> str:
     messages = to_show["body.messages"]
     messages[-len(original_msgs):] = edited_msgs
 
-    if not _post_edit_input(trace.session_id, record.node_uuid, to_show):
+    if not _post_edit_input(trace.run_id, record.node_uuid, to_show):
         return "\n\nError: failed to write to database."
     return RERUN_MSG

@@ -77,31 +77,36 @@ def handle_question(question: str, trace: Trace, history: list, model: str,
     logger.info("=" * 60)
     logger.info("NEW QUESTION: %s", question)
     logger.info(
-        "TRACE CONTEXT: session_id=%s steps=%d history_messages=%d model=%s",
-        trace.session_id or "-",
+        "TRACE CONTEXT: run_id=%s steps=%d history_messages=%d model=%s",
+        trace.run_id or "-",
         len(trace),
         len(history),
         model,
     )
     logger.info("=" * 60)
 
-    # Wait for prefetched summary if still running, and stash on trace
-    if prefetch_future is not None and not hasattr(trace, "_prefetched_summary"):
-        try:
-            trace._prefetched_summary = prefetch_future.result()
-            logger.info(
-                "Prefetched summary ready (%d chars): %s",
-                len(trace._prefetched_summary),
-                _log_preview(trace._prefetched_summary),
-            )
-        except Exception as e:
-            logger.warning("Prefetch failed: %s", e)
+    # Use a prefetched summary if it is already available for this model.
+    trace_summary = trace.prefetched_summaries.get(model, "")
+    if prefetch_future is not None and not trace_summary:
+        if prefetch_future.done():
+            try:
+                trace_summary = prefetch_future.result()
+                trace.prefetched_summaries[model] = trace_summary
+                logger.info(
+                    "Prefetched summary ready (%d chars): %s",
+                    len(trace_summary),
+                    _log_preview(trace_summary),
+                )
+            except Exception as e:
+                logger.warning("Prefetch failed: %s", e)
+        else:
+            logger.info("Prefetched summary still running for model=%s; proceeding without it", model)
 
     # Build system prompt, injecting prefetched summary as context if available
     system = SYSTEM_PROMPT
-    if hasattr(trace, "_prefetched_summary") and trace._prefetched_summary:
+    if trace_summary:
         system += (
-            "\n## Trace Summary\n" + trace._prefetched_summary
+            "\n## Trace Summary\n" + trace_summary
         )
 
     messages = list(history) + [{"role": "user", "content": question}]

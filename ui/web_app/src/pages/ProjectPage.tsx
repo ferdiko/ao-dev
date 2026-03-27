@@ -10,11 +10,11 @@ import { PaginationBar } from "../components/PaginationBar";
 import { ProjectFilterPanel } from "../components/ProjectFilterPanel";
 import { RunningRunsSection } from "../components/RunningRunsSection";
 import { useCompletedSelection } from "../hooks/useCompletedSelection";
-import { useProjectExperimentsData } from "../hooks/useProjectExperimentsData";
+import { useProjectRunsData } from "../hooks/useProjectRunsData";
 import { computeDataBounds, emptyFilters, isMetricFilterActive, serializeFilters, type Filters } from "../projectFilters";
 import { toggleSortState, useStoredSortState, type SortState } from "../hooks/useStoredSortState";
 import {
-  experimentToProjectRun,
+  runToProjectRun,
   formatCodeVersionTimestamp,
   formatProjectRunTimestamp,
   sortProjectRuns,
@@ -92,23 +92,23 @@ export function ProjectPage() {
   });
   const effectiveCompletedSort = completedSort?.key === "tags" ? DEFAULT_SORT : completedSort;
   const {
-    completedExperiments,
+    completedRuns: completedRunsData,
     completedTotal,
     customMetricColumns,
     distinctVersions,
     loading,
     projectName,
     projectTags,
-    runningExperiments,
-  } = useProjectExperimentsData({
+    runningRuns: runningRunsData,
+  } = useProjectRunsData({
     completedPage,
     completedRowsPerPage,
     completedSort: effectiveCompletedSort,
     filters,
     projectId,
   });
-  const runningRuns = useMemo(() => runningExperiments.map(experimentToProjectRun), [runningExperiments]);
-  const completedRuns = useMemo(() => completedExperiments.map(experimentToProjectRun), [completedExperiments]);
+  const runningRuns = useMemo(() => runningRunsData.map(runToProjectRun), [runningRunsData]);
+  const completedRuns = useMemo(() => completedRunsData.map(runToProjectRun), [completedRunsData]);
   const bounds = useMemo(() => computeDataBounds([...runningRuns, ...completedRuns]), [runningRuns, completedRuns]);
   const columnStorageKey = useMemo(
     () => `web_app:project_columns:${projectId ?? "unknown"}`,
@@ -146,7 +146,7 @@ export function ProjectPage() {
   const filtersActive = useMemo(
     () => Boolean(
       filters.name.value
-      || filters.sessionId
+      || filters.runId
       || filters.version.size > 0
       || filters.tags.size > 0
       || filters.label.size > 0
@@ -168,11 +168,11 @@ export function ProjectPage() {
     setRunningSort((prev: SortState) => toggleSortState(prev, key));
   }, [setRunningSort]);
 
-  const handleRowKeyDown = useCallback((event: React.KeyboardEvent<HTMLTableRowElement>, sessionId: string) => {
+  const handleRowKeyDown = useCallback((event: React.KeyboardEvent<HTMLTableRowElement>, runId: string) => {
     if (event.target !== event.currentTarget) return;
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
-    navigate(`/project/${projectId}/run/${sessionId}`);
+    navigate(`/project/${projectId}/run/${runId}`);
   }, [navigate, projectId]);
 
   const handleCompletedSort = useCallback((key: string) => {
@@ -263,11 +263,11 @@ export function ProjectPage() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [filtersOpen]);
 
-  const handleDeleteRuns = useCallback(async (sessionIds: string[]) => {
-    if (sessionIds.length === 0) return;
+  const handleDeleteRuns = useCallback(async (runIds: string[]) => {
+    if (runIds.length === 0) return;
     try {
-      await deleteRuns(sessionIds);
-      removeCompletedSelection(sessionIds);
+      await deleteRuns(runIds);
+      removeCompletedSelection(runIds);
       closeContextMenu();
       setActionsState({ contextKey: actionsContextKey, open: false });
     } catch (error) {
@@ -278,14 +278,14 @@ export function ProjectPage() {
     }
   }, [actionsContextKey, closeContextMenu, removeCompletedSelection]);
 
-  const handleOpenRuns = useCallback((sessionIds: string[]) => {
-    if (sessionIds.length === 0) return;
+  const handleOpenRuns = useCallback((runIds: string[]) => {
+    if (runIds.length === 0) return;
     closeContextMenu();
     setActionsState({ contextKey: actionsContextKey, open: false });
-    navigate(`/project/${projectId}/run/${sessionIds.join(",")}`);
+    navigate(`/project/${projectId}/run/${runIds.join(",")}`);
   }, [actionsContextKey, closeContextMenu, navigate, projectId]);
 
-  const handleCompletedRowContextMenu = useCallback((event: React.MouseEvent<HTMLTableRowElement>, sessionId: string) => {
+  const handleCompletedRowContextMenu = useCallback((event: React.MouseEvent<HTMLTableRowElement>, runId: string) => {
     event.preventDefault();
     setColumnsOpen(false);
     setActionsState({ contextKey: actionsContextKey, open: false });
@@ -295,7 +295,7 @@ export function ProjectPage() {
       open: true,
       x: event.clientX,
       y: event.clientY,
-      targetIds: [sessionId],
+      targetIds: [runId],
     });
   }, [actionsContextKey]);
 
@@ -337,7 +337,7 @@ export function ProjectPage() {
           currentPage={safeRunningPage}
           formatCodeVersion={formatCodeVersionTimestamp}
           formatTimestamp={formatProjectRunTimestamp}
-          onOpenRun={(sessionId) => navigate(`/project/${projectId}/run/${sessionId}`)}
+          onOpenRun={(runId) => navigate(`/project/${projectId}/run/${runId}`)}
           onRowKeyDown={handleRowKeyDown}
           onSort={handleRunningSort}
           rows={running}
@@ -411,7 +411,7 @@ export function ProjectPage() {
               formatCodeVersion={formatCodeVersionTimestamp}
               formatTimestamp={formatProjectRunTimestamp}
               metricColumns={customMetricColumns}
-              onOpenRun={(sessionId) => navigate(`/project/${projectId}/run/${sessionId}`)}
+              onOpenRun={(runId) => navigate(`/project/${projectId}/run/${runId}`)}
               onRowKeyDown={handleRowKeyDown}
               onRowContextMenu={handleCompletedRowContextMenu}
               onSort={handleCompletedSort}

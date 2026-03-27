@@ -55,8 +55,8 @@ def patched_function(self, *args, **kwargs):
     input_dict = get_input_dict(original_function, *args, **kwargs)
 
     # 2. Find edges using content-based matching (BEFORE cache lookup)
-    session_id = get_session_id()
-    source_node_ids = find_source_nodes(session_id, input_dict, api_type)
+    run_id = get_session_id()
+    source_node_ids = find_source_nodes(run_id, input_dict, api_type)
 
     # 3. Check cache or call the LLM
     cache_output = DB.get_in_out(input_dict, api_type)
@@ -65,7 +65,7 @@ def patched_function(self, *args, **kwargs):
         DB.cache_output(cache_result=cache_output, output_obj=result, api_type=api_type)
 
     # 4. Store output strings for future matching
-    store_output_strings(cache_output.session_id, cache_output.node_id, cache_output.output, api_type)
+    store_output_strings(cache_output.run_id, cache_output.node_id, cache_output.output, api_type)
 
     # 5. Report node and edges to server
     send_graph_node_and_edges(
@@ -182,8 +182,8 @@ def patch_httpx_send(bound_obj, bound_cls):
             DB.cache_output(cache_result=cache_output, output_obj=result, api_type=api_type)
 
         # Content-based edge detection
-        source_node_ids = find_source_nodes(cache_output.session_id, cache_output.input_dict, api_type)
-        store_output_strings(cache_output.session_id, cache_output.node_id, cache_output.output, api_type)
+        source_node_ids = find_source_nodes(cache_output.run_id, cache_output.input_dict, api_type)
+        store_output_strings(cache_output.run_id, cache_output.node_id, cache_output.output, api_type)
 
         # Report to server
         send_graph_node_and_edges(...)

@@ -1,7 +1,7 @@
 export interface FailureAnalysis {
   id: string;
   analysisId: string;
-  sessionId: string;
+  runId: string;
   name: string;
   input: string;
   output: string;
@@ -73,7 +73,7 @@ export const mockFailureAnalyses: FailureAnalysis[] = [
   {
     id: "fa-1",
     analysisId: "a3f8c1e2",
-    sessionId: "2fad5b74",
+    runId: "2fad5b74",
     name: "Run 47 – Revenue Query",
     input: "Show the total revenue by quarter for 2025 from the sales ...",
     output: "SELECT quarter, SUM(revenue) FROM sales WHERE year =...",
@@ -85,7 +85,7 @@ export const mockFailureAnalyses: FailureAnalysis[] = [
   {
     id: "fa-2",
     analysisId: "b7d4e9a1",
-    sessionId: "3619e3ae",
+    runId: "3619e3ae",
     name: "Run 44 – Return Rate",
     input: "Find the top 10 products by return rate with category brea...",
     output: "SELECT p.name, COUNT(r.id) * 100.0 / COUNT(o.id) AS ret...",
@@ -97,7 +97,7 @@ export const mockFailureAnalyses: FailureAnalysis[] = [
   {
     id: "fa-3",
     analysisId: "c2e6f0b5",
-    sessionId: "c7af2d35",
+    runId: "c7af2d35",
     name: "Run 46 – Customer Purchases",
     input: "List all customers who made purchases above $500 in Ma...",
     output: "",

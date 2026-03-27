@@ -20,20 +20,20 @@ from sovara.common.logger import create_file_logger
 from sovara.common.constants import (
     MAIN_SERVER_LOG,
     SERVER_INACTIVITY_TIMEOUT,
-    SESSION_ORPHAN_TIMEOUT,
+    RUN_ORPHAN_TIMEOUT,
     SOVARA_GIT_DIR,
 )
 from sovara.server.database_manager import DB
-from sovara.server.graph_models import SessionGraph
+from sovara.server.graph_models import RunGraph
 
 logger = create_file_logger(MAIN_SERVER_LOG)
 
 
-class Session:
+class Run:
     """Represents a running so-record process."""
 
-    def __init__(self, session_id: str, project_id: str = None, project_root: str = None):
-        self.session_id = session_id
+    def __init__(self, run_id: str, project_id: str = None, project_root: str = None):
+        self.run_id = run_id
         self.project_id = project_id
         self.project_root = project_root
         self.status = "running"
@@ -44,24 +44,24 @@ class Session:
 
 
 class ServerState:
-    """Manages all server state: sessions, graphs, connections."""
+    """Manages all server state: runs, graphs, connections."""
 
-    EXPERIMENT_PAGE_SIZE = 50
+    RUN_PAGE_SIZE = 50
     BROADCAST_DEBOUNCE_MS = 100
 
     def __init__(self):
-        # Session state
-        self.sessions: dict[str, Session] = {}
-        self.session_graphs: dict[str, SessionGraph] = {}
-        self.rerun_sessions: set[str] = set()
+        # Run state
+        self.runs: dict[str, Run] = {}
+        self.run_graphs: dict[str, RunGraph] = {}
+        self.rerun_run_ids: set[str] = set()
         # Runtime checkpointing can happen inside add-node handling, which
-        # already holds this lock while mutating session_graphs.
+        # already holds this lock while mutating run_graphs.
         self.lock = threading.RLock()
 
         # WebSocket connections
         self.ui_websockets: set = set()  # set of WebSocket connections
 
-        # SSE queues for runners (session_id -> asyncio.Queue)
+        # SSE queues for runners (run_id -> asyncio.Queue)
         self.runner_event_queues: dict[str, asyncio.Queue] = {}
 
         # Inactivity tracking
@@ -113,15 +113,15 @@ class ServerState:
                 logger.error(f"Error broadcasting to UI: {e}")
                 self.ui_websockets.discard(ws)
 
-    async def broadcast_graph_update(self, session_id: str) -> None:
-        """Broadcast current graph state for a session to all UIs."""
-        if session_id in self.session_graphs:
-            graph = self.session_graphs[session_id].to_dict()
+    async def broadcast_graph_update(self, run_id: str) -> None:
+        """Broadcast current graph state for a run to all UIs."""
+        if run_id in self.run_graphs:
+            graph = self.run_graphs[run_id].to_dict()
             await self.broadcast_to_all_uis({
                 "type": "graph_update",
-                "session_id": session_id,
+                "run_id": run_id,
                 "payload": graph,
-                "active_runtime_seconds": self.get_persisted_active_runtime_seconds(session_id),
+                "active_runtime_seconds": self.get_persisted_active_runtime_seconds(run_id),
             })
 
     def notify_project_list_changed(self) -> None:
@@ -132,8 +132,8 @@ class ServerState:
         """Broadcast a signal so UIs refetch the local user profile."""
         self.schedule_broadcast({"type": "user_changed"})
 
-    def notify_experiment_list_changed(self) -> None:
-        """Schedule a debounced broadcast of the experiment list."""
+    def notify_run_list_changed(self) -> None:
+        """Schedule a debounced broadcast of the run list."""
         with self._broadcast_lock:
             if self._broadcast_timer is not None:
                 self._broadcast_timer.cancel()
@@ -148,34 +148,34 @@ class ServerState:
         """Called by debounce timer -- schedules async broadcast on the event loop."""
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(
-                self.broadcast_experiment_list_to_uis(), self._loop
+                self.broadcast_run_list_to_uis(), self._loop
             )
 
-    async def broadcast_experiment_list_to_uis(self) -> None:
-        """Broadcast running + first page of finished experiments to all UIs."""
-        session_map, running_ids = self.get_session_snapshot()
+    async def broadcast_run_list_to_uis(self) -> None:
+        """Broadcast running + first page of finished runs to all UIs."""
+        run_map, running_ids = self.get_run_snapshot()
 
-        running_rows = DB.get_experiments_by_ids(running_ids)
-        finished_rows = DB.get_experiments_excluding_ids(
-            running_ids, limit=self.EXPERIMENT_PAGE_SIZE,
+        running_rows = DB.get_runs_by_ids(running_ids)
+        finished_rows = DB.get_runs_excluding_ids(
+            running_ids, limit=self.RUN_PAGE_SIZE,
         )
-        finished_count = DB.get_experiment_count_excluding_ids(running_ids)
-        has_more = finished_count > self.EXPERIMENT_PAGE_SIZE
+        finished_count = DB.get_run_count_excluding_ids(running_ids)
+        has_more = finished_count > self.RUN_PAGE_SIZE
 
-        experiments = [
-            self._format_experiment_row(row, session_map)
+        runs = [
+            self._format_run_row(row, run_map)
             for row in running_rows + finished_rows
         ]
         await self.broadcast_to_all_uis(
-            {"type": "experiment_list", "experiments": experiments, "has_more": has_more}
+            {"type": "run_list", "runs": runs, "has_more": has_more}
         )
 
-    def _format_experiment_row(self, row, session_map) -> dict:
-        """Convert a DB experiment row to a dict for the frontend."""
+    def _format_run_row(self, row, run_map) -> dict:
+        """Convert a DB run row to a dict for the frontend."""
         row_dict = dict(row)
-        session_id = row_dict["session_id"]
-        session = session_map.get(session_id)
-        status = session.status if session else "finished"
+        run_id = row_dict["run_id"]
+        run = run_map.get(run_id)
+        status = run.status if run else "finished"
 
         timestamp = row_dict["timestamp"]
         if hasattr(timestamp, "isoformat"):
@@ -200,160 +200,156 @@ class ServerState:
                 color_preview = []
 
         return {
-            "session_id": session_id,
+            "run_id": run_id,
             "status": status,
             "timestamp": timestamp,
             "runtime_seconds": DB._normalize_runtime_seconds(row_dict["runtime_seconds"]),
             "active_runtime_seconds": DB._normalize_runtime_seconds(row_dict["active_runtime_seconds"]),
             "color_preview": color_preview,
             "version_date": row_dict["version_date"],
-            "run_name": row_dict["name"],
+            "name": row_dict["name"],
             "custom_metrics": DB._parse_custom_metrics(row_dict["custom_metrics"]),
             "thumb_label": DB._normalize_thumb_label(row_dict["thumb_label"]),
             "tags": row_dict.get("tags", []),
-            "project_id": row_dict.get("project_id") or (session.project_id if session else None),
+            "project_id": row_dict.get("project_id") or (run.project_id if run else None),
         }
 
     # ============================================================
     # Helpers
     # ============================================================
 
-    def _clear_session_ui(self, session_id: str) -> None:
-        """Clear UI state for a session (graphs and color previews)."""
-        empty_graph = SessionGraph.empty()
-        self.session_graphs[session_id] = empty_graph
-        DB.update_graph_topology(session_id, empty_graph)
-        DB.update_color_preview(session_id, [])
+    def _clear_run_ui(self, run_id: str) -> None:
+        """Clear UI state for a run (graphs and color previews)."""
+        empty_graph = RunGraph.empty()
+        self.run_graphs[run_id] = empty_graph
+        DB.update_graph_topology(run_id, empty_graph)
+        DB.update_color_preview(run_id, [])
 
-    def clear_session_ui_and_schedule_broadcast(self, session_id: str) -> None:
+    def clear_run_ui_and_schedule_broadcast(self, run_id: str) -> None:
         """Clear UI state and schedule broadcast updates."""
-        self._clear_session_ui(session_id)
-        empty_graph = self.session_graphs[session_id]
+        self._clear_run_ui(run_id)
+        empty_graph = self.run_graphs[run_id]
         self.schedule_broadcast(
-            {"type": "color_preview_update", "session_id": session_id, "color_preview": []}
+            {"type": "color_preview_update", "run_id": run_id, "color_preview": []}
         )
         self.schedule_broadcast({
             "type": "graph_update",
-            "session_id": session_id,
+            "run_id": run_id,
             "payload": empty_graph.to_dict(),
-            "active_runtime_seconds": self.get_persisted_active_runtime_seconds(session_id),
+            "active_runtime_seconds": self.get_persisted_active_runtime_seconds(run_id),
         })
 
-    def start_session_attempt(
+    def start_run_attempt(
         self,
-        session_id: str,
+        run_id: str,
         project_id: str | None = None,
         project_root: str | None = None,
         clear_active_runtime: bool = True,
         reset_runner_connection: bool = False,
-    ) -> Session:
-        """Mark a session as actively running and reset its in-memory timer."""
+    ) -> Run:
+        """Mark a run as actively running and reset its in-memory timer."""
         with self.lock:
-            session = self.sessions.get(session_id)
-            if session is None:
-                session = Session(session_id, project_id=project_id, project_root=project_root)
-                self.sessions[session_id] = session
+            run = self.runs.get(run_id)
+            if run is None:
+                run = Run(run_id, project_id=project_id, project_root=project_root)
+                self.runs[run_id] = run
             if project_id is not None:
-                session.project_id = project_id
+                run.project_id = project_id
             if project_root is not None:
-                session.project_root = project_root
-            session.status = "running"
-            session.runtime_started_at = time.perf_counter()
+                run.project_root = project_root
+            run.status = "running"
+            run.runtime_started_at = time.perf_counter()
             if reset_runner_connection:
-                session.sse_connected = False
-                session.registered_at = time.time()
+                run.sse_connected = False
+                run.registered_at = time.time()
         if clear_active_runtime:
-            DB.clear_active_runtime_seconds(session_id)
-        return session
+            DB.clear_active_runtime_seconds(run_id)
+        return run
 
-    def get_live_runtime_seconds(self, session_id: str) -> float | None:
-        """Return the current elapsed runtime for a running session."""
+    def get_live_runtime_seconds(self, run_id: str) -> float | None:
+        """Return the current elapsed runtime for a running run."""
         with self.lock:
-            session = self.sessions.get(session_id)
-            started_at = session.runtime_started_at if session else None
+            run = self.runs.get(run_id)
+            started_at = run.runtime_started_at if run else None
         if started_at is None:
             return None
         return max(0.0, time.perf_counter() - started_at)
 
-    def get_persisted_active_runtime_seconds(self, session_id: str) -> float | None:
-        """Return the last persisted active runtime checkpoint for a session."""
-        row = DB.get_experiment_detail(session_id)
+    def get_persisted_active_runtime_seconds(self, run_id: str) -> float | None:
+        """Return the last persisted active runtime checkpoint for a run."""
+        row = DB.get_run_detail(run_id)
         if row is None:
             return None
         return DB._normalize_runtime_seconds(row["active_runtime_seconds"])
 
-    def checkpoint_session_runtime(self, session_id: str) -> float | None:
-        """Persist the current runtime checkpoint for a live session."""
-        elapsed = self.get_live_runtime_seconds(session_id)
+    def checkpoint_run_runtime(self, run_id: str) -> float | None:
+        """Persist the current runtime checkpoint for a live run."""
+        elapsed = self.get_live_runtime_seconds(run_id)
         if elapsed is None:
             return None
-        DB.update_active_runtime_seconds(session_id, elapsed)
+        DB.update_active_runtime_seconds(run_id, elapsed)
         return elapsed
 
-    def finalize_session_runtime(self, session_id: str) -> float | None:
+    def finalize_run_runtime(self, run_id: str) -> float | None:
         """Finalize the current run attempt and preserve the first canonical runtime."""
-        elapsed = self.get_live_runtime_seconds(session_id)
+        elapsed = self.get_live_runtime_seconds(run_id)
         if elapsed is None:
             return None
-        DB.finalize_runtime(session_id, elapsed)
+        DB.finalize_runtime(run_id, elapsed)
         with self.lock:
-            session = self.sessions.get(session_id)
-            if session:
-                session.runtime_started_at = None
+            run = self.runs.get(run_id)
+            if run:
+                run.runtime_started_at = None
         return elapsed
 
-    def checkpoint_interrupted_session_runtime(self, session_id: str) -> float | None:
+    def checkpoint_interrupted_run_runtime(self, run_id: str) -> float | None:
         """Persist the best-known runtime for an interrupted attempt without finalizing it."""
-        elapsed = self.get_live_runtime_seconds(session_id)
+        elapsed = self.get_live_runtime_seconds(run_id)
         if elapsed is None:
             return None
-        DB.update_active_runtime_seconds(session_id, elapsed)
+        DB.update_active_runtime_seconds(run_id, elapsed)
         with self.lock:
-            session = self.sessions.get(session_id)
-            if session:
-                session.runtime_started_at = None
+            run = self.runs.get(run_id)
+            if run:
+                run.runtime_started_at = None
         return elapsed
 
-    def sweep_dead_sessions(self) -> list[str]:
-        """Mark sessions whose runner died before SSE connected as finished."""
+    def sweep_dead_runs(self) -> list[str]:
+        """Mark runs whose runner died before SSE connected as finished."""
         now = time.time()
-        swept_session_ids: list[str] = []
-        for session in list(self.sessions.values()):
+        swept_run_ids: list[str] = []
+        for run in list(self.runs.values()):
             if (
-                session.status == "running"
-                and session.session_id in self.runner_event_queues
-                and not session.sse_connected
-                and now - session.registered_at > SESSION_ORPHAN_TIMEOUT
+                run.status == "running"
+                and run.run_id in self.runner_event_queues
+                and not run.sse_connected
+                and now - run.registered_at > RUN_ORPHAN_TIMEOUT
             ):
-                logger.info(f"Sweeping orphaned session {session.session_id}")
-                self.checkpoint_interrupted_session_runtime(session.session_id)
-                session.status = "finished"
-                self.runner_event_queues.pop(session.session_id, None)
-                swept_session_ids.append(session.session_id)
-        return swept_session_ids
+                logger.info(f"Sweeping orphaned run {run.run_id}")
+                self.checkpoint_interrupted_run_runtime(run.run_id)
+                run.status = "finished"
+                self.runner_event_queues.pop(run.run_id, None)
+                swept_run_ids.append(run.run_id)
+        return swept_run_ids
 
-    def _sweep_dead_sessions(self) -> list[str]:
-        """Backward-compatible alias for the public orphan-session sweep."""
-        return self.sweep_dead_sessions()
-
-    def get_session_snapshot(self) -> tuple[dict[str, Session], set[str]]:
-        """Return a fresh snapshot of sessions after reconciling orphaned runners."""
-        self.sweep_dead_sessions()
+    def get_run_snapshot(self) -> tuple[dict[str, Run], set[str]]:
+        """Return a fresh snapshot of runs after reconciling orphaned runners."""
+        self.sweep_dead_runs()
         with self.lock:
-            session_map = dict(self.sessions)
-        running_ids = {sid for sid, session in session_map.items() if session.status == "running"}
-        return session_map, running_ids
+            run_map = dict(self.runs)
+        running_ids = {rid for rid, run in run_map.items() if run.status == "running"}
+        return run_map, running_ids
 
     def load_finished_runs(self) -> None:
-        """Load finished runs from database into sessions dict."""
+        """Load finished runs from database into the in-memory run map."""
         try:
             rows = DB.get_finished_runs()
             for row in rows:
-                session_id = row["session_id"]
-                if session_id not in self.sessions:
-                    session = Session(session_id)
-                    session.status = "finished"
-                    self.sessions[session_id] = session
+                run_id = row["run_id"]
+                if run_id not in self.runs:
+                    run = Run(run_id)
+                    run.status = "finished"
+                    self.runs[run_id] = run
         except Exception as e:
             logger.warning(f"Failed to load finished runs: {e}")
 
@@ -441,57 +437,57 @@ class ServerState:
             logger.error(f"Git operation failed: {e}")
             return None
 
-    def _do_git_version(self, session_id: str, project_id: str, project_root: str) -> None:
-        """Background thread: commit files and update experiment version_date."""
+    def _do_git_version(self, run_id: str, project_id: str, project_root: str) -> None:
+        """Background thread: commit files and update run version_date."""
         version_date = self._commit_and_get_version_timestamp(project_id, project_root)
         if version_date:
-            DB.update_experiment_version_date(session_id, version_date)
-        self.notify_experiment_list_changed()
+            DB.update_run_version_date(run_id, version_date)
+        self.notify_run_list_changed()
 
-    def request_git_version(self, session_id: str, project_id: str, project_root: str) -> None:
+    def request_git_version(self, run_id: str, project_id: str, project_root: str) -> None:
         """Submit async git versioning in the background."""
-        self._git_executor.submit(self._do_git_version, session_id, project_id, project_root)
+        self._git_executor.submit(self._do_git_version, run_id, project_id, project_root)
 
     # ============================================================
     # Process Spawning
     # ============================================================
 
-    def spawn_session_process(self, session_id: str, child_session_id: str) -> None:
-        """Spawn a new session process with the original command and environment."""
+    def spawn_run_process(self, run_id: str, child_run_id: str) -> None:
+        """Spawn a new run process with the original command and environment."""
         try:
-            cwd, command, environment = DB.get_exec_command(session_id)
+            cwd, command, environment = DB.get_exec_command(run_id)
             if not command:
                 return
 
-            self.rerun_sessions.add(child_session_id)
+            self.rerun_run_ids.add(child_run_id)
 
             env = os.environ.copy()
-            env["SOVARA_SESSION_ID"] = session_id
+            env["SOVARA_RUN_ID"] = run_id
             env.update(environment)
 
             args = shlex.split(command)
             subprocess.Popen(args, cwd=cwd, env=env, close_fds=True, start_new_session=True)
 
-            session = self.sessions.get(child_session_id)
-            if session:
-                session.status = "running"
-                DB.update_timestamp(child_session_id, datetime.now(timezone.utc))
-                self.notify_experiment_list_changed()
+            run = self.runs.get(child_run_id)
+            if run:
+                run.status = "running"
+                DB.update_timestamp(child_run_id, datetime.now(timezone.utc))
+                self.notify_run_list_changed()
 
         except Exception as e:
-            logger.error(f"Failed to spawn session process: {e}")
+            logger.error(f"Failed to spawn run process: {e}")
 
     # ============================================================
     # Runner SSE events
     # ============================================================
 
-    async def send_runner_event(self, session_id: str, event: dict) -> None:
+    async def send_runner_event(self, run_id: str, event: dict) -> None:
         """Push an event to a runner's SSE queue."""
-        q = self.runner_event_queues.get(session_id)
+        q = self.runner_event_queues.get(run_id)
         if q:
             await q.put(event)
         else:
-            logger.warning(f"No SSE queue for session {session_id}")
+            logger.warning(f"No SSE queue for run {run_id}")
 
     # ============================================================
     # Sync scheduling helpers (for use from def endpoints in thread pool)
@@ -508,12 +504,12 @@ class ServerState:
         if self._can_schedule():
             asyncio.run_coroutine_threadsafe(self.broadcast_to_all_uis(msg), self._loop)
 
-    def schedule_graph_update(self, session_id: str) -> None:
+    def schedule_graph_update(self, run_id: str) -> None:
         """Schedule a graph update broadcast from sync context."""
         if self._can_schedule():
-            asyncio.run_coroutine_threadsafe(self.broadcast_graph_update(session_id), self._loop)
+            asyncio.run_coroutine_threadsafe(self.broadcast_graph_update(run_id), self._loop)
 
-    def schedule_runner_event(self, session_id: str, event: dict) -> None:
+    def schedule_runner_event(self, run_id: str, event: dict) -> None:
         """Schedule an SSE event push from sync context."""
         if self._can_schedule():
-            asyncio.run_coroutine_threadsafe(self.send_runner_event(session_id, event), self._loop)
+            asyncio.run_coroutine_threadsafe(self.send_runner_event(run_id, event), self._loop)

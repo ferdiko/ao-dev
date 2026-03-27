@@ -41,7 +41,7 @@ ENV_VAR=5 so-record agent/run.py --some-flag
 You can set a custom run name using `--run-name`:
 
 ```bash
-so-record --run-name "my-experiment" agent/run.py
+so-record --run-name "my-run" agent/run.py
 ```
 
 This feels *exactly* the same as running Python but also analyzes your code and populates our [VS Code extension](https://marketplace.visualstudio.com/items?itemName=SovaraLabs.sovara):

@@ -7,7 +7,7 @@ The development server is the core of Sovara. It receives events from user proce
 The server (`app.py` plus `state.py`) handles:
 
 - TCP socket communication with runner processes
-- Session and run management
+- Run management
 - Dataflow graph construction
 - LLM call caching
 - User edit management
@@ -71,14 +71,14 @@ See `src/sovara/server/database_backends/sqlite.py` for the DB schema.
 
 ### Graph Topology Storage
 
-The `graph_topology` column in the `experiments` table stores a dictionary representation of the graph. This allows the server to reconstruct in-memory graph representations for past runs.
+The `graph_topology` column in the `runs` table stores a dictionary representation of the graph. This allows the server to reconstruct in-memory graph representations for past runs.
 
 ## Edge Detection via Content Matching
 
 The server stores a content registry for detecting dataflow edges:
 
 ```python
-# In-memory registry: session_id -> {node_id -> [output_strings]}
+# In-memory registry: run_id -> {node_id -> [output_strings]}
 _content_registry: Dict[str, Dict[str, List[str]]] = {}
 ```
 
@@ -105,11 +105,11 @@ This approach runs user code completely unmodified and works with any LLM librar
 4. The edit is applied at the appropriate point
 5. Downstream LLM calls re-execute with modified data
 
-## Session Management
+## Run Management
 
-Each `so-record` execution creates a session. Within a session:
+Each `so-record` execution creates a top-level run. Within a run hierarchy:
 
-- Multiple runs can occur (via subruns or restarts)
+- Additional runs can occur (via subruns or restarts)
 - Each run builds its own dataflow graph
 - The UI displays the current run's graph
 

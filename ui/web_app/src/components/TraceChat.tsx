@@ -58,11 +58,11 @@ function highlightStepLabels(node: ReactNode, onStepLabelClick?: (nodeId: string
 }
 
 export function TraceChat({
-  sessionId,
+  runId,
   onCollapse,
   onStepLabelClick,
 }: {
-  sessionId: string;
+  runId: string;
   onCollapse?: () => void;
   onStepLabelClick?: (nodeId: string) => void;
 }) {
@@ -96,7 +96,7 @@ export function TraceChat({
     setInput("");
     setIsLoading(true);
     try {
-      const { answer, edits_applied } = await chatWithTrace(sessionId, userMsg.content, history);
+      const { answer, edits_applied } = await chatWithTrace(runId, userMsg.content, history);
       setMessages((prev) => [...prev, { id: `a-${Date.now()}`, role: "assistant", content: answer, editsApplied: edits_applied }]);
     } catch {
       setMessages((prev) => [...prev, { id: `e-${Date.now()}`, role: "assistant", content: "Error: could not reach the chat backend." }]);
@@ -107,7 +107,7 @@ export function TraceChat({
 
   const handleRerun = async (msgId: string) => {
     setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, editsApplied: false } : m));
-    await restartRun(sessionId);
+    await restartRun(runId);
   };
 
   return (

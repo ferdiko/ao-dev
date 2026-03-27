@@ -242,7 +242,8 @@ class Trace:
     summary_cache: Dict[int, str] = field(default_factory=dict, repr=False)
     verdict_cache: Dict[int, tuple] = field(default_factory=dict, repr=False)
     prompt_sections_cache: Dict[str, Any] = field(default_factory=dict, repr=False)
-    session_id: Optional[str] = None  # Set when built from DB; needed for write-back
+    prefetched_summaries: Dict[str, str] = field(default_factory=dict, repr=False)
+    run_id: Optional[str] = None  # Set when built from DB; needed for write-back
 
     @classmethod
     def from_string(cls, raw: str) -> "Trace":

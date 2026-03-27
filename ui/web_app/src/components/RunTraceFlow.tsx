@@ -25,7 +25,7 @@ import {
   type MessageRoleStyle,
 } from "@sovara/shared-components/utils/messageLike";
 import { type PrismStyleMap, withTransparentPrismTheme } from "@sovara/shared-components/utils/prismTheme";
-import type { EditKey, GraphNode } from "../hooks/useRunSessionState";
+import type { EditKey, GraphNode } from "../hooks/useRunState";
 
 const LANG_DISPLAY: Record<string, string> = {
   sql: "SQL",

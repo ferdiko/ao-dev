@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { GraphView } from './graph/GraphView';
 import { GraphData, ProcessInfo } from '../types';
 import { MessageSender } from '../types/MessageSender';
-import { WorkflowRunDetailsPanel } from './experiment/WorkflowRunDetailsPanel';
+import { WorkflowRunDetailsPanel } from './run/WorkflowRunDetailsPanel';
 import { NodeEditorView } from './editor/NodeEditorView';
 import { DetectedDocument, getFileExtension, getDocumentKey, isPreviewableDocument } from '../utils/documentDetection';
 import { parse, stringify } from 'lossless-json';
@@ -10,19 +10,19 @@ import { saveDocument } from '../utils/documentDownload';
 import { DocumentPreviewModal } from './common/DocumentPreviewModal';
 
 interface GraphTabAppProps {
-  experiment: ProcessInfo | null;
+  run: ProcessInfo | null;
   graphData: GraphData | null;
-  sessionId: string | null;
+  runId: string | null;
   messageSender: MessageSender;
   isDarkTheme: boolean;
-  onNodeUpdate: (nodeId: string, field: string, value: string, sessionId?: string, attachments?: any) => void;
+  onNodeUpdate: (nodeId: string, field: string, value: string, runId?: string, attachments?: any) => void;
   headerContent?: React.ReactNode;
 }
 
 export const GraphTabApp: React.FC<GraphTabAppProps> = ({
-  experiment,
+  run,
   graphData,
-  sessionId,
+  runId,
   messageSender,
   isDarkTheme,
   onNodeUpdate,
@@ -32,7 +32,7 @@ export const GraphTabApp: React.FC<GraphTabAppProps> = ({
   const [nodeEditData, setNodeEditData] = useState<{
     nodeId: string;
     label: string;
-    sessionId: string;
+    runId: string;
   } | null>(null);
 
   // State for NodeEditorView
@@ -51,7 +51,7 @@ export const GraphTabApp: React.FC<GraphTabAppProps> = ({
   // Listen for showNodeEditModal messages from messageSender
   useEffect(() => {
     const handleShowNodeEditModal = (event: CustomEvent) => {
-      const { nodeId, field, label, inputValue, outputValue, sessionId: eventSessionId } = event.detail;
+      const { nodeId, field, label, inputValue, outputValue, runId: eventSessionId } = event.detail;
 
       // Parse the JSON values
       let parsedInput = null;
@@ -75,7 +75,7 @@ export const GraphTabApp: React.FC<GraphTabAppProps> = ({
         parsedOutput = outputValue;
       }
 
-      setNodeEditData({ nodeId, label, sessionId: eventSessionId || sessionId || '' });
+      setNodeEditData({ nodeId, label, runId: eventSessionId || runId || '' });
       setInputData(parsedInput);
       setOutputData(parsedOutput);
       setOriginalInputData(parsedInput);
@@ -89,7 +89,7 @@ export const GraphTabApp: React.FC<GraphTabAppProps> = ({
     return () => {
       window.removeEventListener('show-node-edit-modal', handleShowNodeEditModal as EventListener);
     };
-  }, [sessionId]);
+  }, [runId]);
 
   // Prevent background scrolling when modal is open
   useEffect(() => {
@@ -150,7 +150,7 @@ export const GraphTabApp: React.FC<GraphTabAppProps> = ({
     void saveDocument(doc);
   }, []);
 
-  if (!experiment || !sessionId) {
+  if (!run || !runId) {
     return (
       <div
         style={{
@@ -189,29 +189,29 @@ export const GraphTabApp: React.FC<GraphTabAppProps> = ({
                 const nodes = graphData.nodes || [];
                 const node = nodes.find((n: any) => n.id === nodeId);
                 const attachments = node?.attachments || undefined;
-                onNodeUpdate(nodeId, field, value, sessionId, attachments);
+                onNodeUpdate(nodeId, field, value, runId, attachments);
               }}
-              session_id={sessionId}
+              run_id={runId}
               messageSender={messageSender}
               isDarkTheme={isDarkTheme}
-              metadataPanel={experiment ? (
+              metadataPanel={run ? (
                 <WorkflowRunDetailsPanel
-                  runName={experiment.run_name || ''}
-                  result={experiment.result || ''}
-                  notes={experiment.notes || ''}
-                  log={experiment.log || ''}
-                  codeVersion={experiment.version_date || ''}
-                  sessionId={sessionId || ''}
+                  runName={run.name || ''}
+                  result={run.result || ''}
+                  notes={run.notes || ''}
+                  log={run.log || ''}
+                  codeVersion={run.version_date || ''}
+                  runId={runId || ''}
                   isDarkTheme={isDarkTheme}
                   messageSender={messageSender}
                 />
               ) : undefined}
               headerContent={headerContent}
-              currentResult={experiment?.result || ''}
+              currentResult={run?.result || ''}
               onResultChange={(result) => {
                 messageSender.send({
                   type: 'update_result',
-                  session_id: sessionId,
+                  run_id: runId,
                   result: result,
                 });
               }}
@@ -280,14 +280,14 @@ export const GraphTabApp: React.FC<GraphTabAppProps> = ({
                 // Save input if changed
                 if (stringify(inputData) !== stringify(originalInputData)) {
                   const inputToSave = stringify({ to_show: inputData, raw: inputData });
-                  onNodeUpdate(nodeEditData.nodeId, 'input', inputToSave || '', nodeEditData.sessionId, attachments);
+                  onNodeUpdate(nodeEditData.nodeId, 'input', inputToSave || '', nodeEditData.runId, attachments);
                   setOriginalInputData(inputData);
                 }
 
                 // Save output if changed
                 if (stringify(outputData) !== stringify(originalOutputData)) {
                   const outputToSave = stringify({ to_show: outputData, raw: outputData });
-                  onNodeUpdate(nodeEditData.nodeId, 'output', outputToSave || '', nodeEditData.sessionId, attachments);
+                  onNodeUpdate(nodeEditData.nodeId, 'output', outputToSave || '', nodeEditData.runId, attachments);
                   setOriginalOutputData(outputData);
                 }
               }}
