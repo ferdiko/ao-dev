@@ -1,8 +1,8 @@
 /**
- * Direct HTTP+SSE client for ao-playbook.
+ * Direct HTTP+SSE client for SovaraDB.
  *
- * Handles lesson CRUD via HTTP and real-time change notifications via SSE,
- * bypassing so-server entirely for lesson operations.
+ * Handles prior CRUD via HTTP and real-time change notifications via SSE,
+ * bypassing so-server entirely for prior operations.
  */
 
 import * as http from 'http';
@@ -13,22 +13,20 @@ export class PlaybookClient extends EventEmitter {
     private static _instance: PlaybookClient | null = null;
 
     private _baseUrl: string;
-    private _apiKey: string;
     private _sseRequest: http.ClientRequest | null = null;
     private _sseReconnectTimer: NodeJS.Timeout | null = null;
     private _disposed = false;
 
-    private constructor(baseUrl: string, apiKey: string) {
+    private constructor(baseUrl: string) {
         super();
         this._baseUrl = baseUrl.replace(/\/$/, '');
-        this._apiKey = apiKey;
     }
 
-    static init(baseUrl: string, apiKey: string): PlaybookClient {
+    static init(baseUrl: string): PlaybookClient {
         if (PlaybookClient._instance) {
             PlaybookClient._instance.dispose();
         }
-        PlaybookClient._instance = new PlaybookClient(baseUrl, apiKey);
+        PlaybookClient._instance = new PlaybookClient(baseUrl);
         PlaybookClient._instance.connectEvents();
         return PlaybookClient._instance;
     }
@@ -51,9 +49,6 @@ export class PlaybookClient extends EventEmitter {
             const url = new URL(`${this._baseUrl}${path}`);
             const mod = this._httpModule();
             const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-            if (this._apiKey) {
-                headers['X-API-Key'] = this._apiKey;
-            }
 
             const payload = body !== undefined ? JSON.stringify(body) : undefined;
             if (payload) {
@@ -89,9 +84,6 @@ export class PlaybookClient extends EventEmitter {
                 'Content-Type': 'application/json',
                 'Accept': 'text/event-stream',
             };
-            if (this._apiKey) {
-                headers['X-API-Key'] = this._apiKey;
-            }
 
             const payload = body !== undefined ? JSON.stringify(body) : undefined;
             if (payload) {
@@ -138,33 +130,33 @@ export class PlaybookClient extends EventEmitter {
     }
 
     // ============================================================
-    // Lesson CRUD
+    // Prior CRUD
     // ============================================================
 
     async fetchFolder(path: string): Promise<any> {
-        return this._request('POST', '/api/v1/lessons/folders/ls', { path });
+        return this._request('POST', '/api/v1/priors/folders/ls', { path });
     }
 
     async getLesson(id: string): Promise<any> {
-        return this._request('GET', `/api/v1/lessons/${id}`);
+        return this._request('GET', `/api/v1/priors/${id}`);
     }
 
     async getLessonsList(): Promise<any> {
-        return this._request('GET', '/api/v1/lessons');
+        return this._request('GET', '/api/v1/priors');
     }
 
     async createLesson(data: { name: string; summary: string; content: string; path?: string }, force: boolean): Promise<any> {
         const qs = force ? '?force=true' : '';
-        return this._sseRequest_mutation('POST', `/api/v1/lessons${qs}`, data);
+        return this._sseRequest_mutation('POST', `/api/v1/priors${qs}`, data);
     }
 
     async updateLesson(id: string, data: { name?: string; summary?: string; content?: string; path?: string }, force: boolean): Promise<any> {
         const qs = force ? '?force=true' : '';
-        return this._sseRequest_mutation('PUT', `/api/v1/lessons/${id}${qs}`, data);
+        return this._sseRequest_mutation('PUT', `/api/v1/priors/${id}${qs}`, data);
     }
 
     async deleteLesson(id: string): Promise<any> {
-        return this._sseRequest_mutation('DELETE', `/api/v1/lessons/${id}`);
+        return this._sseRequest_mutation('DELETE', `/api/v1/priors/${id}`);
     }
 
     // ============================================================
@@ -178,9 +170,6 @@ export class PlaybookClient extends EventEmitter {
         const url = new URL(`${this._baseUrl}/api/v1/events`);
         const mod = this._httpModule();
         const headers: Record<string, string> = { 'Accept': 'text/event-stream' };
-        if (this._apiKey) {
-            headers['X-API-Key'] = this._apiKey;
-        }
 
         const req = mod.request(url, { method: 'GET', headers }, (res) => {
             if (res.statusCode !== 200) {

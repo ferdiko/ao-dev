@@ -5,7 +5,23 @@ Broadcasting is handled by the route/events layer after calling these handlers.
 """
 
 from sovara.server.database_manager import DB
+from sovara.server.graph_models import RunGraph
 from sovara.server.handlers.handler_utils import logger
+
+
+def _load_graph_for_edit(state, run_id: str) -> RunGraph | None:
+    """Return a mutable graph for a run, loading it from DB if needed."""
+    graph = state.run_graphs.get(run_id)
+    if graph is not None:
+        return graph
+
+    row = DB.get_graph(run_id)
+    if not row or not row["graph_topology"]:
+        return None
+
+    graph = RunGraph.from_json_string(row["graph_topology"])
+    state.run_graphs[run_id] = graph
+    return graph
 
 
 def handle_edit_input(state, msg: dict) -> None:
@@ -15,11 +31,12 @@ def handle_edit_input(state, msg: dict) -> None:
     new_input = msg["value"]
 
     overwrite = DB.set_input_overwrite(run_id, node_uuid, new_input)
-    if overwrite and run_id in state.run_graphs:
-        node = state.run_graphs[run_id].get_node_by_uuid(node_uuid)
+    graph = _load_graph_for_edit(state, run_id)
+    if overwrite and graph:
+        node = graph.get_node_by_uuid(node_uuid)
         if node:
             node.input = new_input  # graph stores to_show for display
-        DB.update_graph_topology(run_id, state.run_graphs[run_id])
+        DB.update_graph_topology(run_id, graph)
 
 
 def handle_edit_output(state, msg: dict) -> None:
@@ -29,11 +46,12 @@ def handle_edit_output(state, msg: dict) -> None:
     new_output = msg["value"]
 
     overwrite = DB.set_output_overwrite(run_id, node_uuid, new_output)
-    if overwrite and run_id in state.run_graphs:
-        node = state.run_graphs[run_id].get_node_by_uuid(node_uuid)
+    graph = _load_graph_for_edit(state, run_id)
+    if overwrite and graph:
+        node = graph.get_node_by_uuid(node_uuid)
         if node:
             node.output = new_output  # graph stores to_show for display
-        DB.update_graph_topology(run_id, state.run_graphs[run_id])
+        DB.update_graph_topology(run_id, graph)
 
 
 def handle_update_node(state, msg: dict) -> None:
@@ -47,11 +65,12 @@ def handle_update_node(state, msg: dict) -> None:
         logger.error(f"Missing required fields in updateNode message: {msg}")
         return
 
-    if run_id in state.run_graphs:
-        node = state.run_graphs[run_id].get_node_by_uuid(node_uuid)
+    graph = _load_graph_for_edit(state, run_id)
+    if graph:
+        node = graph.get_node_by_uuid(node_uuid)
         if node and hasattr(node, field):
             setattr(node, field, value)
-        DB.update_graph_topology(run_id, state.run_graphs[run_id])
+        DB.update_graph_topology(run_id, graph)
     else:
         logger.warning(f"Run {run_id} not found in run_graphs")
 

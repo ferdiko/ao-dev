@@ -223,7 +223,7 @@ export const LessonHeader: React.FC<LessonHeaderProps> = ({
             <input
               ref={searchInputRef}
               type="text"
-              placeholder="Search lessons..."
+              placeholder="Search priors..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               style={{
@@ -263,7 +263,7 @@ export const LessonHeader: React.FC<LessonHeaderProps> = ({
                   textAlign: 'center',
                 }}
               >
-                No lessons found
+                No priors found
               </div>
             ) : (
               filteredLessons.map((lesson) => (

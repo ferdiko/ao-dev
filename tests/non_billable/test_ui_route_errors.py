@@ -1,6 +1,7 @@
 import json
 import uuid
 
+from sovara.common.constants import PRIORS_SERVER_URL, SOVARA_CONFIG
 from sovara.server.database_manager import DB
 from sovara.server.routes.ui import (
     CreateProjectTagRequest,
@@ -10,6 +11,7 @@ from sovara.server.routes.ui import (
     create_project_tag,
     edit_input,
     edit_output,
+    get_ui_config,
     restart,
 )
 from sovara.server.state import ServerState
@@ -113,4 +115,11 @@ def test_create_project_tag_accepts_github_palette_colors():
             "name": "Ship",
             "color": "#1a7f37",
         },
+    }
+
+
+def test_get_ui_config_returns_bootstrap_values():
+    assert get_ui_config() == {
+        "config_path": SOVARA_CONFIG,
+        "priors_url": PRIORS_SERVER_URL,
     }

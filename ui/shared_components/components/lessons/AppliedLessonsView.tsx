@@ -107,7 +107,7 @@ export const AppliedLessonsView: React.FC<AppliedLessonsViewProps> = ({
             color: isDarkTheme ? '#e5e5e5' : '#333333',
           }}
         >
-          Applied Lessons ({lessons.length})
+          Applied Priors ({lessons.length})
         </h2>
       </div>
 
@@ -121,7 +121,7 @@ export const AppliedLessonsView: React.FC<AppliedLessonsViewProps> = ({
               color: isDarkTheme ? '#888888' : '#666666',
             }}
           >
-            No lessons applied to this run
+            No priors applied to this run
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>

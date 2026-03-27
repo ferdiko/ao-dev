@@ -1,6 +1,6 @@
 ---
 name: sovara
-description: sovara helps you develop and maintain adaptable agentic systems. It extends Claude Code with context-optimized observability, accelerated A/B testing, and dynamic runtime lesson injection. Use when actively developing or improving agentic systems.
+description: sovara helps you develop and maintain adaptable agentic systems. It adds context-optimized observability, accelerated A/B testing, and dynamic runtime prior injection. Use when actively developing or improving agentic systems.
 ---
 
 # sovara
@@ -9,7 +9,7 @@ description: sovara helps you develop and maintain adaptable agentic systems. It
 
 - **Integrated Observability** – Record agent traces as dataflow graphs with zero code changes
 - **Accelerated A/B Testing** – Edit node inputs/outputs and rerun to see how changes propagate
-- **Lessons** – Inject learned lessons into agent context dynamically at runtime
+- **Priors** – Inject learned priors into agent context dynamically at runtime
 
 ---
 
@@ -27,7 +27,7 @@ Run any agent and record the dataflow graph, as well as input/output to each nod
 The tool is generally structured like this.
 
 ```
-usage: so-tool record [-h] [-m] [--run-name RUN_NAME] [--timeout TIMEOUT] script_path ...
+usage: so-cli record [-h] [-m] [--run-name RUN_NAME] [--timeout TIMEOUT] script_path ...
 
 positional arguments:
   script_path          Script to execute (or module name with -m)
@@ -43,7 +43,7 @@ options:
 Example:
 
 ```bash
-uv run so-tool record --run-name "OAI-debate-run-1" --timeout 60 example_workflows/debug_examples/openai/debate.py
+uv run so-cli record --run-name "OAI-debate-run-1" --timeout 60 example_workflows/debug_examples/openai/debate.py
 ```
 
 This will return
@@ -62,7 +62,7 @@ After you ran a script/module you can investigate the input/output of each node 
 The tool is generally structured like this.
 
 ```
-usage: so-tool probe [-h] [--node NODE] [--nodes NODES] [--preview] [--input] [--output] [--key-regex KEY_REGEX] run_id
+usage: so-cli probe [-h] [--node NODE] [--nodes NODES] [--preview] [--input] [--output] [--key-regex KEY_REGEX] run_id
 
 positional arguments:
   run_id            Run ID to probe
@@ -81,7 +81,7 @@ options:
 Examples:
 To return the metadata, the nodes in the graph, and the graph topology, run
 ```bash
-uv run so-tool probe b6aaf796-8e25-4e9a-aae6-a47f261ced54
+uv run so-cli probe b6aaf796-8e25-4e9a-aae6-a47f261ced54
 ```
 
 This will return a structured JSON with the run metadata and the graph information:
@@ -115,7 +115,7 @@ This will return a structured JSON with the run metadata and the graph informati
 Then, after having found the graph topology and the node IDs, you can investigate a node in more detail, but make sure to use preview to not spam your context with unnecessary tokens.
 
 ```bash
-uv run so-tool probe b6aaf796-8e25-4e9a-aae6-a47f261ced54 --node 00b0e4b8-db1d-4f44-bd5e-23c049c7b8c0 --preview
+uv run so-cli probe b6aaf796-8e25-4e9a-aae6-a47f261ced54 --node 00b0e4b8-db1d-4f44-bd5e-23c049c7b8c0 --preview
 ```
 
 This will produce a preview with flattened keys:
@@ -147,7 +147,7 @@ This will produce a preview with flattened keys:
   ],
   "input": {
     "body.max_tokens": 8000,
-    "body.messages.0.content": "<lessons>\n## Student...",
+    "body.messages.0.content": "<priors>\n## Student...",
     "body.thinking.budget_tokens": 4000,
     "body.thinking.type": "enabled",
     "url": "https://api.anthropi..."
@@ -164,7 +164,7 @@ This will produce a preview with flattened keys:
 If you then want to investigate a specific key of the input or output (or both) you can do so by passing a `--key-regex` like so
 
 ```bash
-uv run so-tool probe b6aaf796-8e25-4e9a-aae6-a47f261ced54 --node 00b0e4b8-db1d-4f44-bd5e-23c049c7b8c0 --input --key-regex "body.max_tokens$"
+uv run so-cli probe b6aaf796-8e25-4e9a-aae6-a47f261ced54 --node 00b0e4b8-db1d-4f44-bd5e-23c049c7b8c0 --input --key-regex "body.max_tokens$"
 ```
 
 This will produce the full result (no preview) of the specific keys that match the regex:
@@ -208,21 +208,22 @@ This will produce the full result (no preview) of the specific keys that match t
 You can manage past runs that you did with the `runs` command, which is structured in the following way
 
 ```
-usage: so-tool runs [-h] [--range RANGE] [--regex REGEX]
+usage: so-cli runs [-h] [--range RANGE] [--regex REGEX] [--status {all,running,finished}]
 
 List runs with optional range. Range format: ':50' (first 50), '50:100' (50-99), '10:' (from 10 onwards).
 
 options:
-  -h, --help     show this help message and exit
-  --range RANGE  Range of runs to return (default: ':50'). Format: 'start:end', ':end', 'start:'
-  --regex REGEX  Filter runs by name using regex pattern
+  -h, --help                              show this help message and exit
+  --range RANGE                           Range of runs to return (default: ':50'). Format: 'start:end', ':end', 'start:'
+  --regex REGEX                           Filter runs by name using regex pattern
+  --status {all,running,finished}         Filter runs by runtime status
 ```
 
 Example:
 To list the most recent 2 runs that match a certain regex, I can do
 
 ```bash
-uv run so-tool runs --range :2 --regex "Run \d+$"
+uv run so-cli runs --range :2 --regex "Run \d+$"
 ```
 
 which produces
@@ -251,11 +252,11 @@ which produces
 ```
 
 ### Parallel execution
-If you want to execute muliple runs in parallel, invoke `so-tool record` separately multiple times. Example:
+If you want to execute muliple runs in parallel, invoke `so-cli record` separately multiple times. Example:
 
 ```bash
 for i in 0 1 2 3 4 5 6 7 8 9; do
-  uv run so-tool record -m --run-name "sql-agent-sample-$i" module.some_module -- --sample-id $i 2>&1 &
+  uv run so-cli record -m --run-name "sql-agent-sample-$i" module.some_module -- --sample-id $i 2>&1 &
 done
 wait
 ```
@@ -267,7 +268,7 @@ wait
 Copy a run, edit a single key in a node's input or output, and rerun to see how changes propagate through the graph. The original run is always preserved. The command blocks until completion and passes stdout/stderr through to the terminal.
 
 ```
-usage: so-tool edit-and-rerun [-h] (--input KEY VALUE | --output KEY VALUE) [--timeout TIMEOUT] [--run-name RUN_NAME] run_id node_id
+usage: so-cli edit-and-rerun [-h] (--input KEY VALUE | --output KEY VALUE) [--timeout TIMEOUT] [--run-name RUN_NAME] run_id node_id
 
 positional arguments:
   run_id            Run ID containing the node
@@ -288,7 +289,7 @@ The typical workflow is: **probe** a node to see its flattened keys → **edit-a
 
 **Step 1:** Probe a node with `--preview` to see available keys:
 ```bash
-uv run so-tool probe 77772451-2bea-4401-89aa-1b32cb34f688 --node ee5643e0 --preview --input
+uv run so-cli probe 77772451-2bea-4401-89aa-1b32cb34f688 --node ee5643e0 --preview --input
 ```
 ```json
 {
@@ -304,7 +305,7 @@ uv run so-tool probe 77772451-2bea-4401-89aa-1b32cb34f688 --node ee5643e0 --prev
 
 **Step 2:** Edit a key and rerun. This creates a new run, applies the edit, and reruns the script — downstream nodes recompute while unchanged nodes return cached results:
 ```bash
-uv run so-tool edit-and-rerun 77772451-2bea-4401-89aa-1b32cb34f688 ee5643e0-04e0-474b-bbc5-2d303d02e273 \
+uv run so-cli edit-and-rerun 77772451-2bea-4401-89aa-1b32cb34f688 ee5643e0-04e0-474b-bbc5-2d303d02e273 \
   --input body.input "What is the best programming language?" \
   --run-name "test-new-question"
 ```
@@ -325,7 +326,7 @@ uv run so-tool edit-and-rerun 77772451-2bea-4401-89aa-1b32cb34f688 ee5643e0-04e0
 ### Using file contents as value
 For longer edits (e.g., replacing a system prompt), write the new value to a file and pass the path:
 ```bash
-uv run so-tool edit-and-rerun <run_id> <node_id> \
+uv run so-cli edit-and-rerun <run_id> <node_id> \
   --input body.messages.0.content /path/to/new_system_prompt.txt
 ```
 
@@ -335,404 +336,283 @@ To test multiple variations of the same input in parallel, launch several `edit-
 SESSION=77772451-2bea-4401-89aa-1b32cb34f688
 NODE=ee5643e0-04e0-474b-bbc5-2d303d02e273
 
-uv run so-tool edit-and-rerun $SESSION $NODE --input body.temperature 0 --run-name "temp-0" &
-uv run so-tool edit-and-rerun $SESSION $NODE --input body.temperature 0.5 --run-name "temp-0.5" &
-uv run so-tool edit-and-rerun $SESSION $NODE --input body.temperature 1.0 --run-name "temp-1.0" &
+uv run so-cli edit-and-rerun $SESSION $NODE --input body.temperature 0 --run-name "temp-0" &
+uv run so-cli edit-and-rerun $SESSION $NODE --input body.temperature 0.5 --run-name "temp-0.5" &
+uv run so-cli edit-and-rerun $SESSION $NODE --input body.temperature 1.0 --run-name "temp-1.0" &
 wait
 ```
-Then compare results across the three runs using `so-tool probe` and `so-tool runs --regex "temp-"`.
+Then compare results across the three runs using `so-cli probe` and `so-cli runs --regex "temp-"`.
 
 ---
 
-## Lessons
+## Priors
 
-Lessons are small snippets that augment a context at runtime to inform the agent of specifics like company policies, specific domain knowledge, or conventions. Lessons are organized in folders (e.g. `beaver/retriever/`) so different parts of an agent system can have their own lessons. `so-tool` provides capability to create and manage lessons.
+Priors are small snippets that augment a context at runtime to inform the agent of specifics like company policies, specific domain knowledge, or conventions. Priors are organized in folders (e.g. `beaver/retriever/`) so different parts of an agent system can have their own priors. `so-cli` provides capability to create and manage priors.
 
 ### When to use
-If injecting additional information that resolves ambiguity, introduces domain knowledge, or specifies company policy, can resolve the issue – construct a lesson.
-The ideal lesson has three properties:
+If injecting additional information that resolves ambiguity, introduces domain knowledge, or specifies company policy, can resolve the issue – construct a prior.
+The ideal prior has three properties:
 
   1. It fixes the problem at hand
   2. generalizes well to other scenarios where the same problem could occur in a slightly different way
-  3. and it does not conflict with other existing lessons.
+  3. and it does not conflict with other existing priors.
 
-Once you have constructed a lesson, check if the problem is solved by doing A/B testing. You should inject the lesson at any point you see fit, and use the `edit-and-rerun` functionality. If you want to try different versions of the lesson, run `edit-and-rerun` in parallel.
-Once you verified that the lesson addresses the problem, retrieve the available lessons, and check if you introduced a conflict with another lesson. If so, resolve the conflict by iteratively tuning and running the agent with the adapted lessons, until you are satisfied.
+Once you have constructed a prior, check if the problem is solved by doing A/B testing. You should inject the prior at any point you see fit, and use the `edit-and-rerun` functionality. If you want to try different versions of the prior, run `edit-and-rerun` in parallel.
+Once you verified that the prior addresses the problem, retrieve the available priors, and check if you introduced a conflict with another prior. If so, resolve the conflict by iteratively tuning and running the agent with the adapted priors, until you are satisfied.
 
 ### How to use
 
-First, you need to inject the lessons into the context by modifying the user-code.
-Example:
+First, inject priors into the context by modifying the user code.
 
 ```python
-from sovara.runner.lessons import inject_lesson
+from sovara.runner.priors import inject_priors
 
-# Inject all lessons from a specific folder into a <lessons> block
-lessons_context = inject_lesson(path="beaver/retriever/")
-
-# lessons_context now contains:
-# <lessons>
-# ## Rate Limiting Best Practices
-# When dealing with rate limits, implement exponential backoff...
-#
-# ## Always Validate SQL
-# Before executing generated SQL, validate syntax...
-# </lessons>
+# Inject all priors from a specific folder into a <priors> block
+priors_context = inject_priors(path="beaver/retriever/")
 
 # Prepend to your prompt
-prompt = f"{lessons_context}\n\n{user_query}" if lessons_context else user_query
+prompt = f"{priors_context}\n\n{user_query}" if priors_context else user_query
 
-# Use in your LLM call
 response = client.messages.create(
     model="claude-sonnet-4-20250514",
-    messages=[{"role": "user", "content": prompt}]
+    messages=[{"role": "user", "content": prompt}],
 )
 ```
-**Note:** Ignore the warning that `inject_lesson` is not available.
 
-The lessons tool is generally structured like this.
+If you want LLM-filtered retrieval instead of loading all priors in a path:
 
-```
-usage: so-tool playbook lessons [-h] {list,get,create,update,delete,query,ls,mkdir,mv,cp,rm} ...
-
-CRUD operations and folder management for user lessons.
-
-positional arguments:
-  {list,get,create,update,delete,query,ls,mkdir,mv,cp,rm}
-    list                List all lessons
-    get                 Get a specific lesson
-    create              Create a new lesson
-    update              Update a lesson
-    delete              Delete a lesson
-    query               Query lessons by folder path
-    ls                  List folder contents
-    mkdir               Create an empty folder
-    mv                  Move/rename folder or lessons
-    cp                  Copy a folder
-    rm                  Delete a lesson or folder
-
-options:
-  -h, --help            show this help message and exit
+```python
+priors_context = inject_priors(
+    path="beaver/retriever/",
+    context=user_query,
+    method="retrieve",
+)
 ```
 
-### List Lessons
-List all lessons, optionally filtered by folder path.
-```
-usage: so-tool playbook lessons list [-h] [--path PATH]
+**Note:** Ignore the warning that `inject_priors` is not available.
 
-List all lessons with their IDs, names, summaries, and paths.
+### CLI
 
-options:
-  --path, -p    Folder path to filter by (e.g. 'beaver/retriever/')
+`so-cli priors` mirrors the public SovaraDB API exposed by `so-priors`.
+
 ```
+usage: so-cli priors [-h] {start-server,list,get,create,update,delete,query,retrieve,migrate,restructure,ls,mkdir,mv,cp,rm} ...
+```
+
+The main commands are:
+
+- `list`: list priors, optionally filtered by `--path`
+- `get <prior_id>`: fetch one prior
+- `create`: create a prior; supports `--creation-trace-id` and `--trace-source`
+- `update <prior_id>`: update `--name`, `--summary`, `--content`, and/or `--path`
+- `delete <prior_id>`: delete one prior
+- `query`: return all priors in a path plus an injected `<priors>` block
+- `retrieve "<context>"`: use the LLM retriever to select relevant priors
+- `migrate`: move root-level priors into the default retrieval folder
+- `restructure {propose,execute,abort}`: manage taxonomy restructure proposals
+- `ls`, `mkdir`, `mv`, `cp`, `rm`: folder and bulk-prior operations
 
 Examples:
+
 ```bash
-so-tool playbook lessons list                              # All lessons
-so-tool playbook lessons list --path "beaver/retriever/"   # Only lessons in that folder
+so-cli priors list --path "beaver/retriever/"
+so-cli priors get <prior_id>
+so-cli priors create --name "<name>" --summary "<summary>" --content "<content>" --path "beaver/retriever/"
+so-cli priors update <prior_id> --content "<new_content>" --path "beaver/validator/"
+so-cli priors delete <prior_id>
+so-cli priors query --path "beaver/retriever/"
+so-cli priors retrieve "Find SQL validation guidance" --path "beaver/"
+so-cli priors migrate
+so-cli priors restructure propose --path "beaver/" --comments "Group priors by subsystem" > proposal.json
+so-cli priors restructure execute --proposal-file proposal.json
+so-cli priors restructure abort <task_id>
+so-cli priors ls beaver/
+so-cli priors mv -i abc123,def456 beaver/dest/
+so-cli priors cp beaver/retriever/ beaver/retriever-backup/
+so-cli priors rm -r beaver/old/
 ```
 
-This returns:
+Restructure workflow:
+
+1. Run `so-cli priors restructure propose` to get a proposal with `task_id`, `moves`, `new_folders`, and `snapshot`.
+2. Optionally inspect or edit the JSON proposal file.
+3. Run `so-cli priors restructure execute --proposal-file proposal.json` to execute it.
+4. If you do not want to apply it, run `so-cli priors restructure abort <task_id>` to release the lock.
+
+Representative outputs:
+
+`so-cli priors list` returns a JSON array:
+
 ```json
-{
-  "status": "success",
-  "lessons": [
-    {
-      "id": "24d90294",
-      "name": "Rate Limiting Best Practices",
-      "summary": "How to implement exponential backoff for API rate limits",
-      "path": "beaver/retriever/"
-    }
-  ]
-}
-```
-
-### Get Lesson
-Retrieve a specific lesson by ID.
-
-```
-usage: so-tool playbook lessons get [-h] lesson_id
-
-Get full details of a lesson by its ID.
-
-positional arguments:
-  lesson_id   The lesson ID to retrieve
-```
-
-This returns:
-```json
-{
-  "status": "success",
-  "lesson": {
-    "id": "<lesson_id>",
-    "name": "<name>",
-    "summary": "<summary>",
-    "content": "<content in markdown>",
-    "path": "<folder path>"
-  }
-}
-```
-
-### Create Lesson
-Create a new lesson with a name, summary, content, and folder path.
-
-```
-usage: so-tool playbook lessons create [-h] --name NAME --summary SUMMARY --content CONTENT [--path PATH]
-
-options:
-  --name, -n      Lesson name (max 200 chars, required)
-  --summary, -s   Brief summary (max 1000 chars, required)
-  --content, -c   Full lesson content in markdown (required)
-  --path, -p      Folder path (e.g. 'beaver/retriever/'). Defaults to root.
-```
-
-Example:
-```bash
-so-tool playbook lessons create \
-  --name "<name>" \
-  --summary "<summary>" \
-  --content "<content>" \
-  --path "beaver/retriever/"
-```
-
-This returns:
-```json
-{
-  "status": "success",
-  "lesson": {
-    "id": "<lesson_id>",
-    "name": "<name>",
-    "summary": "<summary>",
-    "content": "<content>",
+[
+  {
+    "id": "24d90294",
+    "name": "Rate Limiting Best Practices",
+    "summary": "How to implement exponential backoff for API rate limits",
+    "content": "When dealing with rate limits, implement exponential backoff...",
     "path": "beaver/retriever/"
   }
+]
+```
+
+`so-cli priors create` returns the server's creation response:
+
+```json
+{
+  "status": "created",
+  "id": "<prior_id>",
+  "name": "<name>",
+  "summary": "<summary>",
+  "content": "<content>",
+  "path": "beaver/retriever/"
 }
 ```
 
-### Update Lesson
-Update an existing lesson's name, summary, content, or path. At least one field must be provided.
+`so-cli priors query` returns all priors in a path plus the injected context:
 
-```
-usage: so-tool playbook lessons update [-h] [--name NAME] [--summary SUMMARY] [--content CONTENT] lesson_id
-
-positional arguments:
-  lesson_id   The lesson ID to update
-
-options:
-  --name, -n      New lesson name
-  --summary, -s   New summary
-  --content, -c   New content
-```
-
-Examples:
-```bash
-so-tool playbook lessons update <lesson_id> --name "<new_name>"
-so-tool playbook lessons update <lesson_id> --content "<new_content>"
-so-tool playbook lessons update <lesson_id> --name "<name>" --summary "<summary>" --content "<content>"
-```
-
-This returns the updated lesson:
 ```json
 {
-  "status": "success",
-  "lesson": {
-    "id": "<lesson_id>",
-    "name": "<name>",
-    "summary": "<summary>",
-    "content": "<content>",
-    "path": "<folder path>"
-  }
-}
-```
-
-### Delete Lesson
-Delete a lesson by its ID.
-
-```
-usage: so-tool playbook lessons delete [-h] lesson_id
-
-positional arguments:
-  lesson_id   The lesson ID to delete
-```
-
-Example:
-```bash
-so-tool playbook lessons delete <lesson_id>
-```
-
-This returns:
-```json
-{
-  "status": "success",
-  "deleted": "<lesson_id>"
-}
-```
-
-### Query Lessons
-Get all lessons in a folder and return them as injectable context (a `<lessons>` block).
-
-```
-usage: so-tool playbook lessons query [-h] [--path PATH]
-
-options:
-  --path, -p    Folder path to retrieve lessons from (omit for all lessons)
-```
-
-Examples:
-```bash
-so-tool playbook lessons query                              # All lessons
-so-tool playbook lessons query --path "beaver/retriever/"   # Lessons in that folder
-```
-
-This returns lessons and the formatted injected context:
-```json
-{
-  "status": "success",
-  "lessons": [
+  "path": "beaver/retriever/",
+  "priors": [
     {
-      "id": "<lesson_id>",
+      "id": "<prior_id>",
       "name": "<name>",
       "summary": "<summary>",
       "content": "<content>",
       "path": "beaver/retriever/"
     }
   ],
-  "injected_context": "<lessons>\n## <name>\n<content>\n</lessons>"
+  "injected_context": "<priors>\n## <name>\n<content>\n</priors>"
 }
 ```
 
-### Folder Commands
+`so-cli priors retrieve` returns the retriever result:
 
-Unix-style commands for organizing lessons into folders.
-
-#### List Folder Contents
-List immediate child folders and lessons at a path.
-
-```
-usage: so-tool playbook lessons ls [path]
-
-positional arguments:
-  path    Folder path to list (default: root)
-```
-
-Examples:
-```bash
-so-tool playbook lessons ls                    # List root
-so-tool playbook lessons ls beaver/            # List beaver/ folder
-```
-
-Returns:
 ```json
 {
-  "status": "success",
-  "path": "beaver/",
-  "folders": ["retriever/", "validator/"],
-  "lessons": [
-    {"id": "abc123", "name": "Some Lesson", "summary": "...", "path": "beaver/"}
+  "context": "Find SQL validation guidance",
+  "base_path": "beaver/",
+  "priors": [
+    {
+      "id": "<prior_id>",
+      "name": "<name>",
+      "summary": "<summary>",
+      "content": "<content>",
+      "path": "beaver/validator/"
+    }
   ],
-  "lesson_count": 1
+  "prior_count": 1
 }
 ```
 
-#### Create Folder
-Create an empty folder.
+`so-cli priors restructure propose` returns a proposal you can review or edit:
 
-```
-usage: so-tool playbook lessons mkdir path
-
-positional arguments:
-  path    Folder path to create (e.g. 'beaver/new-folder/')
-```
-
-Example:
-```bash
-so-tool playbook lessons mkdir beaver/new-folder/
-```
-
-#### Move / Rename
-Move or rename a folder, or move individual lessons by ID.
-
-```
-usage: so-tool playbook lessons mv [-i IDS] paths [paths ...]
-
-positional arguments:
-  paths             SRC DST (folder mode) or DST (with -i)
-
-options:
-  -i, --ids IDS     Comma-separated lesson IDs to move (lesson mode)
+```json
+{
+  "task_id": "<task_id>",
+  "summary": "<summary>",
+  "new_folders": ["beaver/validator/"],
+  "removed_folders": [],
+  "moves": [
+    {
+      "prior_id": "<prior_id>",
+      "current_path": "beaver/",
+      "new_path": "beaver/validator/",
+      "reason": "<reason>"
+    }
+  ],
+  "redundant_prior_ids": [],
+  "total_priors": 4,
+  "snapshot": "<snapshot>"
+}
 ```
 
-Examples:
-```bash
-so-tool playbook lessons mv beaver/old/ beaver/new/         # Rename/move folder
-so-tool playbook lessons mv -i abc123,def456 beaver/dest/   # Move lessons by ID
+`so-cli priors ls` returns folder metadata plus child priors:
+
+```json
+{
+  "path": "beaver/",
+  "folders": [
+    {
+      "path": "beaver/retriever/",
+      "prior_count": 3
+    }
+  ],
+  "priors": [
+    {
+      "id": "abc123",
+      "name": "Some Prior",
+      "summary": "...",
+      "content": "...",
+      "path": "beaver/"
+    }
+  ],
+  "prior_count": 4
+}
 ```
 
-#### Copy Folder
-Copy all lessons under a folder to a new destination with new IDs.
+`mkdir`, `mv`, `cp`, `rm`, `delete`, and `migrate` return status objects shaped like the SovaraDB API, for example:
 
-```
-usage: so-tool playbook lessons cp src dst
-
-positional arguments:
-  src    Source folder path
-  dst    Destination folder path
-```
-
-Example:
-```bash
-so-tool playbook lessons cp beaver/retriever/ beaver/retriever-backup/
-```
-
-#### Delete
-Delete a single lesson by ID, or delete a folder recursively.
-
-```
-usage: so-tool playbook lessons rm [-r] target
-
-positional arguments:
-  target    Lesson ID or folder path (with -r)
-
-options:
-  -r, --recursive    Delete folder recursively
-```
-
-Examples:
-```bash
-so-tool playbook lessons rm abc123               # Delete single lesson
-so-tool playbook lessons rm -r beaver/old/       # Delete folder and all contents
+```json
+{
+  "status": "moved",
+  "dst": "beaver/dest/",
+  "moved_count": 2
+}
 ```
 
 ---
 
 ## Troubleshooting
 
-### `SOVARA_API_KEY` not found in Claude Code environment
+### Sandboxed / restricted filesystem
 
-**Problem:** You have `export SOVARA_API_KEY=...` in your shell config (e.g., `~/.zshrc` or `~/.bashrc`), but Claude Code doesn't see the variable when running commands.
+**Problem:** You are running inside a sandboxed environment and Sovara commands fail because they try to write under `~/.sovara`, `~/.cache`, or Python cache locations.
 
-**Cause:** Shell config files like `.zshrc` and `.bashrc` are typically only sourced for *interactive* shells. When Claude Code spawns shell commands, they run as non-interactive shells and don't load these configs.
+**Solution:** Redirect all writable runtime state into `/tmp` before invoking the CLI:
 
-**Solution:** Move your `SOVARA_API_KEY` export to a file that gets sourced for all shell invocations:
+```bash
+export SOVARA_HOME=/tmp/sovara-home
+export SOVARA_CACHE=/tmp/sovara-cache
+export SOVARA_GIT_DIR=/tmp/sovara-git
+export UV_CACHE_DIR=/tmp/uv-cache
+export PYTHONPYCACHEPREFIX=/tmp/pycache
+```
+
+This is the most important variable:
+
+- `SOVARA_HOME=/tmp/sovara-home`
+
+because it moves the default config, DB, and logs out of `~/.sovara`. The other variables avoid cache writes outside the sandbox's writable area.
+
+**Important limitation:** this only fixes filesystem permission issues. If the sandbox also forbids binding a localhost port, server-backed commands like `runs`, `probe`, and `edit-and-rerun` may still fail until Sovara supports a no-daemon / in-process CLI transport.
+
+### Priors server not reachable
+
+**Problem:** `so-cli priors ...` fails because the priors server cannot be reached.
+
+**Check:** Confirm the on-prem priors server is running and that `PRIORS_SERVER_URL` points at the correct host. If you set `PRIORS_SERVER_URL` in your shell config, remember that non-interactive shells may not load files like `~/.zshrc`.
+
+**Solution:** Put your `PRIORS_SERVER_URL` export in a file that is sourced for all shell invocations:
 
 | OS | Recommended location |
 |-----|----------------------|
 | macOS (zsh) | `~/.zshenv` |
 | Linux (zsh) | `~/.zshenv` |
 | Linux (bash) | `~/.bashrc` or `~/.profile` |
-| Windows | System Environment Variables (GUI or `[System.Environment]::SetEnvironmentVariable("SOVARA_API_KEY", "your-key", "User")` in PowerShell) |
+| Windows | System Environment Variables (GUI or `[System.Environment]::SetEnvironmentVariable("PRIORS_SERVER_URL", "http://your-host:5960", "User")` in PowerShell) |
 
-After making this change, restart Claude Code for the new environment to take effect.
+After making this change, restart your agent shell/session for the new environment to take effect.
 
 ---
 
-- You executed a code using  `uv run so-tool --help`
-but you get: `error: Failed to spawn: so-tool` &rarr; You need to add sovara to your `uv` dependencies.
+- You executed a code using  `uv run so-cli --help`
+but you get: `error: Failed to spawn: so-cli` &rarr; You need to add sovara to your `uv` dependencies.
 
-- You executed `so-tool record some_script.py` and a module is not found &rarr; You need to add the module to your virtual environment.
+- You executed `so-cli record some_script.py` and a module is not found &rarr; You need to add the module to your virtual environment.
 
 ---
 
 ## Feedback
 
-When you (Claude Code) are using this tool and you encounter an issue (a command that should work didn't), propose to open an issue at [github.com/SovaraLabs/sovara](https://github.com/SovaraLabs/sovara) or to email `support@sovara-labs.com`. Propose the exact, nicely formatted text the user should use.
+When you are using this tool and you encounter an issue (a command that should work didn't), propose opening an issue at [github.com/SovaraLabs/sovara](https://github.com/SovaraLabs/sovara) or emailing `support@sovara-labs.com`. Propose the exact, nicely formatted text the user should use.

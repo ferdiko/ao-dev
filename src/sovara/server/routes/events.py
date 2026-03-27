@@ -7,7 +7,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request
 from starlette.responses import StreamingResponse
 
 from sovara.server.state import ServerState, logger
-from sovara.common.constants import SOVARA_CONFIG, PLAYBOOK_SERVER_URL, PLAYBOOK_API_KEY
+from sovara.common.constants import SOVARA_CONFIG, PRIORS_SERVER_URL
 
 router = APIRouter()
 
@@ -83,8 +83,7 @@ async def ui_websocket(websocket: WebSocket):
         "type": "run_id",
         "run_id": None,
         "config_path": SOVARA_CONFIG,
-        "playbook_url": PLAYBOOK_SERVER_URL,
-        "playbook_api_key": PLAYBOOK_API_KEY,
+        "priors_url": PRIORS_SERVER_URL,
     }))
 
     # Load finished runs and send initial run list

@@ -2325,7 +2325,7 @@ requires-dist = [
     { name = "langchain", marker = "extra == 'dev'" },
     { name = "langchain-anthropic", marker = "extra == 'dev'" },
     { name = "langchain-openai", marker = "extra == 'dev'" },
-    { name = "litellm", specifier = "<=1.82.6" },
+    { name = "litellm" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5" },
     { name = "mkdocs-minify-plugin", marker = "extra == 'docs'" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.24" },

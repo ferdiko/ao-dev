@@ -1,40 +1,8 @@
 import argparse
 import os
-from sovara.common.config import Config, _ask_field
-from sovara.common.constants import SOVARA_CONFIG
 from sovara.common.user import read_user_id, setup_user_interactive
 from sovara.common.project import find_project_root, read_project_id, setup_project_interactive
 from sovara.server.database_manager import DB
-
-
-def _convert_playbook_mode(value: str) -> str:
-    value = value.strip().lower()
-    if value not in ("local", "cloud"):
-        raise ValueError("Must be 'local' or 'cloud'")
-    return value
-
-
-def get_playbook_input() -> Config:
-    playbook_mode = _ask_field(
-        "Where do you want to host lessons? [local/cloud] (default: local)\n> ",
-        _convert_playbook_mode,
-        default="local",
-        error_message="Please enter 'local' or 'cloud'.",
-    )
-
-    playbook_api_key = None
-    if playbook_mode == "cloud":
-        playbook_api_key = _ask_field(
-            "Playbook API key:\n> ",
-            str,
-            default=os.environ.get("SOVARA_API_KEY"),
-            error_message="Please enter your API key.",
-        )
-
-    return Config(
-        playbook_mode=playbook_mode,
-        playbook_api_key=playbook_api_key,
-    )
 
 
 from sovara.common.constants import WELCOME_ART
@@ -92,12 +60,6 @@ def config_command():
         DB.upsert_project(project["project_id"], project["name"], project["description"])
     else:
         print("\nNo Sovara project in this directory. Run so-record to create one.\n")
-
-    # --- Playbook ---
-    print()
-    config = get_playbook_input()
-    config.to_yaml_file(SOVARA_CONFIG)
-
 
 def config_command_parser():
     description = (

@@ -118,7 +118,7 @@ os.makedirs(SOVARA_LOG_DIR, exist_ok=True)
 MAIN_SERVER_LOG = os.path.join(SOVARA_LOG_DIR, "main_server.log")
 INFERENCE_SERVER_LOG = os.path.join(SOVARA_LOG_DIR, "inference_server.log")
 
-# Inference sub-server port (5959=main, 5960=playbook-local, 5961=inference)
+# Inference sub-server port (5959=main, 5960=priors, 5961=inference)
 INFERENCE_PORT = PORT + 2
 
 
@@ -524,24 +524,11 @@ COMPILED_MODEL_NAME_FORMATTERS = [
 
 INVALID_LABEL_CHARS = set("{[<>%$#@")
 
-# Playbook server constants (config-aware, env vars override)
-_playbook_mode = getattr(config, "playbook_mode", None) or "cloud"
+# Priors server constants
+DEFAULT_PRIORS_SERVER_URL = "http://127.0.0.1:5960"
+PRIORS_SERVER_URL = os.environ.get("PRIORS_SERVER_URL", DEFAULT_PRIORS_SERVER_URL).rstrip("/")
 
-if _playbook_mode == "local":
-    PLAYBOOK_SERVER_URL = os.environ.get("PLAYBOOK_SERVER_URL", "http://127.0.0.1:5960")
-    PLAYBOOK_API_KEY = os.environ.get("SOVARA_API_KEY", "")
-else:
-    PLAYBOOK_SERVER_URL = os.environ.get(
-        "PLAYBOOK_SERVER_URL",
-        "https://ao-playbook-732575904722.us-central1.run.app",
-    )
-    PLAYBOOK_API_KEY = (
-        os.environ.get("SOVARA_API_KEY", "")
-        or getattr(config, "playbook_api_key", "")
-        or ""
-    )
-
-PLAYBOOK_SERVER_TIMEOUT = 30  # Seconds to wait for server startup
+PRIORS_SERVER_TIMEOUT = 30  # Seconds to wait for server startup
 
 # Testing constants
 TEST_USER_ID = "test-user"

@@ -15,7 +15,7 @@ export const LessonsTabApp: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [isValidating, setIsValidating] = useState(false);
-  const [apiKeyError, setApiKeyError] = useState(false);
+  const [serverUnavailable, setServerUnavailable] = useState(false);
   const isDarkTheme = useIsVsCodeDarkTheme();
 
   // Folder tree data passed to LessonsView via folderResult prop
@@ -58,7 +58,7 @@ export const LessonsTabApp: React.FC = () => {
             lessons: message.lessons || [],
             lessonCount: message.lesson_count,
           });
-          setApiKeyError(false);
+          setServerUnavailable(false);
           break;
         case 'lessons_refresh':
           // Server signals that lessons changed — re-fetch all expanded folders
@@ -87,10 +87,18 @@ export const LessonsTabApp: React.FC = () => {
           console.error('[LessonsTabApp] Received lesson_error:', message.error);
           setIsValidating(false);
           const errorMsg = message.error || 'An unknown error occurred';
-          // Check if it's an API key error
-          if (errorMsg.toLowerCase().includes('api key') || errorMsg.toLowerCase().includes('invalid') || errorMsg.toLowerCase().includes('unavailable')) {
-            setApiKeyError(true);
+          const normalizedError = errorMsg.toLowerCase();
+          if (
+            normalizedError.includes('connect')
+            || normalizedError.includes('connection failed')
+            || normalizedError.includes('configured')
+            || normalizedError.includes('refused')
+            || normalizedError.includes('timeout')
+            || normalizedError.includes('unavailable')
+          ) {
+            setServerUnavailable(true);
           } else {
+            setServerUnavailable(false);
             setError(errorMsg);
             // Auto-clear error after 5 seconds
             setTimeout(() => setError(null), 5000);
@@ -100,6 +108,7 @@ export const LessonsTabApp: React.FC = () => {
         case 'lesson_updated':
           console.log(`[LessonsTabApp] Received ${message.type}:`, message);
           setIsValidating(false);
+          setServerUnavailable(false);
           if (message.validation) {
             // Show validation feedback (info or warning)
             setValidationResult({
@@ -185,12 +194,12 @@ export const LessonsTabApp: React.FC = () => {
         validationResult={validationResult}
         isValidating={isValidating}
         onClearValidation={() => setValidationResult(null)}
-        apiKeyError={apiKeyError}
+        serverUnavailable={serverUnavailable}
         folderResult={folderResult}
         lessonContentUpdate={lessonContentUpdate}
         onFetchFolder={fetchFolder}
         onLessonCreate={(data: LessonFormData, force?: boolean) => {
-          // Create lesson via postMessage to backend (proxied to ao-playbook)
+          // Create lesson via postMessage to backend (proxied to the priors server)
           if (window.vscode) {
             setIsValidating(true);
             window.vscode.postMessage({
@@ -204,7 +213,7 @@ export const LessonsTabApp: React.FC = () => {
           }
         }}
         onLessonUpdate={(id: string, data: Partial<LessonFormData>, force?: boolean) => {
-          // Update lesson via postMessage to backend (proxied to ao-playbook)
+          // Update lesson via postMessage to backend (proxied to the priors server)
           if (window.vscode) {
             setIsValidating(true);
             window.vscode.postMessage({
@@ -216,7 +225,7 @@ export const LessonsTabApp: React.FC = () => {
           }
         }}
         onLessonDelete={(id: string) => {
-          // Delete lesson via postMessage to backend (proxied to ao-playbook)
+          // Delete lesson via postMessage to backend (proxied to the priors server)
           if (window.vscode) {
             window.vscode.postMessage({
               type: 'delete_lesson',

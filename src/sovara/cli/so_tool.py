@@ -10,26 +10,31 @@ import tempfile
 import subprocess
 from argparse import ArgumentParser, REMAINDER
 from pathlib import Path
-from sovara.common.constants import PLAYBOOK_SERVER_URL, PLAYBOOK_SERVER_TIMEOUT
-from sovara.server.database_manager import DB
-from sovara.server.graph_models import RunGraph
+from typing import Any
+from sovara.common.constants import HOST, PORT, PRIORS_SERVER_URL, PRIORS_SERVER_TIMEOUT
 
 RUN_WAIT_TIMEOUT = 30  # Max seconds to wait for run_id from agent_runner
+SOVARA_SERVER_URL = f"http://{HOST}:{PORT}"
 
 
-def output_json(data: dict) -> None:
+def output_json(data: Any) -> None:
     """Print JSON to stdout and exit with appropriate code."""
     print(json.dumps(data, indent=2))
-    sys.exit(0 if data.get("status") != "error" else 1)
+    if isinstance(data, dict) and data.get("status") == "error":
+        sys.exit(1)
+    sys.exit(0)
 
 
 def format_timestamp(ts) -> str | None:
     """Format a timestamp to ISO 8601 without microseconds."""
     if ts is None:
         return None
-    from datetime import datetime, timezone
+    from datetime import datetime
     if isinstance(ts, str):
-        ts = datetime.fromisoformat(ts)
+        try:
+            ts = datetime.fromisoformat(ts)
+        except ValueError:
+            return ts
     return ts.strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -46,106 +51,161 @@ def _resolve_value(value: str) -> str:
     return value
 
 
-def _apply_edit(run_id: str, node_uuid: str, field: str, key: str, value: str) -> dict:
-    """
-    Apply an edit to a single key in a node's input or output.
+def _load_json_file(path: str) -> Any:
+    """Load a JSON file from disk."""
+    with open(path, "r") as f:
+        return json.load(f)
 
-    The key is a flattened dot-notation key (e.g., "messages.0.content")
-    matching the keys from probe output. The value can be a literal string
-    or a path to a file whose contents will be used.
 
-    Returns dict with status info. Does NOT call output_json or exit.
-    """
-    from flatten_json import flatten as flatten_complete
-    from sovara.runner.monkey_patching.api_parser import merge_filtered_into_raw, json_str_to_api_obj
+def _build_restructure_execute_body(args) -> dict:
+    """Build the execute request body from CLI arguments."""
+    body = {}
 
-    # Get the node's current data
-    if field == "input":
-        row = DB.query_one_llm_call_input(run_id, node_uuid)
-    else:
-        row = DB.query_one_llm_call_output(run_id, node_uuid)
+    if args.proposal_file:
+        proposal = _load_json_file(args.proposal_file)
+        if not isinstance(proposal, dict):
+            raise ValueError("--proposal-file must contain a JSON object")
+        for key in ("task_id", "moves", "new_folders", "base_path", "snapshot"):
+            if key in proposal:
+                body[key] = proposal[key]
 
-    if not row:
-        return {"status": "error", "error": f"Node {node_uuid} not found in run {run_id}"}
+    if args.task_id:
+        body["task_id"] = args.task_id
 
-    api_type = row["api_type"]
+    if args.moves_file:
+        moves = _load_json_file(args.moves_file)
+        if not isinstance(moves, list):
+            raise ValueError("--moves-file must contain a JSON array")
+        body["moves"] = moves
 
-    # Parse the current stored data to get raw and to_show
-    if field == "input":
-        current_data = json.loads(row["input"])
-        inner_data = json.loads(current_data.get("input", "{}"))
-    else:
-        inner_data = json.loads(row["output"])
+    if args.base_path is not None:
+        body["base_path"] = args.base_path
 
-    raw_dict = inner_data.get("raw", {})
-    to_show = inner_data.get("to_show", {})
+    if args.snapshot is not None:
+        body["snapshot"] = args.snapshot
 
-    # Flatten to_show completely to match probe output format
-    flat_to_show = flatten_complete(to_show, ".") if isinstance(to_show, dict) else {}
+    if args.new_folder:
+        body["new_folders"] = args.new_folder
 
-    # Validate the key exists
-    if key not in flat_to_show:
-        return {"status": "error", "error": f"Key '{key}' not found. Available keys: {list(flat_to_show.keys())}"}
+    if not body:
+        raise ValueError("Provide --task-id, --proposal-file, or a standalone execute body")
 
-    # Resolve value (read file if path, otherwise use as-is)
-    value = _resolve_value(value)
+    return body
 
-    # Parse value: try JSON first (handles numbers, booleans, null), fall back to string
+
+def _ensure_server_running() -> None:
+    """Start the local FastAPI server on demand for CLI reads/writes."""
+    from sovara.cli.so_server import _is_server_running, launch_daemon_server
+
+    if _is_server_running():
+        return
+
+    launch_daemon_server()
+    deadline = time.time() + 10.0
+    while time.time() < deadline:
+        if _is_server_running():
+            return
+        time.sleep(0.1)
+
+    output_json({
+        "status": "error",
+        "error": "Sovara server did not become ready. Run `so-server start` and retry.",
+    })
+
+
+def _extract_http_error(resp) -> str:
     try:
-        parsed_value = json.loads(value)
-    except (json.JSONDecodeError, TypeError):
-        parsed_value = value
+        data = resp.json()
+    except ValueError:
+        text = resp.text.strip()
+        return text or "Server error"
 
-    # Update the single key
-    flat_to_show[key] = parsed_value
+    if isinstance(data, dict):
+        detail = data.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            return detail
+        error = data.get("error")
+        if isinstance(error, str) and error.strip():
+            return error
 
-    # Validate by merging into raw
+    return "Server error"
+
+
+def _server_request(
+    method: str,
+    path: str,
+    *,
+    params: dict | None = None,
+    data: dict | None = None,
+    timeout: float = 30.0,
+) -> dict:
+    """Make a JSON request to the local Sovara server."""
+    import httpx
+
+    _ensure_server_running()
+
     try:
-        merge_filtered_into_raw(raw_dict, flat_to_show)
-    except Exception as e:
-        return {"status": "error", "error": f"Failed to merge edit: {e}"}
+        with httpx.Client(timeout=timeout) as client:
+            response = client.request(
+                method,
+                f"{SOVARA_SERVER_URL}{path}",
+                params=params,
+                json=data,
+            )
+    except httpx.RequestError as exc:
+        return {"status": "error", "error": f"Connection failed: {exc}"}
 
-    # Build the new complete structure
-    new_complete = {"raw": raw_dict, "to_show": flat_to_show}
-    new_json_str = json.dumps(new_complete, sort_keys=True)
+    if not response.is_success:
+        return {
+            "status": "error",
+            "error": _extract_http_error(response),
+            "code": response.status_code,
+        }
 
-    # For output, validate it can be converted to API object
-    if field == "output":
-        try:
-            json_str_to_api_obj(new_json_str, api_type)
-        except Exception as e:
-            return {"status": "error", "error": f"Validation failed: {e}"}
-
-    # Apply the edit
-    if field == "input":
-        DB.set_input_overwrite(run_id, node_uuid, new_json_str)
-    else:
-        DB.set_output_overwrite(run_id, node_uuid, new_json_str)
-
-    return {
-        "status": "success",
-        "run_id": run_id,
-        "node_uuid": node_uuid,
-        "field": field,
-        "key": key,
-    }
+    try:
+        return response.json()
+    except ValueError as exc:
+        return {"status": "error", "error": f"Invalid JSON response: {exc}"}
 
 
-def _spawn_rerun(run_id: str, timeout: float | None = None) -> dict:
+def _fetch_all_runs() -> list[dict]:
+    """Fetch the full run list via paginated UI endpoints."""
+    first_page = _server_request("GET", "/ui/runs")
+    if first_page.get("status") == "error":
+        output_json(first_page)
+
+    runs = list(first_page.get("runs", []))
+    finished_offset = sum(1 for run in runs if run.get("status") != "running")
+    has_more = first_page.get("has_more", False)
+
+    while has_more:
+        page = _server_request("GET", "/ui/runs/more", params={"offset": finished_offset})
+        if page.get("status") == "error":
+            output_json(page)
+        next_runs = page.get("runs", [])
+        runs.extend(next_runs)
+        finished_offset += len(next_runs)
+        has_more = page.get("has_more", False)
+
+    return runs
+
+
+def _spawn_rerun(prepared: dict, timeout: float | None = None) -> dict:
     """
     Spawn a rerun process for a run and block until completion.
 
     Consistent with record_command: stdout/stderr pass through to terminal.
     Returns result dict with status, run_id, exit_code, etc.
     """
-    # Get the original command, cwd, and environment from DB
-    cwd, command, environment = DB.get_exec_command(run_id)
+    run_id = prepared["run_id"]
+    cwd = prepared["cwd"]
+    command = prepared["command"]
+    environment = prepared["environment"]
 
     if not command:
         return {"status": "error", "error": f"Run not found or no command stored: {run_id}"}
 
     # Create temp file for run_id IPC
-    run_id = str(uuid.uuid4())[:8]
     run_file = os.path.join(tempfile.gettempdir(), f"sovara-run-{run_id}.json")
 
     def cleanup_run_file():
@@ -184,6 +244,12 @@ def _spawn_rerun(run_id: str, timeout: float | None = None) -> dict:
         return {
             "status": "error",
             "error": "Timeout waiting for run handshake",
+            "pid": process.pid,
+        }
+    if run_data["run_id"] != run_id:
+        return {
+            "status": "error",
+            "error": f"Run handshake mismatch: expected {run_id}, got {run_data['run_id']}",
             "pid": process.pid,
         }
 
@@ -296,177 +362,28 @@ def record_command(args) -> None:
         })
 
 
-def _truncate_strings(obj, max_len: int = 20):
-    """Recursively truncate all string values in a JSON-like structure."""
-    if isinstance(obj, str):
-        if len(obj) > max_len:
-            return obj[:max_len] + "..."
-        return obj
-    elif isinstance(obj, dict):
-        return {k: _truncate_strings(v, max_len) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [_truncate_strings(item, max_len) for item in obj]
-    else:
-        return obj
-
-
-def _filter_by_key_regex(obj, pattern: str):
-    """
-    Filter a JSON-like structure by regex pattern on flattened keys.
-
-    Uses flatten_json to create keys like "content.0.hello.key" for nested structures,
-    filters by regex match, then unflattens back to nested structure.
-    """
-    import re
-    from flatten_json import flatten, unflatten_list
-
-    if obj is None:
-        return None
-
-    try:
-        regex = re.compile(pattern)
-    except re.error as e:
-        raise ValueError(f"Invalid regex pattern: {e}")
-
-    # Flatten the dict with "." separator (lists become content.0.key)
-    flattened = flatten(obj, ".")
-
-    # Filter keys that match the regex
-    filtered = {k: v for k, v in flattened.items() if regex.search(k)}
-
-    # Unflatten back to nested structure
-    return unflatten_list(filtered, ".")
-
-
 def probe_command(args) -> None:
-    """Query the state of a run: metadata or specific nodes."""
-    run_id = args.run_id
+    """Query the state of a run via the REST API."""
+    params = {}
+    if args.node:
+        params["node"] = args.node
+    if args.nodes:
+        params["nodes"] = args.nodes
+    if args.preview:
+        params["preview"] = True
+    if args.show_input:
+        params["input"] = True
+    if args.show_output:
+        params["output"] = True
+    if args.key_regex:
+        params["key_regex"] = args.key_regex
 
-    # Get run metadata
-    run = DB.get_run_metadata(run_id)
-    if not run:
-        output_json({"status": "error", "error": f"Run not found: {run_id}"})
-
-    # Parse graph topology from JSON
-    graph_topology = RunGraph.from_json_string(run["graph_topology"]).to_dict()
-    edges = graph_topology.get("edges", [])
-
-    # Build parent/child relationships from edges
-    parent_ids = {}  # node_uuid -> list of parent node_uuids
-    child_ids = {}   # node_uuid -> list of child node_uuids
-    for edge in edges:
-        src, tgt = edge["source_uuid"], edge["target_uuid"]
-        parent_ids.setdefault(tgt, []).append(src)
-        child_ids.setdefault(src, []).append(tgt)
-
-    # Handle --node or --nodes: return detailed info for specific node(s)
-    if args.node or args.nodes:
-        node_uuids = [args.node] if args.node else args.nodes.split(",")
-        nodes_data = []
-        for node_uuid in node_uuids:
-            llm_call = DB.get_llm_call_full(run_id, node_uuid.strip())
-            if not llm_call:
-                output_json({"status": "error", "error": f"Node not found: {node_uuid}"})
-
-            # Parse input/output JSON, extracting to_show fields
-            input_to_show = None
-            output_to_show = None
-            if llm_call["input"]:
-                input_data = json.loads(llm_call["input"])
-                # input_data has {input: "<json string>", attachments: [...], model: "..."}
-                # Parse the nested input JSON to get to_show
-                if input_data.get("input"):
-                    inner_input = json.loads(input_data["input"])
-                    input_to_show = inner_input.get("to_show")
-
-            if llm_call["output"]:
-                output_data = json.loads(llm_call["output"])
-                # output_data has {raw: {...}, to_show: {...}}
-                output_to_show = output_data.get("to_show")
-
-            # Apply key regex filter if requested
-            if args.key_regex:
-                try:
-                    input_to_show = _filter_by_key_regex(input_to_show, args.key_regex)
-                    output_to_show = _filter_by_key_regex(output_to_show, args.key_regex)
-                except ValueError as e:
-                    output_json({"status": "error", "error": str(e)})
-
-            # Apply preview truncation if requested
-            if args.preview:
-                input_to_show = _truncate_strings(input_to_show)
-                output_to_show = _truncate_strings(output_to_show)
-
-            # Flatten completely (including lists into key.0, key.1 notation)
-            from flatten_json import flatten as flatten_complete
-            if isinstance(input_to_show, dict):
-                input_to_show = flatten_complete(input_to_show, ".")
-            if isinstance(output_to_show, dict):
-                output_to_show = flatten_complete(output_to_show, ".")
-
-            # Determine which content to include based on --input/--output flags
-            # If neither specified, include both; if one specified, include only that one
-            show_input = not args.show_output or args.show_input
-            show_output = not args.show_input or args.show_output
-
-            # Split stack trace into list of lines for readability
-            stack_trace = llm_call["stack_trace"]
-            if stack_trace:
-                stack_trace = [line.strip() for line in stack_trace.split("\n") if line.strip()]
-
-            node_info = {
-                "node_uuid": llm_call["node_uuid"],
-                "run_id": run_id,
-                "api_type": llm_call["api_type"],
-                "label": llm_call["label"],
-                "timestamp": format_timestamp(llm_call["timestamp"]),
-                "parent_uuids": parent_ids.get(node_uuid.strip(), []),
-                "child_uuids": child_ids.get(node_uuid.strip(), []),
-                "has_input_overwrite": llm_call["input_overwrite"] is not None,
-                "stack_trace": stack_trace,
-            }
-
-            if show_input:
-                node_info["input"] = input_to_show
-            if show_output:
-                node_info["output"] = output_to_show
-
-            nodes_data.append(node_info)
-
-        if args.node:
-            # Single node: return just the node object
-            output_json(nodes_data[0])
-        else:
-            # Multiple nodes: return array
-            output_json({"nodes": nodes_data})
-        return
-
-    # Default: full probe - metadata + graph summary
-    output_json({
-        "run_id": run_id,
-        "name": run["name"],
-        "status": "finished",  # TODO: track running status
-        "timestamp": format_timestamp(run["timestamp"]),
-        "custom_metrics": DB._parse_custom_metrics(run["custom_metrics"]),
-        "thumb_label": DB._normalize_thumb_label(run["thumb_label"]),
-        "version_date": run["version_date"],
-        "node_count": len(graph_topology.get("nodes", [])),
-        "nodes": [
-            {
-                "node_uuid": n["uuid"],
-                "step_id": n.get("step_id"),
-                "label": n.get("label", ""),
-                "parent_uuids": parent_ids.get(n["uuid"], []),
-                "child_uuids": child_ids.get(n["uuid"], []),
-            }
-            for n in graph_topology.get("nodes", [])
-        ],
-        "edges": [{"source_uuid": e["source_uuid"], "target_uuid": e["target_uuid"]} for e in edges],
-    })
+    result = _server_request("GET", f"/ui/run/{args.run_id}/probe", params=params)
+    output_json(result)
 
 
 def runs_command(args) -> None:
-    """List runs from the database."""
+    """List runs via the REST API."""
     import re
 
     # Parse range (format: "start:end", ":end", "start:", or "start")
@@ -480,9 +397,11 @@ def runs_command(args) -> None:
         start = int(range_str)
         end = start + 1  # Single item
 
-    # Get all runs sorted by timestamp (most recent first)
-    all_runs = DB.get_all_runs_sorted()
+    all_runs = _fetch_all_runs()
     total_count = len(all_runs)
+
+    if args.status != "all":
+        all_runs = [run for run in all_runs if run.get("status") == args.status]
 
     # Apply range first
     if end is not None:
@@ -501,78 +420,21 @@ def runs_command(args) -> None:
     # Format output
     result = []
     for exp in runs:
-        timestamp = exp["timestamp"]
-        if hasattr(timestamp, "isoformat"):
-            timestamp = timestamp.isoformat()
-
         result.append({
             "run_id": exp["run_id"],
             "name": exp["name"],
-            "timestamp": format_timestamp(timestamp),
-            "custom_metrics": DB._parse_custom_metrics(exp["custom_metrics"]),
-            "thumb_label": DB._normalize_thumb_label(exp["thumb_label"]),
+            "status": exp.get("status"),
+            "timestamp": format_timestamp(exp.get("timestamp")),
+            "custom_metrics": exp.get("custom_metrics", {}),
+            "thumb_label": exp.get("thumb_label"),
             "version_date": exp["version_date"],
         })
 
     output_json({"runs": result, "total": total_count, "range": f"{start}:{end if end else ''}"})
 
 
-
-def _copy_run(run_id: str, run_name: str | None = None) -> str | dict:
-    """
-    Clones the run and llm-calls entries for the given run_id in the DB
-    and writes them into new entries in the DB with a new run id we generate here.
-    Returns the new run id, or an error dict if the run doesn't exist.
-
-    Args:
-        run_id: The run to copy
-        run_name: Optional name for the new run. If None, defaults to "Edit of <original name>"
-    """
-    from datetime import datetime
-
-    # Get the original run metadata
-    run = DB.get_run_metadata(run_id)
-    if not run:
-        return {"status": "error", "error": f"Run not found: {run_id}"}
-
-    # Get execution info (cwd, command, environment)
-    cwd, command, environment = DB.get_exec_command(run_id)
-    if not command:
-        return {"status": "error", "error": f"No command stored for run: {run_id}"}
-
-    # Generate new run ID
-    new_run_id = str(uuid.uuid4())
-
-    # Determine run name
-    if run_name is None:
-        run_name = f"Edit of {run['name']}"
-
-    # Create new run with copied data but new run_id and timestamp
-    DB.add_run(
-        run_id=new_run_id,
-        name=run_name,
-        timestamp=datetime.now(timezone.utc),
-        cwd=cwd,
-        command=command,
-        environment=environment,
-        parent_run_id=new_run_id,  # Self-referential for new top-level run
-        version_date=run["version_date"],
-    )
-
-    # Copy graph topology from original
-    if run["graph_topology"]:
-        graph = RunGraph.from_json_string(run["graph_topology"])
-        DB.update_graph_topology(new_run_id, graph)
-
-    # Copy all LLM calls to new run
-    DB.copy_llm_calls(run_id, new_run_id)
-
-    return new_run_id
-
-
 def edit_and_rerun_command(args) -> None:
     """Edit a single key in a node's input or output and immediately rerun."""
-    run_id = args.run_id
     node_uuid = args.node_uuid
 
     # Determine field, key, and value from mutually exclusive args
@@ -583,19 +445,21 @@ def edit_and_rerun_command(args) -> None:
         field = "output"
         key, value = args.output
 
-    # Always create a new run (copy run)
-    result = _copy_run(run_id, args.run_name)
-    if isinstance(result, dict):
-        output_json(result)
-    run_id = result
+    prepared = _server_request(
+        "POST",
+        f"/ui/run/{args.run_id}/prepare-edit-rerun",
+        data={
+            "node_uuid": node_uuid,
+            "field": field,
+            "key": key,
+            "value": _resolve_value(value),
+            "run_name": args.run_name,
+        },
+    )
+    if prepared.get("status") == "error":
+        output_json(prepared)
 
-    # Step 1: Apply the edit
-    edit_result = _apply_edit(run_id, node_uuid, field, key, value)
-    if edit_result.get("status") == "error":
-        output_json(edit_result)
-
-    # Step 2: Spawn rerun and block until completion
-    result = _spawn_rerun(run_id, timeout=args.timeout)
+    result = _spawn_rerun(prepared, timeout=args.timeout)
     result["node_uuid"] = node_uuid
     result["edited_field"] = field
     result["edited_key"] = key
@@ -635,8 +499,8 @@ def install_skill_command() -> None:
 
     # Ask about adding Bash permissions
     settings_file = target_root / ".claude" / "settings.local.json"
-    print(f"\nAdd so-tool Bash permissions to Claude Code settings?")
-    print(f"This allows Claude to run so-tool commands without asking for permission.")
+    print(f"\nAdd so-cli Bash permissions to Claude Code settings?")
+    print(f"This allows Claude to run so-cli commands without asking for permission.")
     print(f"Target: {settings_file}")
     response = input("Add permissions? [Y/n]: ").strip().lower()
 
@@ -650,10 +514,10 @@ def install_skill_command() -> None:
 
 
 def _add_ao_permissions(settings_file: Path) -> None:
-    """Add so-tool Bash permissions to a Claude settings file."""
+    """Add so-cli Bash permissions to a Claude settings file."""
     ao_permissions = [
         "Bash(*sovara.cli.so_tool*)",
-        "Bash(*so-tool*)",
+        "Bash(*so-cli*)",
     ]
 
     # Load existing settings or create new
@@ -683,52 +547,53 @@ def _add_ao_permissions(settings_file: Path) -> None:
 
 
 # ===========================================================
-# Playbook commands
+# Priors commands
 # ===========================================================
 
 
-def _is_playbook_server_running() -> bool:
-    """Check if the playbook server is already running."""
+def _is_priors_server_running() -> bool:
+    """Check if the priors server is already running."""
     import urllib.request
     import urllib.error
 
     try:
-        req = urllib.request.Request(f"{PLAYBOOK_SERVER_URL}/health", method="GET")
+        req = urllib.request.Request(f"{PRIORS_SERVER_URL}/health", method="GET")
         with urllib.request.urlopen(req, timeout=2) as response:
             return response.status == 200
     except (urllib.error.URLError, TimeoutError, OSError):
         return False
 
 
-def playbook_start_server_command(args) -> None:
-    """Start the ao-playbook-server daemon."""
+def priors_start_server_command(args) -> None:
+    """Start the SovaraDB daemon."""
     # Check if already running
-    if _is_playbook_server_running():
+    if _is_priors_server_running():
         output_json({
             "status": "success",
-            "message": "Playbook server is already running",
-            "url": PLAYBOOK_SERVER_URL,
+            "message": "SovaraDB server is already running",
+            "url": PRIORS_SERVER_URL,
         })
 
     # Run the server start command (it handles its own daemonization)
-    cmd = ["uv", "run", "ao-playbook-server", "start"]
+    cmd = ["uv", "run", "so-priors", "start"]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=PLAYBOOK_SERVER_TIMEOUT)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=PRIORS_SERVER_TIMEOUT)
         if result.returncode == 0:
             output_json({
                 "status": "success",
-                "message": "Playbook server started successfully",
-                "url": PLAYBOOK_SERVER_URL,
+                "message": "SovaraDB server started successfully",
+                "url": PRIORS_SERVER_URL,
             })
         else:
             error_output = result.stderr or result.stdout or "Unknown error starting server"
             output_json({
                 "status": "error",
                 "error": error_output,
-                "hint": "ao-playbook may not be installed. To install:\n"
-                        "  - With uv: add ao-playbook = { path = \"../ao-playbook\", editable = true } to pyproject.toml\n"
-                        "  - With pip: pip install -e ../ao-playbook",
+                "hint": "SovaraDB may not be installed. To install:\n"
+                        "  - With uv: add the local so-priors checkout as an editable path dependency\n"
+                        "    (for example: sovara-priorsdb = { path = \"../so-priors\", editable = true })\n"
+                        "  - With pip: pip install -e ../so-priors",
             })
     except FileNotFoundError:
         output_json({
@@ -738,25 +603,24 @@ def playbook_start_server_command(args) -> None:
     except subprocess.TimeoutExpired:
         output_json({
             "status": "error",
-            "error": f"Server start command timed out after {PLAYBOOK_SERVER_TIMEOUT}s",
+            "error": f"Server start command timed out after {PRIORS_SERVER_TIMEOUT}s",
         })
     except Exception as e:
         output_json({
             "status": "error",
-            "error": f"Failed to start playbook server: {e}",
+            "error": f"Failed to start priors server: {e}",
         })
 
 
-def _playbook_request(method: str, path: str, data: dict | None = None) -> dict:
-    """Make an HTTP request to the playbook server.
+def _priors_request(method: str, path: str, data: dict | None = None) -> dict:
+    """Make an HTTP request to the priors server.
 
     Returns the parsed JSON response, or an error dict.
-    Uses SOVARA_API_KEY env var for authentication if set.
     """
     import urllib.request
     import urllib.error
 
-    url = f"{PLAYBOOK_SERVER_URL}{path}"
+    url = f"{PRIORS_SERVER_URL}{path}"
 
     if data is not None:
         body = json.dumps(data).encode("utf-8")
@@ -766,11 +630,6 @@ def _playbook_request(method: str, path: str, data: dict | None = None) -> dict:
     headers = {}
     if body:
         headers["Content-Type"] = "application/json"
-
-    # Add API key if available
-    api_key = os.environ.get("SOVARA_API_KEY")
-    if api_key:
-        headers["X-API-Key"] = api_key
 
     req = urllib.request.Request(
         url,
@@ -820,10 +679,10 @@ def _parse_sse_stream(response) -> dict:
 
             if current_event == "waiting":
                 msg = data.get("message", "Waiting for lock...")
-                print(f"[playbook] {msg}", file=sys.stderr)
+                print(f"[priors] {msg}", file=sys.stderr)
             elif current_event == "acquired":
                 msg = data.get("message", "Acquired lock")
-                print(f"[playbook] {msg}", file=sys.stderr)
+                print(f"[priors] {msg}", file=sys.stderr)
             elif current_event == "result":
                 return data
             elif current_event == "error":
@@ -837,15 +696,15 @@ def _parse_sse_stream(response) -> dict:
     return {"status": "error", "error": "SSE stream ended unexpectedly"}
 
 
-def _playbook_request_sse(method: str, path: str, data: dict | None = None) -> dict:
-    """Make an HTTP request to the playbook server expecting an SSE stream.
+def _priors_request_sse(method: str, path: str, data: dict | None = None) -> dict:
+    """Make an HTTP request to the priors server expecting an SSE stream.
 
     Returns the parsed result/error data dict.
     """
     import urllib.request
     import urllib.error
 
-    url = f"{PLAYBOOK_SERVER_URL}{path}"
+    url = f"{PRIORS_SERVER_URL}{path}"
 
     if data is not None:
         body = json.dumps(data).encode("utf-8")
@@ -855,10 +714,6 @@ def _playbook_request_sse(method: str, path: str, data: dict | None = None) -> d
     headers = {"Accept": "text/event-stream"}
     if body:
         headers["Content-Type"] = "application/json"
-
-    api_key = os.environ.get("SOVARA_API_KEY")
-    if api_key:
-        headers["X-API-Key"] = api_key
 
     req = urllib.request.Request(
         url,
@@ -891,28 +746,23 @@ def _playbook_request_sse(method: str, path: str, data: dict | None = None) -> d
         return {"status": "error", "error": f"Invalid JSON response: {e}"}
 
 
-def playbook_lessons_list_command(args) -> None:
-    """List all lessons, optionally filtered by folder path."""
-    endpoint = "/api/v1/lessons"
+def priors_list_command(args) -> None:
+    """List priors, optionally filtered by folder path."""
+    endpoint = "/api/v1/priors"
     if args.path:
         from urllib.parse import urlencode
+
         endpoint += "?" + urlencode({"path": args.path})
-    result = _playbook_request("GET", endpoint)
-    if "status" in result and result["status"] == "error":
-        output_json(result)
-    output_json({"status": "success", "lessons": result})
+    output_json(_priors_request("GET", endpoint))
 
 
-def playbook_lessons_get_command(args) -> None:
-    """Get a specific lesson by ID."""
-    result = _playbook_request("GET", f"/api/v1/lessons/{args.lesson_id}")
-    if "status" in result and result["status"] == "error":
-        output_json(result)
-    output_json({"status": "success", "lesson": result})
+def priors_get_command(args) -> None:
+    """Get a specific prior by ID."""
+    output_json(_priors_request("GET", f"/api/v1/priors/{args.prior_id}"))
 
 
-def playbook_lessons_create_command(args) -> None:
-    """Create a new lesson. Server performs LLM validation unless force=true."""
+def priors_create_command(args) -> None:
+    """Create a new prior. Server performs LLM validation unless force=true."""
     data = {
         "name": args.name,
         "summary": args.summary,
@@ -920,46 +770,20 @@ def playbook_lessons_create_command(args) -> None:
     }
     if args.path:
         data["path"] = args.path
+    if args.creation_trace_id:
+        data["creation_trace_id"] = args.creation_trace_id
+    if args.trace_source:
+        data["trace_source"] = args.trace_source
 
-    # Use force query param to skip server-side validation
-    endpoint = "/api/v1/lessons"
+    endpoint = "/api/v1/priors"
     if args.force:
         endpoint += "?force=true"
 
-    result = _playbook_request_sse("POST", endpoint, data)
-
-    # Handle validation rejection
-    if result.get("status") == "rejected":
-        output_json({
-            "status": "rejected",
-            "reason": result.get("reason", "Validation failed"),
-            "conflicting_lesson_ids": result.get("conflicting_lesson_ids", []),
-            "hint": result.get("hint") or "Use --force to skip validation and create anyway",
-        })
-
-    if result.get("status") == "error":
-        output_json(result)
-
-    # Success: status is "created", lesson data is at top level
-    if result.get("status") == "created":
-        lesson = {
-            "id": result.get("id"),
-            "name": result.get("name"),
-            "summary": result.get("summary"),
-            "content": result.get("content"),
-            "path": result.get("path"),
-        }
-        response = {"status": "success", "lesson": lesson}
-        if "validation" in result:
-            response["validation"] = result["validation"]
-        output_json(response)
-
-    # Fallback for unexpected response
-    output_json({"status": "error", "error": f"Unexpected response: {result}"})
+    output_json(_priors_request_sse("POST", endpoint, data))
 
 
-def playbook_lessons_update_command(args) -> None:
-    """Update an existing lesson. Server performs LLM validation unless force=true."""
+def priors_update_command(args) -> None:
+    """Update an existing prior. Server performs LLM validation unless force=true."""
     data = {}
     if args.name:
         data["name"] = args.name
@@ -967,68 +791,40 @@ def playbook_lessons_update_command(args) -> None:
         data["summary"] = args.summary
     if args.content:
         data["content"] = args.content
+    if args.path:
+        data["path"] = args.path
 
     if not data:
-        output_json({"status": "error", "error": "At least one of --name, --summary, or --content is required"})
+        output_json({"status": "error", "error": "At least one field must be provided"})
 
-    # Use force query param to skip server-side validation
-    endpoint = f"/api/v1/lessons/{args.lesson_id}"
+    endpoint = f"/api/v1/priors/{args.prior_id}"
     if args.force:
         endpoint += "?force=true"
 
-    result = _playbook_request_sse("PUT", endpoint, data)
-
-    # Handle validation rejection
-    if result.get("status") == "rejected":
-        output_json({
-            "status": "rejected",
-            "reason": result.get("reason", "Validation failed"),
-            "conflicting_lesson_ids": result.get("conflicting_lesson_ids", []),
-            "hint": result.get("hint") or "Use --force to skip validation and update anyway",
-        })
-
-    if result.get("status") == "error":
-        output_json(result)
-
-    # Success: status is "updated", lesson data is at top level
-    if result.get("status") == "updated":
-        lesson = {
-            "id": result.get("id"),
-            "name": result.get("name"),
-            "summary": result.get("summary"),
-            "content": result.get("content"),
-            "path": result.get("path"),
-        }
-        response = {"status": "success", "lesson": lesson}
-        if "validation" in result:
-            response["validation"] = result["validation"]
-        output_json(response)
-
-    # Fallback for unexpected response
-    output_json({"status": "error", "error": f"Unexpected response: {result}"})
+    output_json(_priors_request_sse("PUT", endpoint, data))
 
 
-def playbook_lessons_delete_command(args) -> None:
-    """Delete a lesson."""
-    result = _playbook_request_sse("DELETE", f"/api/v1/lessons/{args.lesson_id}")
-    if "status" in result and result["status"] == "error":
-        output_json(result)
-    output_json({"status": "success", "deleted": args.lesson_id})
+def priors_delete_command(args) -> None:
+    """Delete a prior."""
+    output_json(_priors_request_sse("DELETE", f"/api/v1/priors/{args.prior_id}"))
 
 
-def playbook_lessons_query_command(args) -> None:
-    """Query lessons by folder path."""
+def priors_query_command(args) -> None:
+    """Query all priors in a folder and return an injected context block."""
     data = {}
     if args.path:
         data["path"] = args.path
-    result = _playbook_request("POST", "/api/v1/query/lessons", data)
-    if "status" in result and result["status"] == "error":
-        output_json(result)
-    output_json({
-        "status": "success",
-        "lessons": result.get("lessons", []),
-        "injected_context": result.get("injected_context", ""),
-    })
+    output_json(_priors_request("POST", "/api/v1/query/priors", data))
+
+
+def priors_retrieve_command(args) -> None:
+    """Retrieve relevant priors with the LLM-backed retriever."""
+    data = {"context": args.context}
+    if args.path:
+        data["base_path"] = args.path
+    if args.model:
+        data["model"] = args.model
+    output_json(_priors_request("POST", "/api/v1/query/priors/retrieve", data))
 
 
 def _normalize_folder_path(path: str) -> str:
@@ -1054,88 +850,97 @@ def _normalize_folder_path(path: str) -> str:
     return path
 
 
-def playbook_lessons_ls_command(args) -> None:
+def priors_migrate_command(args) -> None:
+    """Migrate root-level priors into the default retrieval folder."""
+    output_json(_priors_request("POST", "/api/v1/priors/migrate", {}))
+
+
+def priors_restructure_propose_command(args) -> None:
+    """Propose a prior folder restructure."""
+    data = {"base_path": args.path or ""}
+    if args.comments:
+        data["comments"] = args.comments
+    output_json(_priors_request("POST", "/api/v1/priors/restructure/propose", data))
+
+
+def priors_restructure_execute_command(args) -> None:
+    """Execute a proposed or client-specified prior restructure."""
+    try:
+        data = _build_restructure_execute_body(args)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        output_json({"status": "error", "error": str(exc)})
+    output_json(_priors_request("POST", "/api/v1/priors/restructure/execute", data))
+
+
+def priors_restructure_abort_command(args) -> None:
+    """Abort a pending prior restructure proposal."""
+    output_json(_priors_request("POST", "/api/v1/priors/restructure/abort", {"task_id": args.task_id}))
+
+
+def priors_ls_command(args) -> None:
     """List folder contents at a path."""
     path = _normalize_folder_path(args.path or "")
-    result = _playbook_request("POST", "/api/v1/lessons/folders/ls", {"path": path})
-    if result.get("status") == "error":
-        output_json(result)
-    output_json({
-        "status": "success",
-        "path": result.get("path", path),
-        "folders": result.get("folders", []),
-        "lessons": result.get("lessons", []),
-        "lesson_count": result.get("lesson_count", 0),
-    })
+    output_json(_priors_request("POST", "/api/v1/priors/folders/ls", {"path": path}))
 
 
-def playbook_lessons_mkdir_command(args) -> None:
+def priors_mkdir_command(args) -> None:
     """Create an empty folder."""
     path = _normalize_folder_path(args.path)
-    result = _playbook_request("POST", "/api/v1/lessons/folders/mkdir", {"path": path})
-    if result.get("status") == "error":
-        output_json(result)
-    output_json({"status": "success", "path": result.get("path", path)})
+    output_json(_priors_request("POST", "/api/v1/priors/folders/mkdir", {"path": path}))
 
 
-def playbook_lessons_mv_command(args) -> None:
-    """Move/rename a folder, or move lessons by ID."""
+def priors_mv_command(args) -> None:
+    """Move/rename a folder, or move priors by ID."""
     if args.ids:
-        # Lesson mode: -i id1,id2 DST
-        lesson_ids = [i.strip() for i in args.ids.split(",")]
+        # Prior mode: -i id1,id2 DST
+        prior_ids = [i.strip() for i in args.ids.split(",")]
         if not args.paths:
             output_json({"status": "error", "error": "DST path is required when using -i"})
         dst = _normalize_folder_path(args.paths[0])
-        result = _playbook_request("POST", "/api/v1/lessons/folders/mv", {
-            "lesson_ids": lesson_ids,
+        result = _priors_request("POST", "/api/v1/priors/folders/mv", {
+            "prior_ids": prior_ids,
             "dst": dst,
         })
     else:
         # Folder mode: SRC DST
         if not args.paths or len(args.paths) != 2:
-            output_json({"status": "error", "error": "mv requires SRC and DST arguments (or use -i for lesson IDs)"})
+            output_json({"status": "error", "error": "mv requires SRC and DST arguments (or use -i for prior IDs)"})
         src = _normalize_folder_path(args.paths[0])
         dst = _normalize_folder_path(args.paths[1])
-        result = _playbook_request("POST", "/api/v1/lessons/folders/mv", {
+        result = _priors_request("POST", "/api/v1/priors/folders/mv", {
             "src": src,
             "dst": dst,
         })
-    if result.get("status") == "error":
-        output_json(result)
     output_json(result)
 
 
-def playbook_lessons_cp_command(args) -> None:
+def priors_cp_command(args) -> None:
     """Copy a folder to a new destination."""
     src = _normalize_folder_path(args.src)
     dst = _normalize_folder_path(args.dst)
-    result = _playbook_request("POST", "/api/v1/lessons/folders/cp", {
+    result = _priors_request("POST", "/api/v1/priors/folders/cp", {
         "src": src,
         "dst": dst,
     })
-    if result.get("status") == "error":
-        output_json(result)
     output_json(result)
 
 
-def playbook_lessons_rm_command(args) -> None:
-    """Delete a lesson by ID, or recursively delete a folder."""
+def priors_rm_command(args) -> None:
+    """Delete a prior by ID, or recursively delete a folder."""
     if args.recursive:
         # Folder mode: rm -r PATH
         path = _normalize_folder_path(args.target)
-        result = _playbook_request("POST", "/api/v1/lessons/folders/rm", {"path": path})
+        result = _priors_request("POST", "/api/v1/priors/folders/rm", {"path": path})
     else:
-        # Single lesson delete by ID
-        result = _playbook_request("DELETE", f"/api/v1/lessons/{args.target}")
-    if result.get("status") == "error":
-        output_json(result)
+        # Single prior delete by ID
+        result = _priors_request_sse("DELETE", f"/api/v1/priors/{args.target}")
     output_json(result)
 
 
 def create_parser() -> ArgumentParser:
     """Create the argument parser with subcommands."""
     parser = ArgumentParser(
-        prog="so-tool",
+        prog="so-cli",
         description="CLI for programmatic interaction with Sovara dataflow system. All output is JSON.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1202,7 +1007,7 @@ def create_parser() -> ArgumentParser:
     # runs subcommand
     runs = subparsers.add_parser(
         "runs",
-        help="List runs from database",
+        help="List runs from server",
         description="List runs with optional range. Range format: ':50' (first 50), '50:100' (50-99), '10:' (from 10 onwards).",
     )
     runs.add_argument(
@@ -1213,6 +1018,12 @@ def create_parser() -> ArgumentParser:
     runs.add_argument(
         "--regex",
         help="Filter runs by name using regex pattern",
+    )
+    runs.add_argument(
+        "--status",
+        choices=["all", "running", "finished"],
+        default="all",
+        help="Filter runs by runtime status",
     )
 
     # edit-and-rerun subcommand
@@ -1256,163 +1067,245 @@ def create_parser() -> ArgumentParser:
         description="Interactive setup: copies SKILL.md and adds Claude Code permissions.",
     )
 
-    # playbook subcommand with nested subcommands
-    playbook = subparsers.add_parser(
-        "playbook",
-        help="Design playbook commands",
-        description="Manage lessons for agent development.",
+    # priors subcommand with nested subcommands
+    priors = subparsers.add_parser(
+        "priors",
+        help="Design priors commands",
+        description="Manage priors for agent development.",
     )
-    playbook_subparsers = playbook.add_subparsers(dest="playbook_command", required=True)
+    priors_subparsers = priors.add_subparsers(dest="priors_command", required=True)
 
-    # playbook start-server
-    playbook_subparsers.add_parser(
+    # priors start-server
+    priors_subparsers.add_parser(
         "start-server",
-        help="Start the playbook server",
-        description="Start the ao-playbook-server daemon.",
+        help="Start the priors server",
+        description="Start the SovaraDB daemon.",
     )
 
-    # playbook lessons (nested subcommand)
-    lessons = playbook_subparsers.add_parser(
-        "lessons",
-        help="Manage lessons",
-        description="CRUD operations for user lessons.",
-    )
-    lessons_subparsers = lessons.add_subparsers(dest="lessons_command", required=True)
-
-    # playbook lessons list
-    lessons_list = lessons_subparsers.add_parser(
+    priors_list = priors_subparsers.add_parser(
         "list",
-        help="List all lessons",
-        description="List all lessons with their IDs, names, and summaries.",
+        help="List priors",
+        description="List priors with their IDs, names, and summaries.",
     )
-    lessons_list.add_argument("--path", "-p", default=None, help="Folder path to filter by")
+    priors_list.add_argument("--path", "-p", default=None, help="Folder path to filter by")
 
-    # playbook lessons get
-    lessons_get = lessons_subparsers.add_parser(
+    priors_get = priors_subparsers.add_parser(
         "get",
-        help="Get a specific lesson",
-        description="Get full details of a lesson by its ID.",
+        help="Get a prior",
+        description="Get full details of a prior by its ID.",
     )
-    lessons_get.add_argument("lesson_id", help="The lesson ID to retrieve")
+    priors_get.add_argument("prior_id", help="The prior ID to retrieve")
 
-    # playbook lessons create
-    lessons_create = lessons_subparsers.add_parser(
+    priors_create = priors_subparsers.add_parser(
         "create",
-        help="Create a new lesson",
-        description="Create a new lesson with name, summary, and content.",
+        help="Create a prior",
+        description="Create a new prior with name, summary, and content.",
     )
-    lessons_create.add_argument(
+    priors_create.add_argument(
         "--name", "-n",
         required=True,
-        help="Lesson name (max 200 chars)",
+        help="Prior name (max 200 chars)",
     )
-    lessons_create.add_argument(
+    priors_create.add_argument(
         "--summary", "-s",
         required=True,
         help="Brief summary (max 1000 chars)",
     )
-    lessons_create.add_argument(
+    priors_create.add_argument(
         "--content", "-c",
         required=True,
-        help="Full lesson content in markdown",
+        help="Full prior content in markdown",
     )
-    lessons_create.add_argument(
+    priors_create.add_argument(
         "--path", "-p",
         default=None,
         help="Folder path (e.g. 'beaver/retriever/')",
     )
-    lessons_create.add_argument(
+    priors_create.add_argument(
+        "--creation-trace-id",
+        default=None,
+        help="Optional run ID that created this prior",
+    )
+    priors_create.add_argument(
+        "--trace-source",
+        default=None,
+        help="Optional source label for the creating system",
+    )
+    priors_create.add_argument(
         "--force", "-f",
         action="store_true",
-        help="Skip LLM validation and create the lesson directly",
+        help="Skip LLM validation and create the prior directly",
     )
 
-    # playbook lessons update
-    lessons_update = lessons_subparsers.add_parser(
+    priors_update = priors_subparsers.add_parser(
         "update",
-        help="Update a lesson",
-        description="Update an existing lesson's name, summary, or content.",
+        help="Update a prior",
+        description="Update an existing prior's name, summary, content, or path.",
     )
-    lessons_update.add_argument("lesson_id", help="The lesson ID to update")
-    lessons_update.add_argument("--name", "-n", help="New lesson name")
-    lessons_update.add_argument("--summary", "-s", help="New summary")
-    lessons_update.add_argument("--content", "-c", help="New content")
-    lessons_update.add_argument(
+    priors_update.add_argument("prior_id", help="The prior ID to update")
+    priors_update.add_argument("--name", "-n", help="New prior name")
+    priors_update.add_argument("--summary", "-s", help="New summary")
+    priors_update.add_argument("--content", "-c", help="New content")
+    priors_update.add_argument("--path", "-p", help="New folder path")
+    priors_update.add_argument(
         "--force", "-f",
         action="store_true",
-        help="Skip LLM validation and update the lesson directly",
+        help="Skip LLM validation and update the prior directly",
     )
 
-    # playbook lessons delete
-    lessons_delete = lessons_subparsers.add_parser(
+    priors_delete = priors_subparsers.add_parser(
         "delete",
-        help="Delete a lesson",
-        description="Delete a lesson by its ID.",
+        help="Delete a prior",
+        description="Delete a prior by its ID.",
     )
-    lessons_delete.add_argument("lesson_id", help="The lesson ID to delete")
+    priors_delete.add_argument("prior_id", help="The prior ID to delete")
 
-    # playbook lessons query
-    lessons_query = lessons_subparsers.add_parser(
+    priors_query = priors_subparsers.add_parser(
         "query",
-        help="Query lessons by folder path",
-        description="Get lessons from a folder and return them as injected context.",
+        help="Query priors by folder path",
+        description="Get priors from a folder and return them as injected context.",
     )
-    lessons_query.add_argument(
+    priors_query.add_argument(
         "--path", "-p",
         default=None,
-        help="Folder path to retrieve lessons from (omit for all lessons)",
+        help="Folder path to retrieve priors from (omit for all priors)",
     )
 
-    # playbook lessons ls
-    lessons_ls = lessons_subparsers.add_parser(
+    priors_retrieve = priors_subparsers.add_parser(
+        "retrieve",
+        help="Retrieve relevant priors",
+        description="Use the LLM-backed retriever to select relevant priors.",
+    )
+    priors_retrieve.add_argument("context", help="Context string used for retrieval")
+    priors_retrieve.add_argument(
+        "--path", "-p",
+        default=None,
+        help="Root folder path to search from",
+    )
+    priors_retrieve.add_argument(
+        "--model",
+        default=None,
+        help="Optional retriever model override",
+    )
+
+    priors_migrate = priors_subparsers.add_parser(
+        "migrate",
+        help="Migrate root priors",
+        description="Move root-level priors into the default retrieval folder.",
+    )
+
+    priors_restructure = priors_subparsers.add_parser(
+        "restructure",
+        help="Propose/execute/abort taxonomy changes",
+        description="Manage prior taxonomy restructure proposals.",
+    )
+    restructure_subparsers = priors_restructure.add_subparsers(dest="restructure_command", required=True)
+
+    restructure_propose = restructure_subparsers.add_parser(
+        "propose",
+        help="Propose a restructure",
+        description="Analyze priors and propose a better folder taxonomy.",
+    )
+    restructure_propose.add_argument(
+        "--path", "-p",
+        default="",
+        help="Root folder path to analyze (default: root)",
+    )
+    restructure_propose.add_argument(
+        "--comments", "-c",
+        default=None,
+        help="Optional guidance for the restructurer",
+    )
+
+    restructure_execute = restructure_subparsers.add_parser(
+        "execute",
+        help="Execute a restructure",
+        description="Execute a proposal by task ID, from a proposal file, or from a standalone execute body.",
+    )
+    restructure_execute.add_argument(
+        "--task-id",
+        default=None,
+        help="Task ID from a prior propose step",
+    )
+    restructure_execute.add_argument(
+        "--proposal-file",
+        default=None,
+        help="JSON file containing a propose response or execute request body",
+    )
+    restructure_execute.add_argument(
+        "--moves-file",
+        default=None,
+        help="JSON file containing a moves array for an edited execute request",
+    )
+    restructure_execute.add_argument(
+        "--base-path",
+        default=None,
+        help="Root folder path for standalone execution",
+    )
+    restructure_execute.add_argument(
+        "--snapshot",
+        default=None,
+        help="State hash for standalone execution",
+    )
+    restructure_execute.add_argument(
+        "--new-folder",
+        action="append",
+        default=None,
+        help="New folder to create during execution; repeat as needed",
+    )
+
+    restructure_abort = restructure_subparsers.add_parser(
+        "abort",
+        help="Abort a restructure",
+        description="Abort a pending restructure proposal and release its lock.",
+    )
+    restructure_abort.add_argument("task_id", help="Task ID from the propose step")
+
+    priors_ls = priors_subparsers.add_parser(
         "ls",
         help="List folder contents",
-        description="List immediate child folders and lessons at a path.",
+        description="List immediate child folders and priors at a path.",
     )
-    lessons_ls.add_argument("path", nargs="?", default="", help="Folder path to list (default: root)")
+    priors_ls.add_argument("path", nargs="?", default="", help="Folder path to list (default: root)")
 
-    # playbook lessons mkdir
-    lessons_mkdir = lessons_subparsers.add_parser(
+    priors_mkdir = priors_subparsers.add_parser(
         "mkdir",
         help="Create an empty folder",
         description="Create an empty folder at the given path.",
     )
-    lessons_mkdir.add_argument("path", help="Folder path to create (e.g. 'beaver/new-folder/')")
+    priors_mkdir.add_argument("path", help="Folder path to create (e.g. 'beaver/new-folder/')")
 
-    # playbook lessons mv
-    lessons_mv = lessons_subparsers.add_parser(
+    priors_mv = priors_subparsers.add_parser(
         "mv",
-        help="Move/rename a folder or move lessons by ID",
-        description="Move a folder (mv SRC DST) or move lessons by ID (mv -i id1,id2 DST).",
+        help="Move/rename a folder or move priors by ID",
+        description="Move a folder (mv SRC DST) or move priors by ID (mv -i id1,id2 DST).",
     )
-    lessons_mv.add_argument(
+    priors_mv.add_argument(
         "-i", "--ids",
         default=None,
-        help="Comma-separated lesson IDs to move (lesson mode)",
+        help="Comma-separated prior IDs to move (prior mode)",
     )
-    lessons_mv.add_argument("paths", nargs="*", help="SRC DST (folder mode) or DST (with -i)")
+    priors_mv.add_argument("paths", nargs="*", help="SRC DST (folder mode) or DST (with -i)")
 
-    # playbook lessons cp
-    lessons_cp = lessons_subparsers.add_parser(
+    priors_cp = priors_subparsers.add_parser(
         "cp",
         help="Copy a folder",
-        description="Copy all lessons under a folder to a new destination.",
+        description="Copy all priors under a folder to a new destination.",
     )
-    lessons_cp.add_argument("src", help="Source folder path")
-    lessons_cp.add_argument("dst", help="Destination folder path")
+    priors_cp.add_argument("src", help="Source folder path")
+    priors_cp.add_argument("dst", help="Destination folder path")
 
-    # playbook lessons rm
-    lessons_rm = lessons_subparsers.add_parser(
+    priors_rm = priors_subparsers.add_parser(
         "rm",
-        help="Delete a lesson or folder",
-        description="Delete a single lesson by ID (rm TARGET) or a folder recursively (rm -r PATH).",
+        help="Delete a prior or folder",
+        description="Delete a single prior by ID (rm TARGET) or a folder recursively (rm -r PATH).",
     )
-    lessons_rm.add_argument(
+    priors_rm.add_argument(
         "-r", "--recursive",
         action="store_true",
         help="Delete folder recursively",
     )
-    lessons_rm.add_argument("target", help="Lesson ID or folder path (with -r)")
+    priors_rm.add_argument("target", help="Prior ID or folder path (with -r)")
 
     return parser
 
@@ -1431,32 +1324,42 @@ def main():
         edit_and_rerun_command(args)
     elif args.command == "install-skill":
         install_skill_command()
-    elif args.command == "playbook":
-        if args.playbook_command == "start-server":
-            playbook_start_server_command(args)
-        elif args.playbook_command == "lessons":
-            if args.lessons_command == "list":
-                playbook_lessons_list_command(args)
-            elif args.lessons_command == "get":
-                playbook_lessons_get_command(args)
-            elif args.lessons_command == "create":
-                playbook_lessons_create_command(args)
-            elif args.lessons_command == "update":
-                playbook_lessons_update_command(args)
-            elif args.lessons_command == "delete":
-                playbook_lessons_delete_command(args)
-            elif args.lessons_command == "query":
-                playbook_lessons_query_command(args)
-            elif args.lessons_command == "ls":
-                playbook_lessons_ls_command(args)
-            elif args.lessons_command == "mkdir":
-                playbook_lessons_mkdir_command(args)
-            elif args.lessons_command == "mv":
-                playbook_lessons_mv_command(args)
-            elif args.lessons_command == "cp":
-                playbook_lessons_cp_command(args)
-            elif args.lessons_command == "rm":
-                playbook_lessons_rm_command(args)
+    elif args.command == "priors":
+        if args.priors_command == "start-server":
+            priors_start_server_command(args)
+        elif args.priors_command == "list":
+            priors_list_command(args)
+        elif args.priors_command == "get":
+            priors_get_command(args)
+        elif args.priors_command == "create":
+            priors_create_command(args)
+        elif args.priors_command == "update":
+            priors_update_command(args)
+        elif args.priors_command == "delete":
+            priors_delete_command(args)
+        elif args.priors_command == "query":
+            priors_query_command(args)
+        elif args.priors_command == "retrieve":
+            priors_retrieve_command(args)
+        elif args.priors_command == "migrate":
+            priors_migrate_command(args)
+        elif args.priors_command == "restructure":
+            if args.restructure_command == "propose":
+                priors_restructure_propose_command(args)
+            elif args.restructure_command == "execute":
+                priors_restructure_execute_command(args)
+            elif args.restructure_command == "abort":
+                priors_restructure_abort_command(args)
+        elif args.priors_command == "ls":
+            priors_ls_command(args)
+        elif args.priors_command == "mkdir":
+            priors_mkdir_command(args)
+        elif args.priors_command == "mv":
+            priors_mv_command(args)
+        elif args.priors_command == "cp":
+            priors_cp_command(args)
+        elif args.priors_command == "rm":
+            priors_rm_command(args)
 
 
 if __name__ == "__main__":

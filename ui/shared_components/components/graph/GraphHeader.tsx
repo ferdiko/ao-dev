@@ -77,7 +77,7 @@ export const GraphHeader: React.FC<GraphHeaderProps> = ({
           />
         )}
 
-        {/* Lesson Stats */}
+        {/* Prior Stats */}
         {runId && (
           <div
             style={{
@@ -101,9 +101,9 @@ export const GraphHeader: React.FC<GraphHeaderProps> = ({
               onMouseLeave={(e) => {
                 if (onNavigateToLessons) e.currentTarget.style.color = isDarkTheme ? '#4da6ff' : '#007acc';
               }}
-              title="View all lessons"
+              title="View all priors"
             >
-              {lessonsExtractedFrom} lesson{lessonsExtractedFrom !== 1 ? 's' : ''} extracted
+              {lessonsExtractedFrom} prior{lessonsExtractedFrom !== 1 ? 's' : ''} extracted
             </span>
             <span style={{ color: isDarkTheme ? '#3c7ab8' : '#99c9e8' }}>|</span>
             <span
@@ -119,9 +119,9 @@ export const GraphHeader: React.FC<GraphHeaderProps> = ({
               onMouseLeave={(e) => {
                 if (onNavigateToAppliedLessons) e.currentTarget.style.color = isDarkTheme ? '#4da6ff' : '#007acc';
               }}
-              title="View applied lessons"
+              title="View applied priors"
             >
-              {lessonsAppliedTo} lesson{lessonsAppliedTo !== 1 ? 's' : ''} applied
+              {lessonsAppliedTo} prior{lessonsAppliedTo !== 1 ? 's' : ''} applied
             </span>
           </div>
         )}

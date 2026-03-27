@@ -11,7 +11,7 @@ export class PythonServerClient {
     private serverPort: number;
     private reconnectTimer: NodeJS.Timeout | undefined;
     private _playbookUrl?: string;
-    private _playbookApiKey?: string;
+    private _configPath?: string;
 
     private constructor() {
         const config = vscode.workspace.getConfiguration('sovara');
@@ -31,12 +31,8 @@ export class PythonServerClient {
         return this._playbookUrl;
     }
 
-    public setPlaybookApiKey(key: string | undefined) {
-        this._playbookApiKey = key;
-    }
-
-    public getPlaybookApiKey(): string | undefined {
-        return this._playbookApiKey;
+    public getConfigPath(): string | undefined {
+        return this._configPath;
     }
 
     public async ensureConnected() {
@@ -48,6 +44,17 @@ export class PythonServerClient {
 
     private get baseUrl(): string {
         return `http://${this.serverHost}:${this.serverPort}`;
+    }
+
+    public async getUiConfig(): Promise<{ config_path?: string; priors_url?: string }> {
+        const config = await this.httpGet('/ui/config');
+        if (config?.priors_url) {
+            this.setPlaybookUrl(config.priors_url);
+        }
+        if (config?.config_path) {
+            this._configPath = config.config_path;
+        }
+        return config;
     }
 
     /** HTTP GET to the sovara server. Returns parsed JSON. */

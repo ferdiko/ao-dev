@@ -19,7 +19,7 @@ include = ["sovara*"]
 so-record = "sovara.cli.so_record:main"
 so-config = "sovara.cli.so_config:main"
 so-server = "sovara.cli.so_server:main"
-so-tool = "sovara.cli.so_tool:main"
+so-cli = "sovara.cli.so_tool:main"
 
 [tool.black]
 line-length = 100

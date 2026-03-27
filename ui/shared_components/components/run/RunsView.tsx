@@ -439,7 +439,7 @@ export const RunsView: React.FC<RunsViewProps> = ({
         {renderExperimentSection(finishedProcesses, 'Finished', 'finished', finishedSizePercent, false)}
       </div>
 
-      {/* Lessons Button */}
+      {/* Priors Button */}
       {onLessonsClick && (
         <div
           style={{
@@ -476,7 +476,7 @@ export const RunsView: React.FC<RunsViewProps> = ({
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <path d="M8.5 1a.5.5 0 0 0-1 0v1.5a.5.5 0 0 0 1 0V1zM3.5 4a.5.5 0 0 0-.5.5v5a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5v-5a.5.5 0 0 0-.5-.5h-9zM4 5h8v4H4V5zm8.5 6a.5.5 0 0 1 .5.5v1.5a.5.5 0 0 1-1 0v-1.5a.5.5 0 0 1 .5-.5zm-9 0a.5.5 0 0 1 .5.5v1.5a.5.5 0 0 1-1 0v-1.5a.5.5 0 0 1 .5-.5zM6 13.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5z"/>
             </svg>
-            Lessons
+            Priors
           </button>
         </div>
       )}

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from sovara.common.constants import PRIORS_SERVER_URL, SOVARA_CONFIG
 from sovara.common.custom_metrics import MetricFilter
 from sovara.server.app import get_state
 from sovara.server.state import ServerState, logger
@@ -22,6 +23,10 @@ from sovara.server.handlers.ui_handlers import (
     handle_update_thumb_label,
     handle_update_notes,
     handle_erase,
+)
+from sovara.server.handlers.cli_handlers import (
+    build_probe_response,
+    prepare_edit_rerun,
 )
 
 router = APIRouter(prefix="/ui")
@@ -176,9 +181,26 @@ class UpdateRunTagsRequest(BaseModel):
     tag_ids: list[str]
 
 
+class PrepareEditRerunRequest(BaseModel):
+    node_uuid: str
+    field: str
+    key: str
+    value: str
+    run_name: str | None = None
+
+
 # ============================================================
 # Endpoints
 # ============================================================
+
+@router.get("/config")
+def get_ui_config():
+    """Return static UI bootstrap configuration."""
+    return {
+        "config_path": SOVARA_CONFIG,
+        "priors_url": PRIORS_SERVER_URL,
+    }
+
 
 @router.get("/user")
 def get_user():
@@ -600,6 +622,33 @@ def get_graph(run_id: str, state: ServerState = Depends(get_state)):
     }
 
 
+@router.get("/run/{run_id}/probe")
+def probe_run(
+    run_id: str,
+    node: str | None = None,
+    nodes: str = "",
+    preview: bool = False,
+    show_input: bool = Query(default=False, alias="input"),
+    show_output: bool = Query(default=False, alias="output"),
+    key_regex: str | None = None,
+    state: ServerState = Depends(get_state),
+):
+    try:
+        node_uuids = [item.strip() for item in nodes.split(",") if item.strip()] or None
+        return build_probe_response(
+            run_id,
+            state=state,
+            node_uuid=node,
+            node_uuids=node_uuids,
+            preview=preview,
+            show_input=show_input,
+            show_output=show_output,
+            key_regex=key_regex,
+        )
+    except (BadRequestError, ResourceNotFoundError) as exc:
+        return _request_error_response(exc)
+
+
 @router.get("/runs")
 def get_runs(state: ServerState = Depends(get_state)):
     run_map, running_ids = state.get_run_snapshot()
@@ -764,6 +813,26 @@ def restart(req: RestartRequest, state: ServerState = Depends(get_state)):
         state.spawn_run_process(parent_run_id, run_id)
 
     return {"ok": True}
+
+
+@router.post("/run/{run_id}/prepare-edit-rerun")
+def prepare_run_edit_rerun(
+    run_id: str,
+    req: PrepareEditRerunRequest,
+    state: ServerState = Depends(get_state),
+):
+    try:
+        return prepare_edit_rerun(
+            state,
+            run_id,
+            node_uuid=req.node_uuid,
+            field=req.field,
+            key=req.key,
+            value=req.value,
+            run_name=req.run_name,
+        )
+    except (BadRequestError, ResourceNotFoundError) as exc:
+        return _request_error_response(exc)
 
 
 @router.post("/erase")

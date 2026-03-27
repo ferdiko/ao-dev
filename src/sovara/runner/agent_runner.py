@@ -289,7 +289,7 @@ class AgentRunner:
             raise RuntimeError(f"Registration failed: {response}")
         logger.info(f"Registered with run_id: {self.run_id}")
 
-        # Write run info to file for so-tool IPC
+        # Write run info to file for so-cli IPC
         run_file = os.environ.get("SOVARA_RUN_FILE")
         if run_file:
             try:

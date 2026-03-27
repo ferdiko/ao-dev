@@ -19,8 +19,6 @@ def green(text: str) -> str:
 @dataclass
 class Config:
     python_executable: str = None  # Auto-populated when so-server runs
-    playbook_mode: str = None  # "local" or "cloud"
-    playbook_api_key: str = None  # API key for cloud mode
 
     @classmethod
     def from_yaml_file(cls, yaml_file: str) -> "Config":

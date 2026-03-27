@@ -878,7 +878,7 @@ class DatabaseManager:
     def delete_project_location(self, user_id, project_id, project_location):
         self.backend.delete_project_location_query(user_id, project_id, project_location)
 
-    # Probe-related methods for so-tool
+    # Probe-related methods for so-cli
     def get_run_metadata(self, run_id):
         return self.backend.get_run_metadata_query(run_id)
 
@@ -892,7 +892,7 @@ class DatabaseManager:
         self.backend.copy_llm_calls_query(old_run_id, new_run_id)
 
     # ============================================================
-    # Lessons Applied operations (tracks which ao-playbook lessons were applied)
+    # Lessons Applied operations (tracks which SovaraDB priors were applied)
     # ============================================================
 
     def get_lessons_applied_for_run(self, run_id):

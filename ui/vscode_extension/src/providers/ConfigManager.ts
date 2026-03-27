@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as yaml from 'js-yaml';
 
 export interface Config {
-  // Fields will be added as needed (e.g., playbook settings)
+  // Fields will be added as needed (e.g., priors settings)
 }
 
 type ConfigChangeCallback = (config: Config) => void;

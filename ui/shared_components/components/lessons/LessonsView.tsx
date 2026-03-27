@@ -47,7 +47,7 @@ interface LessonsViewProps {
   validationResult?: ValidationResult | null;
   isValidating?: boolean;
   onClearValidation?: () => void;
-  apiKeyError?: boolean;
+  serverUnavailable?: boolean;
   /** Incoming folder data from server — the parent sets this when folder_ls_result arrives */
   folderResult?: { path: string; folders: FolderEntry[]; lessons: Lesson[]; lessonCount?: number } | null;
   /** Incoming lesson content update */
@@ -103,7 +103,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
   validationResult,
   isValidating,
   onClearValidation,
-  apiKeyError,
+  serverUnavailable,
   folderResult,
   lessonContentUpdate,
   onFetchAppliedRuns,
@@ -966,7 +966,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
     const rootData = folderData.get('');
     const isRootLoading = loadingFolders.has('');
 
-    if (apiKeyError) {
+    if (serverUnavailable) {
       return (
         <div
           style={{
@@ -976,16 +976,11 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
           }}
         >
           <div style={{ fontSize: '14px', marginBottom: '12px' }}>
-            Unable to connect to the Lessons server.
+            Unable to connect to SovaraDB.
           </div>
           <div style={{ fontSize: '13px', color: isDarkTheme ? '#888888' : '#666666' }}>
-            To obtain an API key, send an e-mail to{' '}
-            <a
-              href="mailto:hello@sovara-labs.com"
-              style={{ color: isDarkTheme ? '#4a9eff' : '#007acc' }}
-            >
-              hello@sovara-labs.com
-            </a>
+            Make sure your local `so-priors` server is running and that `PRIORS_SERVER_URL`
+            points to the correct SovaraDB host.
           </div>
         </div>
       );
@@ -1015,7 +1010,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
           padding: '40px 20px',
           color: isDarkTheme ? '#888888' : '#666666',
         }}>
-          No lessons yet
+          No priors yet
         </div>
       );
     }
@@ -1028,7 +1023,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
           padding: '40px 20px',
           color: isDarkTheme ? '#888888' : '#666666',
         }}>
-          No lessons yet
+          No priors yet
         </div>
       );
     }
@@ -1074,7 +1069,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
               color: isDarkTheme ? '#e5e5e5' : '#333333',
             }}
           >
-            Lessons
+            Priors
           </h2>
           {onLessonCreate && (
             <button
@@ -1095,7 +1090,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
                 e.currentTarget.style.backgroundColor = '#43884e';
               }}
             >
-              + Add Lesson
+              + Add Prior
             </button>
           )}
         </div>
@@ -1118,7 +1113,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
           </svg>
           <input
             type="text"
-            placeholder="Search lessons... (Enter for next)"
+            placeholder="Search priors... (Enter for next)"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={handleSearchKeyDown}

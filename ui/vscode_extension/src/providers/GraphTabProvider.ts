@@ -26,29 +26,54 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         return vscode.Uri.joinPath(this._extensionUri, 'dist', 'icon.png');
     }
 
+    private async _ensurePriorsClient(): Promise<PlaybookClient | null> {
+        let client = PlaybookClient.getInstance();
+        if (client) {
+            return client;
+        }
+
+        if (this._pythonClient) {
+            try {
+                await this._pythonClient.getUiConfig();
+            } catch {
+                // Defer to the existing error handling at the call site.
+            }
+        }
+
+        const priorsUrl = this._pythonClient?.getPlaybookUrl();
+        if (!priorsUrl) {
+            return null;
+        }
+
+        return PlaybookClient.init(priorsUrl);
+    }
+
     // ============================================================
-    // Playbook helpers — call PlaybookClient and post results to webview
+    // Priors helpers — call PlaybookClient and post results to webview
     // ============================================================
 
     private async _handleFolderLs(panel: vscode.WebviewPanel, reqPath: string): Promise<void> {
-        const client = PlaybookClient.getInstance();
-        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Playbook server not configured' }); return; }
+        const client = await this._ensurePriorsClient();
+        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Priors server not configured' }); return; }
         try {
             const result = await client.fetchFolder(reqPath);
             if (result.error) { panel.webview.postMessage({ type: 'lesson_error', error: result.error || result.detail }); return; }
             panel.webview.postMessage({
                 type: 'folder_ls_result',
                 path: reqPath,
-                folders: result.folders || [],
-                lessons: result.lessons || [],
-                lesson_count: result.lesson_count || 0,
+                folders: (result.folders || []).map((folder: any) => ({
+                    ...folder,
+                    lesson_count: folder.lesson_count ?? folder.prior_count ?? 0,
+                })),
+                lessons: result.priors || [],
+                lesson_count: result.prior_count || 0,
             });
         } catch (e: any) { panel.webview.postMessage({ type: 'lesson_error', error: e.message }); }
     }
 
     private async _handleGetLesson(panel: vscode.WebviewPanel, lessonId: string): Promise<void> {
-        const client = PlaybookClient.getInstance();
-        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Playbook server not configured' }); return; }
+        const client = await this._ensurePriorsClient();
+        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Priors server not configured' }); return; }
         try {
             const result = await client.getLesson(lessonId);
             if (result.error) { panel.webview.postMessage({ type: 'lesson_error', error: result.error || result.detail }); return; }
@@ -57,19 +82,19 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     }
 
     private async _handleGetLessons(panel: vscode.WebviewPanel): Promise<void> {
-        const client = PlaybookClient.getInstance();
-        if (!client) { panel.webview.postMessage({ type: 'lessons_list', lessons: [], error: 'Playbook server not configured' }); return; }
+        const client = await this._ensurePriorsClient();
+        if (!client) { panel.webview.postMessage({ type: 'lessons_list', lessons: [], error: 'Priors server not configured' }); return; }
         try {
             const result = await client.getLessonsList();
             if (result.error) { panel.webview.postMessage({ type: 'lessons_list', lessons: [], error: result.error }); return; }
-            const lessons = Array.isArray(result) ? result : result.lessons || [];
+            const lessons = Array.isArray(result) ? result : result.priors || [];
             panel.webview.postMessage({ type: 'lessons_list', lessons });
         } catch (e: any) { panel.webview.postMessage({ type: 'lessons_list', lessons: [], error: e.message }); }
     }
 
     private async _handleAddLesson(panel: vscode.WebviewPanel, data: any): Promise<void> {
-        const client = PlaybookClient.getInstance();
-        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Playbook server not configured' }); return; }
+        const client = await this._ensurePriorsClient();
+        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Priors server not configured' }); return; }
         try {
             const result = await client.createLesson(
                 { name: data.name, summary: data.summary || '', content: data.content, path: data.path || '' },
@@ -78,11 +103,18 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
             if (result.status === 'rejected') {
                 let reason = result.reason || 'Validation failed';
                 if (result.hint) { reason += `\n\nHint: ${result.hint}`; }
-                panel.webview.postMessage({ type: 'lesson_rejected', reason, severity: 'error', conflicting_lesson_ids: result.conflicting_lesson_ids || [] });
+                panel.webview.postMessage({ type: 'lesson_rejected', reason, severity: 'error', conflicting_lesson_ids: result.conflicting_prior_ids || [] });
             } else if (result.error) {
                 panel.webview.postMessage({ type: 'lesson_error', error: result.error });
             } else if (result.status === 'created') {
-                panel.webview.postMessage({ type: 'lesson_created', lesson: result, validation: result.validation });
+                panel.webview.postMessage({
+                    type: 'lesson_created',
+                    lesson: result,
+                    validation: result.validation ? {
+                        ...result.validation,
+                        conflicting_lesson_ids: result.validation.conflicting_prior_ids || [],
+                    } : undefined,
+                });
             } else {
                 panel.webview.postMessage({ type: 'lesson_error', error: 'Unexpected server response' });
             }
@@ -90,8 +122,8 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     }
 
     private async _handleUpdateLesson(panel: vscode.WebviewPanel, data: any): Promise<void> {
-        const client = PlaybookClient.getInstance();
-        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Playbook server not configured' }); return; }
+        const client = await this._ensurePriorsClient();
+        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Priors server not configured' }); return; }
         const lessonId = data.lesson_id;
         if (!lessonId) { panel.webview.postMessage({ type: 'lesson_error', error: 'Missing lesson_id' }); return; }
         const fields: any = {};
@@ -101,11 +133,18 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
             if (result.status === 'rejected') {
                 let reason = result.reason || 'Validation failed';
                 if (result.hint) { reason += `\n\nHint: ${result.hint}`; }
-                panel.webview.postMessage({ type: 'lesson_rejected', reason, severity: 'error', conflicting_lesson_ids: result.conflicting_lesson_ids || [] });
+                panel.webview.postMessage({ type: 'lesson_rejected', reason, severity: 'error', conflicting_lesson_ids: result.conflicting_prior_ids || [] });
             } else if (result.error) {
                 panel.webview.postMessage({ type: 'lesson_error', error: result.error });
             } else if (result.status === 'updated') {
-                panel.webview.postMessage({ type: 'lesson_updated', lesson: result, validation: result.validation });
+                panel.webview.postMessage({
+                    type: 'lesson_updated',
+                    lesson: result,
+                    validation: result.validation ? {
+                        ...result.validation,
+                        conflicting_lesson_ids: result.validation.conflicting_prior_ids || [],
+                    } : undefined,
+                });
             } else {
                 panel.webview.postMessage({ type: 'lesson_error', error: 'Unexpected server response' });
             }
@@ -113,8 +152,8 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     }
 
     private async _handleDeleteLesson(panel: vscode.WebviewPanel, data: any): Promise<void> {
-        const client = PlaybookClient.getInstance();
-        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Playbook server not configured' }); return; }
+        const client = await this._ensurePriorsClient();
+        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Priors server not configured' }); return; }
         const lessonId = data.lesson_id;
         if (!lessonId) { panel.webview.postMessage({ type: 'lesson_error', error: 'Missing lesson_id' }); return; }
         try {
@@ -365,7 +404,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     }
 
     // ============================================================
-    // Lessons Tab (uses PlaybookClient directly)
+    // Priors Tab (uses PlaybookClient directly)
     // ============================================================
 
     public async createOrShowLessonsTab(): Promise<void> {
@@ -389,10 +428,10 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
             }
         }
 
-        // Create new panel for lessons
+        // Create new panel for priors
         panel = vscode.window.createWebviewPanel(
             GraphTabProvider.viewType,
-            'LLM Lessons',
+            'Priors',
             columnToShowIn,
             {
                 enableScripts: true,
@@ -422,7 +461,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         panel.webview.onDidReceiveMessage(data => {
             switch (data.type) {
                 case 'ready':
-                    // Request root folder listing directly from ao-playbook
+                    // Request root folder listing directly from the priors server
                     this._handleFolderLs(panel, '');
                     break;
                 case 'folder_ls':
@@ -462,6 +501,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         });
 
         // Wire PlaybookClient SSE events for real-time sync
+        await this._ensurePriorsClient();
         this._setupPlaybookEvents(panel);
 
         // Send theme info
@@ -791,7 +831,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Lessons</title>
+    <title>Priors</title>
     <link rel="stylesheet" href="${codiconsUri}">
     <script>
         window.process = {
@@ -940,7 +980,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     }
 
     // ============================================================
-    // Lesson Editor Tab (uses PlaybookClient directly)
+    // Prior Editor Tab (uses PlaybookClient directly)
     // ============================================================
 
     public closeLessonEditorTab(): void {
@@ -1012,7 +1052,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         panel.webview.onDidReceiveMessage(data => {
             switch (data.type) {
                 case 'ready':
-                    // Request lessons list for dropdown directly from ao-playbook
+                    // Request lessons list for dropdown directly from the priors server
                     this._handleGetLessons(panel);
                     break;
                 case 'lessonUpdated':
@@ -1035,6 +1075,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         });
 
         // Wire PlaybookClient SSE events for real-time sync
+        await this._ensurePriorsClient();
         this._setupPlaybookEvents(panel);
 
         // Send theme info

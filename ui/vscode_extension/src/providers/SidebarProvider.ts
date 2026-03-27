@@ -64,6 +64,35 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         });
     }
 
+    private _applyUiConfig(config: { config_path?: string; priors_url?: string } | undefined): void {
+        if (!config) {
+            return;
+        }
+
+        if (config.config_path) {
+            try {
+                configManager.setConfigPath(config.config_path);
+
+                // Set up config forwarding to webview
+                configManager.onConfigChange((cfg) => {
+                    if (this._view) {
+                        this._view.webview.postMessage({
+                            type: 'configUpdate',
+                            detail: cfg
+                        });
+                    }
+                });
+            } catch (e) {
+                console.warn('[SidebarProvider] Error setting config_path:', e);
+            }
+        }
+
+        if (config.priors_url) {
+            this._pythonClient?.setPlaybookUrl(config.priors_url);
+            PlaybookClient.init(config.priors_url);
+        }
+    }
+
 
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
@@ -157,37 +186,16 @@ _context: vscode.WebviewViewResolveContext,
                         this._pythonClient.ensureConnected(); // async but don't await - webview is ready
                         // Request run list on every connection (including reconnections after server restart)
                         this._pythonClient.onConnection(() => {
+                            this._pythonClient?.getUiConfig()
+                                .then((config) => this._applyUiConfig(config))
+                                .catch((err) => console.warn('[SidebarProvider] Error fetching /ui/config:', err));
                             this._pythonClient?.httpGet('/ui/runs').then(r => this._view?.webview.postMessage(r));
                         });
                         // Create message handler and store reference for cleanup
                         this._messageHandler = (msg) => {
-                            // Intercept run_id message to set up config management and playbook URL
+                            // Keep websocket bootstrap as a compatibility fallback.
                             if (msg.type === 'run_id') {
-                                if (msg.config_path) {
-                                    try {
-                                        configManager.setConfigPath(msg.config_path);
-
-                                        // Set up config forwarding to webview
-                                        configManager.onConfigChange((config) => {
-                                            if (this._view) {
-                                                this._view.webview.postMessage({
-                                                    type: 'configUpdate',
-                                                    detail: config
-                                                });
-                                            }
-                                        });
-                                    } catch (e) {
-                                        console.warn('[SidebarProvider] Error setting config_path:', e);
-                                    }
-                                }
-                                if (msg.playbook_url) {
-                                    this._pythonClient?.setPlaybookUrl(msg.playbook_url);
-                                    // Initialize direct PlaybookClient for lesson operations
-                                    PlaybookClient.init(msg.playbook_url, msg.playbook_api_key || '');
-                                }
-                                if (msg.playbook_api_key) {
-                                    this._pythonClient?.setPlaybookApiKey(msg.playbook_api_key);
-                                }
+                                this._applyUiConfig(msg);
                             }
                             if (this._view) {
                                 this._view.webview.postMessage(msg);
@@ -199,6 +207,10 @@ _context: vscode.WebviewViewResolveContext,
                         this._pythonClient.onMessage(this._messageHandler);
                         this._pythonClient.startServerIfNeeded();
                     }
+
+                    this._pythonClient?.getUiConfig()
+                        .then((config) => this._applyUiConfig(config))
+                        .catch((err) => console.warn('[SidebarProvider] Error fetching /ui/config:', err));
 
                     // Request runs after Python client is set up
                     if (this._pythonClient) {

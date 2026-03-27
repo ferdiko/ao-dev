@@ -230,7 +230,7 @@ def _init_db(conn):
     """
     )
 
-    # Create lessons_applied table (tracks which lessons from ao-playbook were applied to runs)
+    # Create lessons_applied table (tracks which priors from so-priors were applied to runs)
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS lessons_applied (
@@ -1129,7 +1129,7 @@ def get_next_run_index_query(project_id=None, user_id=None):
     return 1
 
 
-# Probe-related queries for so-tool
+# Probe-related queries for so-cli
 def get_run_metadata_query(run_id):
     """Get run metadata for probe command."""
     return query_one(
@@ -1162,7 +1162,7 @@ def get_llm_call_full_query(run_id, node_uuid):
 
 
 # ============================================================
-# Lessons Applied queries (tracks which ao-playbook lessons were applied to runs)
+# Lessons Applied queries (tracks which priors from so-priors were applied to runs)
 # ============================================================
 
 
@@ -1220,7 +1220,7 @@ def remove_lesson_applied_query(lesson_id, run_id, node_uuid=None):
 
 
 def delete_lessons_applied_for_lesson_query(lesson_id):
-    """Delete all application records for a lesson (when lesson is deleted from ao-playbook)."""
+    """Delete all application records for a lesson (when it is deleted from so-priors)."""
     execute("DELETE FROM lessons_applied WHERE lesson_id = ?", (lesson_id,))
 
 

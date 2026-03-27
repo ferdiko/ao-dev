@@ -51,6 +51,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // Create and connect the Python client
     const pythonClient = PythonServerClient.getInstance();
     await pythonClient.ensureConnected();
+    void pythonClient.getUiConfig().catch(() => {});
 
     // Register the sidebar provider
     const sidebarProvider = new SidebarProvider(context.extensionUri, context);
