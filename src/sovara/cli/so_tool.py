@@ -466,22 +466,99 @@ def edit_and_rerun_command(args) -> None:
     output_json(result)
 
 
-def install_skill_command() -> None:
-    """Install the sovara skill to a project's .claude/skills/sovara/ directory."""
+def install_skill_command(args) -> None:
+    """Install the shared sovara skill for Codex, Claude Code, or both."""
     from sovara.common.config import _ask_field, _convert_to_valid_path
 
-    # Ask for target path with tab-completion
-    default_path = os.getcwd()
-    target_root_str = _ask_field(
-        f"Target project directory [{default_path}]\n> ",
-        _convert_to_valid_path,
-        default=default_path,
-        error_message="Please enter a valid directory path.",
-    )
-    target_root = Path(target_root_str).resolve()
-    target_dir = target_root / ".claude" / "skills" / "sovara"
-    target_file = target_dir / "SKILL.md"
+    install_targets = _expand_skill_install_targets(args.target)
+    try:
+        target_root = _resolve_skill_install_root(
+            args.level,
+            args.project_dir,
+            _ask_field,
+            _convert_to_valid_path,
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    installed_files = _install_skill_files(target_root, install_targets)
 
+    for target_name, target_file in installed_files:
+        print(f"\033[32mInstalled {target_name} skill to {target_file}\033[0m")
+
+    location_label = "globally" if args.level == "global" else "in the selected project"
+
+    if "codex" in install_targets and "claude" in install_targets:
+        print(
+            f"\nInstalled {location_label}. "
+            "Re-open Claude Code, and restart Codex if the skill does not appear."
+        )
+    elif "codex" in install_targets:
+        print(f"\nInstalled {location_label} for Codex. Restart Codex if needed.")
+    else:
+        print(f"\nInstalled {location_label} for Claude Code. Re-open Claude Code if needed.")
+
+
+def _resolve_skill_install_root(
+    install_level: str,
+    project_dir: str | None,
+    ask_field,
+    convert_to_valid_path,
+) -> Path:
+    """Resolve the base directory for skill installation."""
+    if install_level == "global":
+        if project_dir is not None:
+            raise ValueError("--project-dir can only be used with --level project")
+        return Path.home().resolve()
+
+    if install_level != "project":
+        raise ValueError(f"Unsupported install level: {install_level}")
+
+    if project_dir is None:
+        default_path = os.getcwd()
+        project_dir = ask_field(
+            f"Target project directory [{default_path}]\n> ",
+            convert_to_valid_path,
+            default=default_path,
+            error_message="Please enter a valid directory path.",
+            path_completion=True,
+        )
+    else:
+        project_dir = convert_to_valid_path(project_dir)
+
+    target_root = Path(project_dir).expanduser().resolve()
+    if not target_root.is_dir():
+        raise ValueError(f"Target project directory does not exist: {target_root}")
+    return target_root
+
+
+def _expand_skill_install_targets(target: str) -> list[str]:
+    """Expand a target selector into concrete install destinations."""
+    if target == "both":
+        return ["codex", "claude"]
+    return [target]
+
+
+def _skill_install_dir(target_root: Path, target: str) -> Path:
+    """Return the install directory for a supported skill target."""
+    if target == "codex":
+        return target_root / ".agents" / "skills" / "sovara"
+    if target == "claude":
+        return target_root / ".claude" / "skills" / "sovara"
+    raise ValueError(f"Unsupported skill install target: {target}")
+
+
+def _skill_target_display_name(target: str) -> str:
+    """Return the display name for a supported skill target."""
+    if target == "codex":
+        return "Codex"
+    if target == "claude":
+        return "Claude Code"
+    raise ValueError(f"Unsupported skill install target: {target}")
+
+
+def _install_skill_files(target_root: Path, install_targets: list[str]) -> list[tuple[str, Path]]:
+    """Copy the bundled SKILL.md into each requested target location."""
     # Find the source SKILL.md bundled inside the sovara package
     import sovara.assets
     skill_source = Path(sovara.assets.__file__).parent / "SKILL.md"
@@ -490,60 +567,15 @@ def install_skill_command() -> None:
         print(f"Error: SKILL.md not found at {skill_source}", file=sys.stderr)
         sys.exit(1)
 
-    # Create target directory
-    target_dir.mkdir(parents=True, exist_ok=True)
+    installed_files = []
+    for install_target in install_targets:
+        target_dir = _skill_install_dir(target_root, install_target)
+        target_file = target_dir / "SKILL.md"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(skill_source, target_file)
+        installed_files.append((_skill_target_display_name(install_target), target_file))
 
-    # Copy the file
-    shutil.copy2(skill_source, target_file)
-    print(f"\033[32mSkill installed to {target_file}\033[0m")
-
-    # Ask about adding Bash permissions
-    settings_file = target_root / ".claude" / "settings.local.json"
-    print(f"\nAdd so-cli Bash permissions to Claude Code settings?")
-    print(f"This allows Claude to run so-cli commands without asking for permission.")
-    print(f"Target: {settings_file}")
-    response = input("Add permissions? [Y/n]: ").strip().lower()
-
-    if response in ("", "y", "yes"):
-        _add_ao_permissions(settings_file)
-        print("\033[32mPermissions added.\033[0m")
-    else:
-        print("Skipped adding permissions.")
-
-    print("\nMake sure to re-open Claude Code for changes to take effect.")
-
-
-def _add_ao_permissions(settings_file: Path) -> None:
-    """Add so-cli Bash permissions to a Claude settings file."""
-    ao_permissions = [
-        "Bash(*sovara.cli.so_tool*)",
-        "Bash(*so-cli*)",
-    ]
-
-    # Load existing settings or create new
-    if settings_file.exists():
-        with open(settings_file, "r") as f:
-            settings = json.load(f)
-    else:
-        settings = {}
-
-    # Ensure permissions.allow exists
-    if "permissions" not in settings:
-        settings["permissions"] = {}
-    if "allow" not in settings["permissions"]:
-        settings["permissions"]["allow"] = []
-
-    # Add new permissions (avoid duplicates)
-    existing = set(settings["permissions"]["allow"])
-    for perm in ao_permissions:
-        if perm not in existing:
-            settings["permissions"]["allow"].append(perm)
-
-    # Create directory if needed and write file
-    settings_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(settings_file, "w") as f:
-        json.dump(settings, f, indent=2)
-        f.write("\n")
+    return installed_files
 
 
 # ===========================================================
@@ -1061,10 +1093,29 @@ def create_parser() -> ArgumentParser:
     )
 
     # install-skill subcommand
-    subparsers.add_parser(
+    install_skill = subparsers.add_parser(
         "install-skill",
-        help="Install the sovara skill to a project",
-        description="Interactive setup: copies SKILL.md and adds Claude Code permissions.",
+        help="Install the sovara skill globally or into a project",
+        description=(
+            "Install the shared sovara skill for Codex, Claude Code, or both. "
+            "Defaults to both targets at the global user level."
+        ),
+    )
+    install_skill.add_argument(
+        "--level",
+        choices=("global", "project"),
+        default="global",
+        help="Install to user-level skill directories (default) or into a specific project.",
+    )
+    install_skill.add_argument(
+        "--project-dir",
+        help="Project root to install into when --level project is used. Defaults to an interactive prompt.",
+    )
+    install_skill.add_argument(
+        "--target",
+        choices=("codex", "claude", "both"),
+        default="both",
+        help="Install for Codex, Claude Code, or both (default: both).",
     )
 
     # priors subcommand with nested subcommands
@@ -1323,7 +1374,7 @@ def main():
     elif args.command == "edit-and-rerun":
         edit_and_rerun_command(args)
     elif args.command == "install-skill":
-        install_skill_command()
+        install_skill_command(args)
     elif args.command == "priors":
         if args.priors_command == "start-server":
             priors_start_server_command(args)

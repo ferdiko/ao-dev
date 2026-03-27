@@ -1,33 +1,33 @@
 import React from 'react';
-import { Lesson } from '../lessons/LessonsView';
+import { Prior } from '../priors/PriorsView';
 
 interface GraphHeaderProps {
   runName: string;
   isDarkTheme: boolean;
   runId?: string;
-  lessons?: Lesson[];
-  lessonsAppliedCount?: number;
-  onNavigateToLessons?: () => void;
-  onNavigateToAppliedLessons?: () => void;
+  priors?: Prior[];
+  priorsAppliedCount?: number;
+  onNavigateToPriors?: () => void;
+  onNavigateToAppliedPriors?: () => void;
 }
 
 export const GraphHeader: React.FC<GraphHeaderProps> = ({
   runName,
   isDarkTheme,
   runId,
-  lessons = [],
-  lessonsAppliedCount,
-  onNavigateToLessons,
-  onNavigateToAppliedLessons,
+  priors = [],
+  priorsAppliedCount,
+  onNavigateToPriors,
+  onNavigateToAppliedPriors,
 }) => {
-  // Count lessons extracted from this graph
-  const lessonsExtractedFrom = runId
-    ? lessons.filter((lesson) => lesson.extractedFrom?.runId === runId).length
+  // Count priors extracted from this graph
+  const priorsExtractedFrom = runId
+    ? priors.filter((prior) => prior.extractedFrom?.runId === runId).length
     : 0;
 
-  // Count lessons applied to this graph (from server, or fallback to filtering lessons)
-  const lessonsAppliedTo = lessonsAppliedCount ?? (runId
-    ? lessons.filter((lesson) => lesson.appliedTo?.some((app) => app.runId === runId)).length
+  // Count priors applied to this graph (from server, or fallback to filtering priors)
+  const priorsAppliedTo = priorsAppliedCount ?? (runId
+    ? priors.filter((prior) => prior.appliedTo?.some((app) => app.runId === runId)).length
     : 0);
 
   return (
@@ -90,38 +90,38 @@ export const GraphHeader: React.FC<GraphHeaderProps> = ({
           >
             <span
               style={{
-                cursor: onNavigateToLessons ? 'pointer' : 'default',
+                cursor: onNavigateToPriors ? 'pointer' : 'default',
                 color: isDarkTheme ? '#4da6ff' : '#007acc',
                 transition: 'color 0.2s',
               }}
-              onClick={onNavigateToLessons}
+              onClick={onNavigateToPriors}
               onMouseEnter={(e) => {
-                if (onNavigateToLessons) e.currentTarget.style.color = isDarkTheme ? '#6bb8ff' : '#005a9e';
+                if (onNavigateToPriors) e.currentTarget.style.color = isDarkTheme ? '#6bb8ff' : '#005a9e';
               }}
               onMouseLeave={(e) => {
-                if (onNavigateToLessons) e.currentTarget.style.color = isDarkTheme ? '#4da6ff' : '#007acc';
+                if (onNavigateToPriors) e.currentTarget.style.color = isDarkTheme ? '#4da6ff' : '#007acc';
               }}
               title="View all priors"
             >
-              {lessonsExtractedFrom} prior{lessonsExtractedFrom !== 1 ? 's' : ''} extracted
+              {priorsExtractedFrom} prior{priorsExtractedFrom !== 1 ? 's' : ''} extracted
             </span>
             <span style={{ color: isDarkTheme ? '#3c7ab8' : '#99c9e8' }}>|</span>
             <span
               style={{
-                cursor: onNavigateToAppliedLessons ? 'pointer' : 'default',
+                cursor: onNavigateToAppliedPriors ? 'pointer' : 'default',
                 color: isDarkTheme ? '#4da6ff' : '#007acc',
                 transition: 'color 0.2s',
               }}
-              onClick={onNavigateToAppliedLessons}
+              onClick={onNavigateToAppliedPriors}
               onMouseEnter={(e) => {
-                if (onNavigateToAppliedLessons) e.currentTarget.style.color = isDarkTheme ? '#6bb8ff' : '#005a9e';
+                if (onNavigateToAppliedPriors) e.currentTarget.style.color = isDarkTheme ? '#6bb8ff' : '#005a9e';
               }}
               onMouseLeave={(e) => {
-                if (onNavigateToAppliedLessons) e.currentTarget.style.color = isDarkTheme ? '#4da6ff' : '#007acc';
+                if (onNavigateToAppliedPriors) e.currentTarget.style.color = isDarkTheme ? '#4da6ff' : '#007acc';
               }}
               title="View applied priors"
             >
-              {lessonsAppliedTo} prior{lessonsAppliedTo !== 1 ? 's' : ''} applied
+              {priorsAppliedTo} prior{priorsAppliedTo !== 1 ? 's' : ''} applied
             </span>
           </div>
         )}

@@ -1,32 +1,32 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useIsVsCodeDarkTheme } from '@sovara/shared-components/utils/themeUtils';
-import { LessonHeader } from '@sovara/shared-components/components/LessonHeader';
-import { LessonSummary } from '@sovara/shared-components/types';
+import { PriorHeader } from '@sovara/shared-components/components/PriorHeader';
+import { PriorSummary } from '@sovara/shared-components/types';
 
 declare global {
   interface Window {
     vscode?: {
       postMessage: (message: any) => void;
     };
-    lessonEditorContext?: {
-      lessonId: string;
-      lessonName: string;
+    priorEditorContext?: {
+      priorId: string;
+      priorName: string;
     };
   }
 }
 
-interface LessonData {
+interface PriorData {
   id: string;
   name: string;
   summary: string;
   content: string;
 }
 
-export const LessonEditorTabApp: React.FC = () => {
+export const PriorEditorTabApp: React.FC = () => {
   const isDarkTheme = useIsVsCodeDarkTheme();
-  const [context, setContext] = useState(window.lessonEditorContext || null);
-  const [lesson, setLesson] = useState<LessonData | null>(null);
-  const [lessons, setLessons] = useState<LessonSummary[]>([]);
+  const [context, setContext] = useState(window.priorEditorContext || null);
+  const [prior, setPrior] = useState<PriorData | null>(null);
+  const [priors, setPriors] = useState<PriorSummary[]>([]);
   const [editedContent, setEditedContent] = useState('');
   const [editedName, setEditedName] = useState('');
   const [editedSummary, setEditedSummary] = useState('');
@@ -36,46 +36,46 @@ export const LessonEditorTabApp: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [validationError, setValidationError] = useState<string | null>(null);
-  const isNewLesson = context?.lessonId === 'new';
-  // Track pending lesson fetch to update UI when response arrives
-  const [pendingLessonId, setPendingLessonId] = useState<string | null>(null);
+  const isNewPrior = context?.priorId === 'new';
+  // Track pending prior fetch to update UI when response arrives
+  const [pendingPriorId, setPendingPriorId] = useState<string | null>(null);
 
-  // Request all lessons for dropdown via server proxy
-  const requestAllLessons = useCallback(() => {
+  // Request all priors for dropdown via server proxy
+  const requestAllPriors = useCallback(() => {
     if (window.vscode) {
-      window.vscode.postMessage({ type: 'get_lessons' });
+      window.vscode.postMessage({ type: 'get_priors' });
     }
   }, []);
 
-  // Request single lesson data via server proxy
-  const requestLesson = useCallback((lessonId: string) => {
+  // Request single prior data via server proxy
+  const requestPrior = useCallback((priorId: string) => {
     setLoading(true);
     setError(null);
-    setPendingLessonId(lessonId);
+    setPendingPriorId(priorId);
     if (window.vscode) {
-      window.vscode.postMessage({ type: 'get_lesson', lesson_id: lessonId });
+      window.vscode.postMessage({ type: 'get_prior', prior_id: priorId });
     }
   }, []);
 
-  // Load lesson on mount or when context changes
+  // Load prior on mount or when context changes
   useEffect(() => {
-    if (context?.lessonId === 'new') {
-      // New lesson - start with empty fields
-      setLesson({ id: 'new', name: '', summary: '', content: '' });
+    if (context?.priorId === 'new') {
+      // New prior - start with empty fields
+      setPrior({ id: 'new', name: '', summary: '', content: '' });
       setEditedName('');
       setEditedSummary('');
       setEditedContent('');
-      setHasUnsavedChanges(true); // Mark as unsaved since it's a new lesson
+      setHasUnsavedChanges(true); // Mark as unsaved since it's a new prior
       setLoading(false);
-    } else if (context?.lessonId) {
-      requestLesson(context.lessonId);
+    } else if (context?.priorId) {
+      requestPrior(context.priorId);
     }
-  }, [context, requestLesson]);
+  }, [context, requestPrior]);
 
-  // Request all lessons on mount
+  // Request all priors on mount
   useEffect(() => {
-    requestAllLessons();
-  }, [requestAllLessons]);
+    requestAllPriors();
+  }, [requestAllPriors]);
 
   // Listen for messages from extension
   useEffect(() => {
@@ -83,48 +83,48 @@ export const LessonEditorTabApp: React.FC = () => {
       const message = event.data;
 
       switch (message.type) {
-        case 'updateLessonData':
+        case 'updatePriorData':
           setContext(message.payload);
           break;
 
-        case 'lessons_list':
-          // Response to get_lessons - update dropdown
-          setLessons(message.lessons || []);
+        case 'priors_list':
+          // Response to get_priors - update dropdown
+          setPriors(message.priors || []);
           break;
 
-        case 'lesson_content':
-          // Response to get_lesson - populate editor
-          if (message.lesson && message.lesson.id === pendingLessonId) {
-            const data = message.lesson;
-            setLesson(data);
+        case 'prior_content':
+          // Response to get_prior - populate editor
+          if (message.prior && message.prior.id === pendingPriorId) {
+            const data = message.prior;
+            setPrior(data);
             setEditedContent(data.content || '');
             setEditedName(data.name || '');
             setEditedSummary(data.summary || '');
             setHasUnsavedChanges(false);
             setLoading(false);
-            setPendingLessonId(null);
+            setPendingPriorId(null);
           }
           break;
 
-        case 'lesson_created':
-        case 'lesson_updated':
-          // Success - update lesson and show saved status
-          if (message.lesson) {
-            const updatedLesson = message.lesson;
-            setLesson(updatedLesson);
-            // Update context with new lesson ID if it was a new lesson
-            if (isNewLesson && updatedLesson.id) {
-              setContext({ lessonId: updatedLesson.id, lessonName: updatedLesson.name });
+        case 'prior_created':
+        case 'prior_updated':
+          // Success - update prior and show saved status
+          if (message.prior) {
+            const updatedPrior = message.prior;
+            setPrior(updatedPrior);
+            // Update context with new prior ID if it was a new prior
+            if (isNewPrior && updatedPrior.id) {
+              setContext({ priorId: updatedPrior.id, priorName: updatedPrior.name });
             }
             setHasUnsavedChanges(false);
             setSaveStatus('saved');
-            // Refresh lessons list for dropdown
-            requestAllLessons();
+            // Refresh priors list for dropdown
+            requestAllPriors();
             setTimeout(() => setSaveStatus('idle'), 2000);
           }
           break;
 
-        case 'lesson_rejected':
+        case 'prior_rejected':
           // Validation rejected - show error
           setValidationError(message.reason || 'Validation failed');
           setSaveStatus('error');
@@ -134,12 +134,12 @@ export const LessonEditorTabApp: React.FC = () => {
           }, 5000);
           break;
 
-        case 'lesson_error':
+        case 'prior_error':
           // General error
-          if (pendingLessonId) {
-            setError(message.error || 'Failed to load lesson');
+          if (pendingPriorId) {
+            setError(message.error || 'Failed to load prior');
             setLoading(false);
-            setPendingLessonId(null);
+            setPendingPriorId(null);
           } else {
             setValidationError(message.error || 'Server error');
             setSaveStatus('error');
@@ -161,21 +161,21 @@ export const LessonEditorTabApp: React.FC = () => {
     return () => {
       window.removeEventListener('message', handleMessage);
     };
-  }, [pendingLessonId, isNewLesson, requestAllLessons]);
+  }, [pendingPriorId, isNewPrior, requestAllPriors]);
 
   // Detect changes
   useEffect(() => {
-    if (!lesson) return;
-    // For new lessons, always mark as unsaved (they need to be created)
-    if (lesson.id === 'new') {
+    if (!prior) return;
+    // For new priors, always mark as unsaved (they need to be created)
+    if (prior.id === 'new') {
       setHasUnsavedChanges(true);
       return;
     }
-    const contentChanged = editedContent !== (lesson.content || '');
-    const nameChanged = editedName !== (lesson.name || '');
-    const summaryChanged = editedSummary !== (lesson.summary || '');
+    const contentChanged = editedContent !== (prior.content || '');
+    const nameChanged = editedName !== (prior.name || '');
+    const summaryChanged = editedSummary !== (prior.summary || '');
     setHasUnsavedChanges(contentChanged || nameChanged || summaryChanged);
-  }, [editedContent, editedName, editedSummary, lesson]);
+  }, [editedContent, editedName, editedSummary, prior]);
 
   // Validate fields
   const validateFields = useCallback((): string | null => {
@@ -209,30 +209,25 @@ export const LessonEditorTabApp: React.FC = () => {
       return;
     }
 
-    if (isNewLesson) {
-      // Create new lesson via server proxy
+    if (isNewPrior) {
+      // Create new prior via server proxy
       window.vscode.postMessage({
-        type: 'add_lesson',
+        type: 'add_prior',
         name: editedName.trim(),
         summary: editedSummary.trim(),
         content: editedContent.trim(),
       });
     } else {
-      // Update existing lesson via server proxy
+      // Update existing prior via server proxy
       window.vscode.postMessage({
-        type: 'update_lesson',
-        lesson_id: context?.lessonId,
+        type: 'update_prior',
+        prior_id: context?.priorId,
         name: editedName.trim(),
         summary: editedSummary.trim(),
         content: editedContent.trim(),
       });
     }
-
-    // Notify sidebar to refresh when save completes (handled in message listener)
-    if (window.vscode) {
-      window.vscode.postMessage({ type: 'lessonUpdated' });
-    }
-  }, [context?.lessonId, editedContent, editedName, editedSummary, isNewLesson, validateFields]);
+  }, [context?.priorId, editedContent, editedName, editedSummary, isNewPrior, validateFields]);
 
   // Handle CMD+S / Ctrl+S keyboard shortcut for save
   useEffect(() => {
@@ -249,9 +244,9 @@ export const LessonEditorTabApp: React.FC = () => {
     };
   }, [handleSave]);
 
-  // Handle navigating to a different lesson
-  const handleNavigateToLesson = useCallback((lessonSummary: LessonSummary) => {
-    setContext({ lessonId: lessonSummary.id, lessonName: lessonSummary.name });
+  // Handle navigating to a different prior
+  const handleNavigateToPrior = useCallback((priorSummary: PriorSummary) => {
+    setContext({ priorId: priorSummary.id, priorName: priorSummary.name });
     setShowPreview(false);
   }, []);
 
@@ -343,7 +338,7 @@ export const LessonEditorTabApp: React.FC = () => {
   if (loading) {
     return (
       <div style={{ ...containerStyle, alignItems: 'center', justifyContent: 'center' }}>
-        Loading lesson...
+        Loading prior...
       </div>
     );
   }
@@ -354,7 +349,7 @@ export const LessonEditorTabApp: React.FC = () => {
         <div style={{ color: '#e05252' }}>{error}</div>
         <button
           style={{ ...buttonStyle, marginTop: '16px' }}
-          onClick={() => context?.lessonId && requestLesson(context.lessonId)}
+          onClick={() => context?.priorId && requestPrior(context.priorId)}
         >
           Retry
         </button>
@@ -365,15 +360,15 @@ export const LessonEditorTabApp: React.FC = () => {
   return (
     <div style={containerStyle}>
       {/* Header with dropdown and action icons */}
-      <LessonHeader
-        lessonName={editedName || lesson?.name || (isNewLesson ? 'New Lesson' : 'Lesson')}
-        lessonId={context?.lessonId || ''}
+      <PriorHeader
+        priorName={editedName || prior?.name || (isNewPrior ? 'New Prior' : 'Prior')}
+        priorId={context?.priorId || ''}
         isDarkTheme={isDarkTheme}
-        lessons={lessons}
+        priors={priors}
         hasUnsavedChanges={canSave()}
         showPreview={showPreview}
         saveStatus={saveStatus}
-        onNavigateToLesson={handleNavigateToLesson}
+        onNavigateToPrior={handleNavigateToPrior}
         onTogglePreview={() => setShowPreview(!showPreview)}
         onSave={handleSave}
       />
@@ -399,7 +394,7 @@ export const LessonEditorTabApp: React.FC = () => {
           value={editedName}
           onChange={(e) => setEditedName(e.target.value)}
           style={inputStyle}
-          placeholder="Lesson name"
+          placeholder="Prior name"
         />
       </div>
 
@@ -427,7 +422,7 @@ export const LessonEditorTabApp: React.FC = () => {
             style={textareaStyle}
             value={editedContent}
             onChange={(e) => setEditedContent(e.target.value)}
-            placeholder="Write your lesson content in markdown..."
+            placeholder="Write your prior content in markdown..."
           />
         )}
       </div>

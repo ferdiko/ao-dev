@@ -108,10 +108,10 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleLessonsClick = () => {
-    // Open lessons in a separate tab
+  const handlePriorsClick = () => {
+    // Open priors in a separate tab
     if (window.vscode) {
-      window.vscode.postMessage({ type: 'openLessonsTab' });
+      window.vscode.postMessage({ type: 'openPriorsTab' });
     }
   };
 
@@ -198,7 +198,7 @@ export const App: React.FC = () => {
             onCardClick={handleRunCardClick}
             isDarkTheme={isDarkTheme}
             showHeader={true}
-            onLessonsClick={handleLessonsClick}
+            onPriorsClick={handlePriorsClick}
             onRefresh={handleRefresh}
             hasMoreFinished={hasMoreFinished}
             onLoadMoreFinished={handleLoadMoreFinished}

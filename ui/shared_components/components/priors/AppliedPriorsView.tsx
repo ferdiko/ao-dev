@@ -1,38 +1,38 @@
 import React, { useState, useEffect } from 'react';
-import { Lesson } from './LessonsView';
+import { Prior } from './PriorsView';
 
-interface AppliedLessonsViewProps {
-  lessons: Lesson[];
+interface AppliedPriorsViewProps {
+  priors: Prior[];
   isDarkTheme: boolean;
   onBack: () => void;
-  onFetchLessonContent?: (id: string) => void;
-  lessonContentUpdate?: { id: string; content: string } | null;
+  onFetchPriorContent?: (id: string) => void;
+  priorContentUpdate?: { id: string; content: string } | null;
 }
 
-export const AppliedLessonsView: React.FC<AppliedLessonsViewProps> = ({
-  lessons,
+export const AppliedPriorsView: React.FC<AppliedPriorsViewProps> = ({
+  priors,
   isDarkTheme,
   onBack,
-  onFetchLessonContent,
-  lessonContentUpdate,
+  onFetchPriorContent,
+  priorContentUpdate,
 }) => {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [loadingContentIds, setLoadingContentIds] = useState<Set<string>>(new Set());
-  const [lessonContents, setLessonContents] = useState<Map<string, string>>(new Map());
+  const [priorContents, setPriorContents] = useState<Map<string, string>>(new Map());
 
-  // Process incoming lesson content updates
+  // Process incoming prior content updates
   useEffect(() => {
-    if (!lessonContentUpdate) return;
-    const { id, content } = lessonContentUpdate;
+    if (!priorContentUpdate) return;
+    const { id, content } = priorContentUpdate;
     setLoadingContentIds((prev) => {
       const next = new Set(prev);
       next.delete(id);
       return next;
     });
-    setLessonContents((prev) => new Map(prev).set(id, content));
-  }, [lessonContentUpdate]);
+    setPriorContents((prev) => new Map(prev).set(id, content));
+  }, [priorContentUpdate]);
 
-  const toggleExpanded = (id: string, lesson: Lesson) => {
+  const toggleExpanded = (id: string, prior: Prior) => {
     const isExpanding = !expandedIds.has(id);
     setExpandedIds((prev) => {
       const next = new Set(prev);
@@ -40,14 +40,14 @@ export const AppliedLessonsView: React.FC<AppliedLessonsViewProps> = ({
       else next.add(id);
       return next;
     });
-    if (isExpanding && !lesson.content && !lessonContents.has(id) && onFetchLessonContent) {
+    if (isExpanding && !prior.content && !priorContents.has(id) && onFetchPriorContent) {
       setLoadingContentIds((prev) => new Set(prev).add(id));
-      onFetchLessonContent(id);
+      onFetchPriorContent(id);
     }
   };
 
-  const getContent = (lesson: Lesson): string => {
-    return lessonContents.get(lesson.id) || lesson.content || '';
+  const getContent = (prior: Prior): string => {
+    return priorContents.get(prior.id) || prior.content || '';
   };
 
   return (
@@ -107,13 +107,13 @@ export const AppliedLessonsView: React.FC<AppliedLessonsViewProps> = ({
             color: isDarkTheme ? '#e5e5e5' : '#333333',
           }}
         >
-          Applied Priors ({lessons.length})
+          Applied Priors ({priors.length})
         </h2>
       </div>
 
-      {/* Lesson List */}
+      {/* Prior List */}
       <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px' }}>
-        {lessons.length === 0 ? (
+        {priors.length === 0 ? (
           <div
             style={{
               textAlign: 'center',
@@ -125,9 +125,9 @@ export const AppliedLessonsView: React.FC<AppliedLessonsViewProps> = ({
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {lessons.map((lesson) => (
+            {priors.map((prior) => (
               <div
-                key={lesson.id}
+                key={prior.id}
                 style={{
                   backgroundColor: isDarkTheme ? '#2d2d2d' : '#fafafa',
                   border: `1px solid ${isDarkTheme ? '#3c3c3c' : '#e0e0e0'}`,
@@ -145,9 +145,9 @@ export const AppliedLessonsView: React.FC<AppliedLessonsViewProps> = ({
                       color: isDarkTheme ? '#e5e5e5' : '#333333',
                     }}
                   >
-                    {lesson.name}
+                    {prior.name}
                   </h4>
-                  {lesson.path && (
+                  {prior.path && (
                     <span
                       style={{
                         fontSize: '10px',
@@ -159,7 +159,7 @@ export const AppliedLessonsView: React.FC<AppliedLessonsViewProps> = ({
                         flexShrink: 0,
                       }}
                     >
-                      {lesson.path}
+                      {prior.path}
                     </span>
                   )}
                 </div>
@@ -173,12 +173,12 @@ export const AppliedLessonsView: React.FC<AppliedLessonsViewProps> = ({
                     color: isDarkTheme ? '#999999' : '#666666',
                   }}
                 >
-                  {lesson.summary}
+                  {prior.summary}
                 </p>
 
                 {/* Expand content button */}
                 <button
-                  onClick={() => toggleExpanded(lesson.id, lesson)}
+                  onClick={() => toggleExpanded(prior.id, prior)}
                   style={{
                     padding: '2px 8px',
                     fontSize: '10px',
@@ -200,14 +200,14 @@ export const AppliedLessonsView: React.FC<AppliedLessonsViewProps> = ({
                     e.currentTarget.style.backgroundColor = isDarkTheme ? '#3c3c3c' : '#e8e8e8';
                   }}
                 >
-                  <span style={{ transform: expandedIds.has(lesson.id) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                  <span style={{ transform: expandedIds.has(prior.id) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
                     &#9654;
                   </span>
-                  {expandedIds.has(lesson.id) ? 'Hide content' : 'Show content'}
+                  {expandedIds.has(prior.id) ? 'Hide content' : 'Show content'}
                 </button>
 
                 {/* Content (expandable) */}
-                {expandedIds.has(lesson.id) && (
+                {expandedIds.has(prior.id) && (
                   <pre
                     style={{
                       margin: '8px 0 0 0',
@@ -225,9 +225,9 @@ export const AppliedLessonsView: React.FC<AppliedLessonsViewProps> = ({
                       maxHeight: '300px',
                     }}
                   >
-                    {loadingContentIds.has(lesson.id)
+                    {loadingContentIds.has(prior.id)
                       ? 'Loading...'
-                      : (getContent(lesson) || 'No content available')}
+                      : (getContent(prior) || 'No content available')}
                   </pre>
                 )}
               </div>

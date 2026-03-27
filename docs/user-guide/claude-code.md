@@ -12,19 +12,20 @@ Sovara integrates with [Claude Code](https://docs.anthropic.com/en/docs/claude-c
 
 ## Setup
 
-Run the interactive setup command:
+Install the skill globally:
 
 ```bash
-so-tool install-skill
+so-cli install-skill --target claude
 ```
 
 This will:
 
-1. Ask for your project directory (with tab-completion)
-2. Copy the Sovara skill file to `.claude/skills/sovara/SKILL.md`
-3. Optionally add Bash permissions to `.claude/settings.local.json` so Claude can run `so-tool` commands without prompts
+1. Copy the Sovara skill file to `~/.claude/skills/sovara/SKILL.md`
+2. Make the skill available across all your projects
 
-After setup, restart Claude Code to load the new skill.
+To install it for one project instead, run `so-cli install-skill --target claude --level project`.
+
+After setup, restart Claude Code to load the new skill if it does not appear immediately.
 
 ## Available Commands
 

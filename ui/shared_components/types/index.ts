@@ -74,7 +74,7 @@ export interface ProcessInfo {
     version_date?: string;
 }
 
-export interface LessonSummary {
+export interface PriorSummary {
     id: string;
     name: string;
     summary: string;

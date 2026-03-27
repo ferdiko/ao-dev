@@ -701,16 +701,16 @@ def get_run_detail(run_id: str, state: ServerState = Depends(get_state)):
     }
 
 
-@router.get("/lessons-applied/{run_id}")
-def get_lessons_applied(run_id: str, state: ServerState = Depends(get_state)):
-    records = DB.get_lessons_applied_for_run(run_id)
-    return {"type": "lessons_applied", "run_id": run_id, "records": records}
+@router.get("/priors-applied/{run_id}")
+def get_priors_applied(run_id: str, state: ServerState = Depends(get_state)):
+    records = DB.get_priors_applied_for_run(run_id)
+    return {"type": "priors_applied", "run_id": run_id, "records": records}
 
 
-@router.get("/runs-for-lesson/{lesson_id}")
-def get_runs_for_lesson(lesson_id: str, state: ServerState = Depends(get_state)):
-    records = DB.get_runs_for_lesson(lesson_id)
-    return {"type": "runs_for_lesson", "lesson_id": lesson_id, "records": records}
+@router.get("/runs-for-prior/{prior_id}")
+def get_runs_for_prior(prior_id: str, state: ServerState = Depends(get_state)):
+    records = DB.get_runs_for_prior(prior_id)
+    return {"type": "runs_for_prior", "prior_id": prior_id, "records": records}
 
 
 @router.post("/edit-input")

@@ -73,6 +73,22 @@ def test_runner_priors_request_does_not_send_api_key_header(monkeypatch):
     assert "x-api-key" not in captured["headers"]
 
 
+def test_inject_priors_formats_context_and_tracks_ids(monkeypatch):
+    tracked = {}
+
+    monkeypatch.setattr(
+        priors,
+        "_retrieve_priors",
+        lambda path, context, model=None: [{"id": "p1", "name": "Prior 1", "content": "Use retries"}],
+    )
+    monkeypatch.setattr(priors, "_track_priors", lambda prior_ids: tracked.setdefault("ids", prior_ids))
+
+    injected = priors.inject_priors(path="demo/", context="Need SQL guidance")
+
+    assert injected == "<priors>\n## Prior 1\nUse retries\n</priors>"
+    assert tracked["ids"] == ["p1"]
+
+
 def test_build_restructure_execute_body_from_proposal_file(tmp_path):
     proposal_path = tmp_path / "proposal.json"
     proposal_path.write_text(

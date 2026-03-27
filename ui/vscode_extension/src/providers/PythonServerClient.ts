@@ -10,7 +10,7 @@ export class PythonServerClient {
     private serverHost: string;
     private serverPort: number;
     private reconnectTimer: NodeJS.Timeout | undefined;
-    private _playbookUrl?: string;
+    private _priorsUrl?: string;
     private _configPath?: string;
 
     private constructor() {
@@ -23,12 +23,12 @@ export class PythonServerClient {
         return PythonServerClient.instance ??= new PythonServerClient();
     }
 
-    public setPlaybookUrl(url: string | undefined) {
-        this._playbookUrl = url;
+    public setPriorsUrl(url: string | undefined) {
+        this._priorsUrl = url;
     }
 
-    public getPlaybookUrl(): string | undefined {
-        return this._playbookUrl;
+    public getPriorsUrl(): string | undefined {
+        return this._priorsUrl;
     }
 
     public getConfigPath(): string | undefined {
@@ -49,7 +49,7 @@ export class PythonServerClient {
     public async getUiConfig(): Promise<{ config_path?: string; priors_url?: string }> {
         const config = await this.httpGet('/ui/config');
         if (config?.priors_url) {
-            this.setPlaybookUrl(config.priors_url);
+            this.setPriorsUrl(config.priors_url);
         }
         if (config?.config_path) {
             this._configPath = config.config_path;

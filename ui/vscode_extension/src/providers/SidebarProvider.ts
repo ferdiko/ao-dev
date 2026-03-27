@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { GraphTabProvider } from './GraphTabProvider';
 import { PythonServerClient } from './PythonServerClient';
-import { PlaybookClient } from './PlaybookClient';
+import { SovaraDBClient } from './SovaraDBClient';
 import { configManager } from './ConfigManager';
 export class SidebarProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'sovara.graphView';
@@ -29,15 +29,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     public setGraphTabProvider(provider: GraphTabProvider): void {
         this._graphTabProvider = provider;
-        // Give GraphTabProvider a reference back to this sidebar
-        provider.setSidebarProvider(this);
-    }
-
-    // Called by GraphTabProvider when a lesson is updated in the editor
-    public refreshLessons(): void {
-        if (this._view) {
-            this._view.webview.postMessage({ type: 'refreshLessons' });
-        }
     }
 
     // Robustly show or reveal the webview
@@ -88,8 +79,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
 
         if (config.priors_url) {
-            this._pythonClient?.setPlaybookUrl(config.priors_url);
-            PlaybookClient.init(config.priors_url);
+            this._pythonClient?.setPriorsUrl(config.priors_url);
+            SovaraDBClient.init(config.priors_url);
         }
     }
 
@@ -235,23 +226,23 @@ _context: vscode.WebviewViewResolveContext,
                         console.warn('[GraphViewProvider] No GraphTabProvider available or missing run data');
                     }
                     break;
-                case 'openLessonsTab':
+                case 'openPriorsTab':
                     if (this._graphTabProvider) {
-                        this._graphTabProvider.createOrShowLessonsTab();
+                        this._graphTabProvider.createOrShowPriorsTab();
                     } else {
-                        console.warn('[GraphViewProvider] No GraphTabProvider available for lessons');
+                        console.warn('[GraphViewProvider] No GraphTabProvider available for priors');
                     }
                     break;
-                case 'openLessonEditorTab':
-                    if (this._graphTabProvider && data.lessonId) {
-                        this._graphTabProvider.createOrShowLessonEditorTab(data.lessonId, data.lessonName || 'Lesson');
+                case 'openPriorEditorTab':
+                    if (this._graphTabProvider && data.priorId) {
+                        this._graphTabProvider.createOrShowPriorEditorTab(data.priorId, data.priorName || 'Prior');
                     } else {
-                        console.warn('[GraphViewProvider] No GraphTabProvider available for lesson editor or missing lessonId');
+                        console.warn('[GraphViewProvider] No GraphTabProvider available for prior editor or missing priorId');
                     }
                     break;
-                case 'closeLessonEditorTab':
+                case 'closePriorEditorTab':
                     if (this._graphTabProvider) {
-                        this._graphTabProvider.closeLessonEditorTab();
+                        this._graphTabProvider.closePriorEditorTab();
                     }
                     break;
                 case 'requestRunRefresh':
@@ -342,8 +333,8 @@ _context: vscode.WebviewViewResolveContext,
             this._windowStateListener.dispose();
             this._windowStateListener = undefined;
         }
-        // Clean up PlaybookClient
-        PlaybookClient.getInstance()?.dispose();
+        // Clean up SovaraDBClient
+        SovaraDBClient.getInstance()?.dispose();
         // Clean up is handled by ConfigManager
     }
 }

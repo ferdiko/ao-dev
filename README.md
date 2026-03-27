@@ -76,25 +76,67 @@ This should show you the agent's trajectory graph like in the video above. You c
 ## Integration with Coding Agents
 Coding Agents already accelerate generic coding quite successfully. By augmenting them with `sovara`, you can supercharge your agent development while making sure you adhere to state-of-the-art coding practices for enterprise-grade agents.
 
-<h3><img src="docs/media/cc.png" alt="Claude Code" height="24" align="absmiddle">&nbsp;&nbsp;Claude Code</h3>
+### Why use these integrations?
 
-**Setup:**
+- **Keep context clean**: Agent runs produce verbose logs that quickly pollute a coding agent's context window. With `so-cli`, it queries only the specific nodes it needs.
+- **Structured access**: Your agent gets structured JSON data (inputs, outputs, graph topology) rather than parsing raw logs.
+- **Edit and rerun**: Your agent can programmatically edit an LLM's input or output and trigger a rerun to test hypotheses.
+
+<h3><img src="docs/media/codex.png" alt="Codex" height="24" align="absmiddle">&nbsp;&nbsp;Codex</h3>
+
+Install globally:
 
 ```bash
-so-tool install-skill
+so-cli install-skill --target codex
 ```
 
-This interactive command will:
-1. Copy the Sovara skill file to your project's `.claude/skills/sovara/` directory
-2. Add Bash permissions so Claude Code can run `so-tool` commands without prompts
+This copies the shared Sovara skill to `$HOME/.agents/skills/sovara/`, so you can use it from any repository. The installer only copies skill files and does not modify Codex settings.
 
-After setup, restart Claude Code and ask "What skills are available?". The sovara skill should now show up, and you can start developing/improving your agent as you would normally do.
+To install it for a specific project instead:
 
-**Why use this integration?**
+```bash
+so-cli install-skill --target codex --level project
+```
 
-- **Keep context clean**: Agent runs produce verbose logs that quickly pollute Claude's context window. With `so-tool`, Claude queries only the specific nodes it needs.
-- **Structured access**: Claude gets structured JSON data (inputs, outputs, graph topology) rather than parsing raw logs.
-- **Edit and rerun**: Claude can programmatically edit an LLM's input or output and trigger a rerun to test hypotheses.
+That copies the skill to `.agents/skills/sovara/` under the selected project. Codex also scans `.agents/skills` from your current working directory up to the repository root, so project-level skills can be scoped to a repo or subdirectory.
+
+Use Sovara in Codex by asking for `$sovara` explicitly, or let Codex invoke it automatically when the task matches the skill description.
+
+Example prompts:
+
+```text
+$sovara inspect the latest run and find the first failing node
+$sovara compare these two runs and explain why the outputs diverged
+$sovara propose a prior based on the failure pattern in this run
+```
+
+Codex detects skill changes automatically. If an update does not appear, restart Codex.
+
+<h3><img src="docs/media/cc.png" alt="Claude Code" height="24" align="absmiddle">&nbsp;&nbsp;Claude Code</h3>
+
+Install globally:
+
+```bash
+so-cli install-skill --target claude
+```
+
+This copies the shared Sovara skill to `~/.claude/skills/sovara/`, so it is available across all your projects. The installer only copies skill files and does not modify Claude settings.
+
+To install it for one project instead:
+
+```bash
+so-cli install-skill --target claude --level project
+```
+
+That copies the skill to `.claude/skills/sovara/` under the selected project. Re-open Claude Code after installation if the skill does not appear immediately.
+
+Use Sovara in Claude Code by letting Claude invoke the skill automatically when relevant, or select it directly from the skill menu if needed.
+
+If you want both integrations installed globally in one step, run:
+
+```bash
+so-cli install-skill
+```
 
 ## Documentation
 

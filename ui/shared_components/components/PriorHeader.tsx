@@ -1,28 +1,28 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { LessonSummary } from '../types';
+import { PriorSummary } from '../types';
 
-interface LessonHeaderProps {
-  lessonName: string;
-  lessonId: string;
+interface PriorHeaderProps {
+  priorName: string;
+  priorId: string;
   isDarkTheme: boolean;
-  lessons: LessonSummary[];
+  priors: PriorSummary[];
   hasUnsavedChanges: boolean;
   showPreview: boolean;
   saveStatus: 'idle' | 'saving' | 'saved' | 'error';
-  onNavigateToLesson: (lesson: LessonSummary) => void;
+  onNavigateToPrior: (prior: PriorSummary) => void;
   onTogglePreview: () => void;
   onSave: () => void;
 }
 
-export const LessonHeader: React.FC<LessonHeaderProps> = ({
-  lessonName,
-  lessonId,
+export const PriorHeader: React.FC<PriorHeaderProps> = ({
+  priorName,
+  priorId,
   isDarkTheme,
-  lessons = [],
+  priors = [],
   hasUnsavedChanges,
   showPreview,
   saveStatus,
-  onNavigateToLesson,
+  onNavigateToPrior,
   onTogglePreview,
   onSave,
 }) => {
@@ -49,10 +49,10 @@ export const LessonHeader: React.FC<LessonHeaderProps> = ({
     };
   }, [isOpen]);
 
-  // Filter lessons by search
-  const filteredLessons = lessons.filter((lesson) => {
+  // Filter priors by search
+  const filteredPriors = priors.filter((prior) => {
     if (!searchQuery.trim()) return true;
-    return lesson.name.toLowerCase().includes(searchQuery.toLowerCase());
+    return prior.name.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
   // VS Code CSS variables for theme-aware colors
@@ -66,10 +66,10 @@ export const LessonHeader: React.FC<LessonHeaderProps> = ({
     dropdownBg: 'var(--vscode-dropdown-background, var(--vscode-editor-background))',
   };
 
-  const handleLessonClick = (lesson: LessonSummary) => {
+  const handlePriorClick = (prior: PriorSummary) => {
     setIsOpen(false);
     setSearchQuery('');
-    onNavigateToLesson(lesson);
+    onNavigateToPrior(prior);
   };
 
   const iconButtonStyle: React.CSSProperties = {
@@ -129,7 +129,7 @@ export const LessonHeader: React.FC<LessonHeaderProps> = ({
               whiteSpace: 'nowrap',
             }}
           >
-            {lessonName || 'Untitled'}
+            {priorName || 'Untitled'}
           </span>
           {/* Chevron Icon */}
           <svg
@@ -246,7 +246,7 @@ export const LessonHeader: React.FC<LessonHeaderProps> = ({
             />
           </div>
 
-          {/* Lessons List */}
+          {/* Priors List */}
           <div
             style={{
               flex: 1,
@@ -254,7 +254,7 @@ export const LessonHeader: React.FC<LessonHeaderProps> = ({
               padding: '4px 0',
             }}
           >
-            {filteredLessons.length === 0 ? (
+            {filteredPriors.length === 0 ? (
               <div
                 style={{
                   padding: '12px 16px',
@@ -266,10 +266,10 @@ export const LessonHeader: React.FC<LessonHeaderProps> = ({
                 No priors found
               </div>
             ) : (
-              filteredLessons.map((lesson) => (
+              filteredPriors.map((prior) => (
                 <div
-                  key={lesson.id}
-                  onClick={() => handleLessonClick(lesson)}
+                  key={prior.id}
+                  onClick={() => handlePriorClick(prior)}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -277,15 +277,15 @@ export const LessonHeader: React.FC<LessonHeaderProps> = ({
                     padding: '6px 12px',
                     cursor: 'pointer',
                     backgroundColor:
-                      lesson.id === lessonId ? colors.bgHover : 'transparent',
+                      prior.id === priorId ? colors.bgHover : 'transparent',
                   }}
                   onMouseEnter={(e) => {
-                    if (lesson.id !== lessonId) {
+                    if (prior.id !== priorId) {
                       e.currentTarget.style.backgroundColor = colors.bgHover;
                     }
                   }}
                   onMouseLeave={(e) => {
-                    if (lesson.id !== lessonId) {
+                    if (prior.id !== priorId) {
                       e.currentTarget.style.backgroundColor = 'transparent';
                     }
                   }}
@@ -298,10 +298,10 @@ export const LessonHeader: React.FC<LessonHeaderProps> = ({
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
                       flex: 1,
-                      fontWeight: lesson.id === lessonId ? 600 : 400,
+                      fontWeight: prior.id === priorId ? 600 : 400,
                     }}
                   >
-                    {lesson.name || 'Untitled'}
+                    {prior.name || 'Untitled'}
                   </span>
                 </div>
               ))

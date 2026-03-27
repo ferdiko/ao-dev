@@ -64,7 +64,7 @@ def _track_priors(prior_ids: List[str]) -> None:
             from sovara.server.database_manager import DB
 
             for prior_id in prior_ids:
-                DB.add_lesson_applied(prior_id, run_id)
+                DB.add_prior_applied(prior_id, run_id)
             logger.debug(f"Tracked {len(prior_ids)} priors applied to run {run_id[:8]}")
     except Exception as e:
         logger.debug(f"Could not track prior application: {e}")

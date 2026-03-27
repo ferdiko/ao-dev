@@ -837,9 +837,9 @@ export function PriorsPage() {
   }, []);
 
   const onCreateFile = useCallback((parentId: string) => {
-    const name = prompt("File name (e.g. my-lesson.md):");
+    const name = prompt("File name (e.g. my-prior.md):");
     if (!name?.trim()) return;
-    const newNode: FSNode = { id: genId(), name: name.trim(), type: "file", parentId, content: `# ${name.trim().replace(/\.md$/, "")}\n\nWrite your lesson here.\n` };
+    const newNode: FSNode = { id: genId(), name: name.trim(), type: "file", parentId, content: `# ${name.trim().replace(/\.md$/, "")}\n\nWrite your prior here.\n` };
     setNodes((prev) => [...prev, newNode]);
     setExpanded((prev) => new Set(prev).add(parentId));
     setSelectedId(newNode.id);

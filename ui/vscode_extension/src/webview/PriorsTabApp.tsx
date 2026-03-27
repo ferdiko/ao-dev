@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { LessonsView, Lesson, LessonFormData, ValidationResult } from '@sovara/shared-components/components/lessons/LessonsView';
+import { PriorsView, Prior, PriorFormData, ValidationResult } from '@sovara/shared-components/components/priors/PriorsView';
 import { useIsVsCodeDarkTheme } from '@sovara/shared-components/utils/themeUtils';
 
 declare global {
@@ -7,27 +7,27 @@ declare global {
     vscode?: {
       postMessage: (message: any) => void;
     };
-    isLessonsView?: boolean;
+    isPriorsView?: boolean;
   }
 }
 
-export const LessonsTabApp: React.FC = () => {
+export const PriorsTabApp: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const [serverUnavailable, setServerUnavailable] = useState(false);
   const isDarkTheme = useIsVsCodeDarkTheme();
 
-  // Folder tree data passed to LessonsView via folderResult prop
+  // Folder tree data passed to PriorsView via folderResult prop
   const [folderResult, setFolderResult] = useState<{
-    path: string; folders: { path: string; lesson_count: number }[]; lessons: Lesson[]; lessonCount?: number;
+    path: string; folders: { path: string; prior_count: number }[]; priors: Prior[]; priorCount?: number;
   } | null>(null);
-  const [lessonContentUpdate, setLessonContentUpdate] = useState<{
+  const [priorContentUpdate, setPriorContentUpdate] = useState<{
     id: string; content: string;
   } | null>(null);
   const pendingAppliedResolvers = useRef<Map<string, (runs: any[]) => void>>(new Map());
 
-  // Track expanded folders so we can re-fetch them on lessons_refresh
+  // Track expanded folders so we can re-fetch them on priors_refresh
   const expandedFoldersRef = useRef<Set<string>>(new Set(['']));
 
   const fetchFolder = useCallback((path: string) => {
@@ -55,36 +55,36 @@ export const LessonsTabApp: React.FC = () => {
           setFolderResult({
             path: message.path ?? '',
             folders: message.folders || [],
-            lessons: message.lessons || [],
-            lessonCount: message.lesson_count,
+            priors: message.priors || [],
+            priorCount: message.prior_count,
           });
           setServerUnavailable(false);
           break;
-        case 'lessons_refresh':
-          // Server signals that lessons changed — re-fetch all expanded folders
+        case 'priors_refresh':
+          // Server signals that priors changed — re-fetch all expanded folders
           refreshExpandedFolders();
           break;
-        case 'lesson_content':
-          // Update the specific lesson with its full content
-          console.log('[LessonsTabApp] Received lesson_content:', message.lesson);
-          if (message.lesson) {
-            setLessonContentUpdate({
-              id: message.lesson.id,
-              content: message.lesson.content,
+        case 'prior_content':
+          // Update the specific prior with its full content
+          console.log('[PriorsTabApp] Received prior_content:', message.prior);
+          if (message.prior) {
+            setPriorContentUpdate({
+              id: message.prior.id,
+              content: message.prior.content,
             });
           }
           break;
-        case 'runs_for_lesson':
-          if (message.lesson_id) {
-            const resolve = pendingAppliedResolvers.current.get(message.lesson_id);
+        case 'runs_for_prior':
+          if (message.prior_id) {
+            const resolve = pendingAppliedResolvers.current.get(message.prior_id);
             if (resolve) {
               resolve(message.records || []);
-              pendingAppliedResolvers.current.delete(message.lesson_id);
+              pendingAppliedResolvers.current.delete(message.prior_id);
             }
           }
           break;
-        case 'lesson_error':
-          console.error('[LessonsTabApp] Received lesson_error:', message.error);
+        case 'prior_error':
+          console.error('[PriorsTabApp] Received prior_error:', message.error);
           setIsValidating(false);
           const errorMsg = message.error || 'An unknown error occurred';
           const normalizedError = errorMsg.toLowerCase();
@@ -104,9 +104,9 @@ export const LessonsTabApp: React.FC = () => {
             setTimeout(() => setError(null), 5000);
           }
           break;
-        case 'lesson_created':
-        case 'lesson_updated':
-          console.log(`[LessonsTabApp] Received ${message.type}:`, message);
+        case 'prior_created':
+        case 'prior_updated':
+          console.log(`[PriorsTabApp] Received ${message.type}:`, message);
           setIsValidating(false);
           setServerUnavailable(false);
           if (message.validation) {
@@ -114,7 +114,7 @@ export const LessonsTabApp: React.FC = () => {
             setValidationResult({
               feedback: message.validation.feedback || '',
               severity: message.validation.severity || 'info',
-              conflicting_lesson_ids: message.validation.conflicting_lesson_ids || [],
+              conflicting_prior_ids: message.validation.conflicting_prior_ids || [],
               isRejected: false,
             });
           } else {
@@ -122,13 +122,13 @@ export const LessonsTabApp: React.FC = () => {
             setValidationResult(null);
           }
           break;
-        case 'lesson_rejected':
-          console.log('[LessonsTabApp] Received lesson_rejected:', message);
+        case 'prior_rejected':
+          console.log('[PriorsTabApp] Received prior_rejected:', message);
           setIsValidating(false);
           setValidationResult({
             feedback: message.reason || 'Validation failed',
             severity: message.severity || 'error',
-            conflicting_lesson_ids: message.conflicting_lesson_ids || [],
+            conflicting_prior_ids: message.conflicting_prior_ids || [],
             isRejected: true,
           });
           break;
@@ -137,7 +137,7 @@ export const LessonsTabApp: React.FC = () => {
 
     window.addEventListener('message', handleMessage);
 
-    // Send ready message — request root folder instead of full lesson list
+    // Send ready message — request root folder instead of full prior list
     if (window.vscode) {
       window.vscode.postMessage({ type: 'ready' });
     }
@@ -189,21 +189,21 @@ export const LessonsTabApp: React.FC = () => {
           </button>
         </div>
       )}
-      <LessonsView
+      <PriorsView
         isDarkTheme={isDarkTheme}
         validationResult={validationResult}
         isValidating={isValidating}
         onClearValidation={() => setValidationResult(null)}
         serverUnavailable={serverUnavailable}
         folderResult={folderResult}
-        lessonContentUpdate={lessonContentUpdate}
+        priorContentUpdate={priorContentUpdate}
         onFetchFolder={fetchFolder}
-        onLessonCreate={(data: LessonFormData, force?: boolean) => {
-          // Create lesson via postMessage to backend (proxied to the priors server)
+        onPriorCreate={(data: PriorFormData, force?: boolean) => {
+          // Create prior via postMessage to backend (proxied to the priors server)
           if (window.vscode) {
             setIsValidating(true);
             window.vscode.postMessage({
-              type: 'add_lesson',
+              type: 'add_prior',
               name: data.name,
               summary: data.summary,
               content: data.content,
@@ -212,24 +212,24 @@ export const LessonsTabApp: React.FC = () => {
             });
           }
         }}
-        onLessonUpdate={(id: string, data: Partial<LessonFormData>, force?: boolean) => {
-          // Update lesson via postMessage to backend (proxied to the priors server)
+        onPriorUpdate={(id: string, data: Partial<PriorFormData>, force?: boolean) => {
+          // Update prior via postMessage to backend (proxied to the priors server)
           if (window.vscode) {
             setIsValidating(true);
             window.vscode.postMessage({
-              type: 'update_lesson',
-              lesson_id: id,
+              type: 'update_prior',
+              prior_id: id,
               ...data,
               force: force || false,
             });
           }
         }}
-        onLessonDelete={(id: string) => {
-          // Delete lesson via postMessage to backend (proxied to the priors server)
+        onPriorDelete={(id: string) => {
+          // Delete prior via postMessage to backend (proxied to the priors server)
           if (window.vscode) {
             window.vscode.postMessage({
-              type: 'delete_lesson',
-              lesson_id: id,
+              type: 'delete_prior',
+              prior_id: id,
             });
           }
         }}
@@ -239,17 +239,17 @@ export const LessonsTabApp: React.FC = () => {
             window.vscode.postMessage({ type: 'navigateToRun', runId, nodeId });
           }
         }}
-        onFetchLessonContent={(id: string) => {
-          // Fetch individual lesson content via postMessage to backend
+        onFetchPriorContent={(id: string) => {
+          // Fetch individual prior content via postMessage to backend
           if (window.vscode) {
-            window.vscode.postMessage({ type: 'get_lesson', lesson_id: id });
+            window.vscode.postMessage({ type: 'get_prior', prior_id: id });
           }
         }}
-        onFetchAppliedRuns={(lessonId: string) => {
+        onFetchAppliedRuns={(priorId: string) => {
           return new Promise((resolve) => {
-            pendingAppliedResolvers.current.set(lessonId, resolve);
+            pendingAppliedResolvers.current.set(priorId, resolve);
             if (window.vscode) {
-              window.vscode.postMessage({ type: 'get_runs_for_lesson', lesson_id: lessonId });
+              window.vscode.postMessage({ type: 'get_runs_for_prior', prior_id: priorId });
             }
           });
         }}

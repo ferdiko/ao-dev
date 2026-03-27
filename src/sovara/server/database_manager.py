@@ -892,15 +892,15 @@ class DatabaseManager:
         self.backend.copy_llm_calls_query(old_run_id, new_run_id)
 
     # ============================================================
-    # Lessons Applied operations (tracks which SovaraDB priors were applied)
+    # Priors Applied operations
     # ============================================================
 
-    def get_lessons_applied_for_run(self, run_id):
-        """Get lesson application records for a specific run."""
-        rows = self.backend.get_lessons_applied_for_run_query(run_id)
+    def get_priors_applied_for_run(self, run_id):
+        """Get prior application records for a specific run."""
+        rows = self.backend.get_priors_applied_for_run_query(run_id)
         return [
             {
-                "lesson_id": row["lesson_id"],
+                "prior_id": row["prior_id"],
                 "run_id": row["run_id"],
                 "node_uuid": row["node_uuid"],
                 "name": row["name"] or "Unknown Run",
@@ -908,8 +908,8 @@ class DatabaseManager:
             for row in rows
         ]
 
-    def get_runs_for_lesson(self, lesson_id):
-        rows = self.backend.get_lessons_applied_query(lesson_id)
+    def get_runs_for_prior(self, prior_id):
+        rows = self.backend.get_priors_applied_query(prior_id)
         return [
             {
                 "runId": row["run_id"],
@@ -919,14 +919,14 @@ class DatabaseManager:
             for row in rows
         ]
 
-    def add_lesson_applied(self, lesson_id, run_id, node_uuid=None):
-        self.backend.add_lesson_applied_query(lesson_id, run_id, node_uuid)
+    def add_prior_applied(self, prior_id, run_id, node_uuid=None):
+        self.backend.add_prior_applied_query(prior_id, run_id, node_uuid)
 
-    def remove_lesson_applied(self, lesson_id, run_id, node_uuid=None):
-        self.backend.remove_lesson_applied_query(lesson_id, run_id, node_uuid)
+    def remove_prior_applied(self, prior_id, run_id, node_uuid=None):
+        self.backend.remove_prior_applied_query(prior_id, run_id, node_uuid)
 
-    def delete_lessons_applied_for_lesson(self, lesson_id):
-        self.backend.delete_lessons_applied_for_lesson_query(lesson_id)
+    def delete_priors_applied_for_prior(self, prior_id):
+        self.backend.delete_priors_applied_for_prior_query(prior_id)
 
 
 # Create singleton instance following the established pattern

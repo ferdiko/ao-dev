@@ -9,7 +9,7 @@ interface RunsViewProps {
   onCardClick?: (process: ProcessInfo) => void;
   isDarkTheme?: boolean;
   showHeader?: boolean;
-  onLessonsClick?: () => void;
+  onPriorsClick?: () => void;
   onRefresh?: () => void;
   hasMoreFinished?: boolean;
   onLoadMoreFinished?: () => void;
@@ -22,7 +22,7 @@ export const RunsView: React.FC<RunsViewProps> = ({
   onCardClick,
   isDarkTheme = false,
   showHeader = false,
-  onLessonsClick,
+  onPriorsClick,
   onRefresh,
   hasMoreFinished = false,
   onLoadMoreFinished,
@@ -440,7 +440,7 @@ export const RunsView: React.FC<RunsViewProps> = ({
       </div>
 
       {/* Priors Button */}
-      {onLessonsClick && (
+      {onPriorsClick && (
         <div
           style={{
             padding: '12px 16px',
@@ -449,7 +449,7 @@ export const RunsView: React.FC<RunsViewProps> = ({
           }}
         >
           <button
-            onClick={onLessonsClick}
+            onClick={onPriorsClick}
             style={{
               width: '100%',
               padding: '10px 16px',

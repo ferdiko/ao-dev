@@ -4,8 +4,8 @@ import { GraphData, ProcessInfo } from '@sovara/shared-components/types';
 import { MessageSender } from '@sovara/shared-components/types/MessageSender';
 import { useIsVsCodeDarkTheme } from '@sovara/shared-components/utils/themeUtils';
 import { GraphHeader } from '@sovara/shared-components/components/graph/GraphHeader';
-import { Lesson } from '@sovara/shared-components/components/lessons/LessonsView';
-import { AppliedLessonsView } from '@sovara/shared-components/components/lessons/AppliedLessonsView';
+import { Prior } from '@sovara/shared-components/components/priors/PriorsView';
+import { AppliedPriorsView } from '@sovara/shared-components/components/priors/AppliedPriorsView';
 import { DocumentContextProvider, useDocumentContext } from '@sovara/shared-components/contexts/DocumentContext';
 
 // Global type augmentation for window.vscode
@@ -49,10 +49,10 @@ const GraphTabAppInner: React.FC = () => {
   const [run, setRun] = useState<ProcessInfo | null>(null);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
-  const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [appliedLessonIds, setAppliedLessonIds] = useState<Set<string>>(new Set());
-  const [showAppliedLessons, setShowAppliedLessons] = useState(false);
-  const [lessonContentUpdate, setLessonContentUpdate] = useState<{ id: string; content: string } | null>(null);
+  const [priors, setPriors] = useState<Prior[]>([]);
+  const [appliedPriorIds, setAppliedPriorIds] = useState<Set<string>>(new Set());
+  const [showAppliedPriors, setShowAppliedPriors] = useState(false);
+  const [priorContentUpdate, setPriorContentUpdate] = useState<{ id: string; content: string } | null>(null);
   const isDarkTheme = useIsVsCodeDarkTheme();
   const { setDocumentOpened } = useDocumentContext();
 
@@ -134,23 +134,23 @@ const GraphTabAppInner: React.FC = () => {
         case 'vscode-theme-change':
           // Theme changes are handled by the useIsVsCodeDarkTheme hook
           break;
-        case 'lessons_list':
-          // Update lessons for header stats
-          setLessons(message.lessons || []);
+        case 'priors_list':
+          // Update priors for header stats
+          setPriors(message.priors || []);
           break;
-        case 'lessons_applied':
-          // Track lesson IDs applied to this run
+        case 'priors_applied':
+          // Track prior IDs applied to this run
           if (message.run_id === runId) {
-            const ids = new Set<string>((message.records || []).map((r: any) => r.lesson_id));
-            setAppliedLessonIds(ids);
+            const ids = new Set<string>((message.records || []).map((r: any) => r.prior_id));
+            setAppliedPriorIds(ids);
           }
           break;
-        case 'lesson_content':
-          // Update lesson content for applied lessons view
-          if (message.lesson) {
-            setLessonContentUpdate({
-              id: message.lesson.id,
-              content: message.lesson.content,
+        case 'prior_content':
+          // Update prior content for applied priors view
+          if (message.prior) {
+            setPriorContentUpdate({
+              id: message.prior.id,
+              content: message.prior.content,
             });
           }
           break;
@@ -166,10 +166,10 @@ const GraphTabAppInner: React.FC = () => {
     window.addEventListener('message', handleMessage);
 
     // Send ready message to indicate the webview is loaded
-    // Also request lessons data for header stats
+    // Also request priors data for header stats
     if (window.vscode) {
       window.vscode.postMessage({ type: 'ready' });
-      window.vscode.postMessage({ type: 'get_lessons' });
+      window.vscode.postMessage({ type: 'get_priors' });
     }
 
     return () => {
@@ -210,20 +210,20 @@ const GraphTabAppInner: React.FC = () => {
     }
   };
 
-  const handleNavigateToLessons = () => {
-    // Open lessons tab in VSCode
+  const handleNavigateToPriors = () => {
+    // Open priors tab in VSCode
     if (window.vscode) {
-      window.vscode.postMessage({ type: 'openLessonsTab' });
+      window.vscode.postMessage({ type: 'openPriorsTab' });
     }
   };
 
-  const handleFetchLessonContent = (id: string) => {
+  const handleFetchPriorContent = (id: string) => {
     if (window.vscode) {
-      window.vscode.postMessage({ type: 'get_lesson', lesson_id: id });
+      window.vscode.postMessage({ type: 'get_prior', prior_id: id });
     }
   };
 
-  const appliedLessons = lessons.filter((l) => appliedLessonIds.has(l.id));
+  const appliedPriors = priors.filter((l) => appliedPriorIds.has(l.id));
 
   return (
     <div
@@ -238,13 +238,13 @@ const GraphTabAppInner: React.FC = () => {
       }}
     >
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-        {showAppliedLessons ? (
-          <AppliedLessonsView
-            lessons={appliedLessons}
+        {showAppliedPriors ? (
+          <AppliedPriorsView
+            priors={appliedPriors}
             isDarkTheme={isDarkTheme}
-            onBack={() => setShowAppliedLessons(false)}
-            onFetchLessonContent={handleFetchLessonContent}
-            lessonContentUpdate={lessonContentUpdate}
+            onBack={() => setShowAppliedPriors(false)}
+            onFetchPriorContent={handleFetchPriorContent}
+            priorContentUpdate={priorContentUpdate}
           />
         ) : (
           <SharedGraphTabApp
@@ -259,10 +259,10 @@ const GraphTabAppInner: React.FC = () => {
                 runName={run.name || ''}
                 isDarkTheme={isDarkTheme}
                 runId={runId || undefined}
-                lessons={lessons}
-                lessonsAppliedCount={appliedLessonIds.size}
-                onNavigateToLessons={handleNavigateToLessons}
-                onNavigateToAppliedLessons={() => setShowAppliedLessons(true)}
+                priors={priors}
+                priorsAppliedCount={appliedPriorIds.size}
+                onNavigateToPriors={handleNavigateToPriors}
+                onNavigateToAppliedPriors={() => setShowAppliedPriors(true)}
               />
             ) : undefined}
           />

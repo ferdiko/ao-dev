@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { PythonServerClient } from './PythonServerClient';
-import { PlaybookClient } from './PlaybookClient';
+import { SovaraDBClient } from './SovaraDBClient';
 import { ProcessInfo } from '@sovara/shared-components/types';
 import { type DetectedDocument, getFileExtensionsForDocumentType, getMimeTypeForDocumentType } from '@sovara/shared-components/utils/documentDetection';
 
@@ -11,10 +11,6 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     public static readonly viewType = 'sovara.graphTab';
     private _panels: Map<string, vscode.WebviewPanel> = new Map();
     private _pythonClient: PythonServerClient | null = null;
-    private _sidebarProvider: { refreshLessons: () => void } | null = null;
-    public setSidebarProvider(provider: { refreshLessons: () => void }): void {
-        this._sidebarProvider = provider;
-    }
 
     constructor(private readonly _extensionUri: vscode.Uri) {
         // Initialize Python client
@@ -26,8 +22,8 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         return vscode.Uri.joinPath(this._extensionUri, 'dist', 'icon.png');
     }
 
-    private async _ensurePriorsClient(): Promise<PlaybookClient | null> {
-        let client = PlaybookClient.getInstance();
+    private async _ensurePriorsClient(): Promise<SovaraDBClient | null> {
+        let client = SovaraDBClient.getInstance();
         if (client) {
             return client;
         }
@@ -40,144 +36,144 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
             }
         }
 
-        const priorsUrl = this._pythonClient?.getPlaybookUrl();
+        const priorsUrl = this._pythonClient?.getPriorsUrl();
         if (!priorsUrl) {
             return null;
         }
 
-        return PlaybookClient.init(priorsUrl);
+        return SovaraDBClient.init(priorsUrl);
     }
 
     // ============================================================
-    // Priors helpers — call PlaybookClient and post results to webview
+    // Priors helpers — call SovaraDBClient and post results to webview
     // ============================================================
 
     private async _handleFolderLs(panel: vscode.WebviewPanel, reqPath: string): Promise<void> {
         const client = await this._ensurePriorsClient();
-        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Priors server not configured' }); return; }
+        if (!client) { panel.webview.postMessage({ type: 'prior_error', error: 'Priors server not configured' }); return; }
         try {
             const result = await client.fetchFolder(reqPath);
-            if (result.error) { panel.webview.postMessage({ type: 'lesson_error', error: result.error || result.detail }); return; }
+            if (result.error) { panel.webview.postMessage({ type: 'prior_error', error: result.error || result.detail }); return; }
             panel.webview.postMessage({
                 type: 'folder_ls_result',
                 path: reqPath,
                 folders: (result.folders || []).map((folder: any) => ({
                     ...folder,
-                    lesson_count: folder.lesson_count ?? folder.prior_count ?? 0,
+                    prior_count: folder.prior_count ?? 0,
                 })),
-                lessons: result.priors || [],
-                lesson_count: result.prior_count || 0,
+                priors: result.priors || [],
+                prior_count: result.prior_count || 0,
             });
-        } catch (e: any) { panel.webview.postMessage({ type: 'lesson_error', error: e.message }); }
+        } catch (e: any) { panel.webview.postMessage({ type: 'prior_error', error: e.message }); }
     }
 
-    private async _handleGetLesson(panel: vscode.WebviewPanel, lessonId: string): Promise<void> {
+    private async _handleGetPrior(panel: vscode.WebviewPanel, priorId: string): Promise<void> {
         const client = await this._ensurePriorsClient();
-        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Priors server not configured' }); return; }
+        if (!client) { panel.webview.postMessage({ type: 'prior_error', error: 'Priors server not configured' }); return; }
         try {
-            const result = await client.getLesson(lessonId);
-            if (result.error) { panel.webview.postMessage({ type: 'lesson_error', error: result.error || result.detail }); return; }
-            panel.webview.postMessage({ type: 'lesson_content', lesson: result });
-        } catch (e: any) { panel.webview.postMessage({ type: 'lesson_error', error: e.message }); }
+            const result = await client.getPrior(priorId);
+            if (result.error) { panel.webview.postMessage({ type: 'prior_error', error: result.error || result.detail }); return; }
+            panel.webview.postMessage({ type: 'prior_content', prior: result });
+        } catch (e: any) { panel.webview.postMessage({ type: 'prior_error', error: e.message }); }
     }
 
-    private async _handleGetLessons(panel: vscode.WebviewPanel): Promise<void> {
+    private async _handleGetPriors(panel: vscode.WebviewPanel): Promise<void> {
         const client = await this._ensurePriorsClient();
-        if (!client) { panel.webview.postMessage({ type: 'lessons_list', lessons: [], error: 'Priors server not configured' }); return; }
+        if (!client) { panel.webview.postMessage({ type: 'priors_list', priors: [], error: 'Priors server not configured' }); return; }
         try {
-            const result = await client.getLessonsList();
-            if (result.error) { panel.webview.postMessage({ type: 'lessons_list', lessons: [], error: result.error }); return; }
-            const lessons = Array.isArray(result) ? result : result.priors || [];
-            panel.webview.postMessage({ type: 'lessons_list', lessons });
-        } catch (e: any) { panel.webview.postMessage({ type: 'lessons_list', lessons: [], error: e.message }); }
+            const result = await client.getPriorsList();
+            if (result.error) { panel.webview.postMessage({ type: 'priors_list', priors: [], error: result.error }); return; }
+            const priors = Array.isArray(result) ? result : result.priors || [];
+            panel.webview.postMessage({ type: 'priors_list', priors });
+        } catch (e: any) { panel.webview.postMessage({ type: 'priors_list', priors: [], error: e.message }); }
     }
 
-    private async _handleAddLesson(panel: vscode.WebviewPanel, data: any): Promise<void> {
+    private async _handleAddPrior(panel: vscode.WebviewPanel, data: any): Promise<void> {
         const client = await this._ensurePriorsClient();
-        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Priors server not configured' }); return; }
+        if (!client) { panel.webview.postMessage({ type: 'prior_error', error: 'Priors server not configured' }); return; }
         try {
-            const result = await client.createLesson(
+            const result = await client.createPrior(
                 { name: data.name, summary: data.summary || '', content: data.content, path: data.path || '' },
                 !!data.force,
             );
             if (result.status === 'rejected') {
                 let reason = result.reason || 'Validation failed';
                 if (result.hint) { reason += `\n\nHint: ${result.hint}`; }
-                panel.webview.postMessage({ type: 'lesson_rejected', reason, severity: 'error', conflicting_lesson_ids: result.conflicting_prior_ids || [] });
+                panel.webview.postMessage({ type: 'prior_rejected', reason, severity: 'error', conflicting_prior_ids: result.conflicting_prior_ids || [] });
             } else if (result.error) {
-                panel.webview.postMessage({ type: 'lesson_error', error: result.error });
+                panel.webview.postMessage({ type: 'prior_error', error: result.error });
             } else if (result.status === 'created') {
                 panel.webview.postMessage({
-                    type: 'lesson_created',
-                    lesson: result,
+                    type: 'prior_created',
+                    prior: result,
                     validation: result.validation ? {
                         ...result.validation,
-                        conflicting_lesson_ids: result.validation.conflicting_prior_ids || [],
+                        conflicting_prior_ids: result.validation.conflicting_prior_ids || [],
                     } : undefined,
                 });
             } else {
-                panel.webview.postMessage({ type: 'lesson_error', error: 'Unexpected server response' });
+                panel.webview.postMessage({ type: 'prior_error', error: 'Unexpected server response' });
             }
-        } catch (e: any) { panel.webview.postMessage({ type: 'lesson_error', error: e.message }); }
+        } catch (e: any) { panel.webview.postMessage({ type: 'prior_error', error: e.message }); }
     }
 
-    private async _handleUpdateLesson(panel: vscode.WebviewPanel, data: any): Promise<void> {
+    private async _handleUpdatePrior(panel: vscode.WebviewPanel, data: any): Promise<void> {
         const client = await this._ensurePriorsClient();
-        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Priors server not configured' }); return; }
-        const lessonId = data.lesson_id;
-        if (!lessonId) { panel.webview.postMessage({ type: 'lesson_error', error: 'Missing lesson_id' }); return; }
+        if (!client) { panel.webview.postMessage({ type: 'prior_error', error: 'Priors server not configured' }); return; }
+        const priorId = data.prior_id;
+        if (!priorId) { panel.webview.postMessage({ type: 'prior_error', error: 'Missing prior_id' }); return; }
         const fields: any = {};
         for (const f of ['name', 'summary', 'content', 'path']) { if (data[f] !== undefined) { fields[f] = data[f]; } }
         try {
-            const result = await client.updateLesson(lessonId, fields, !!data.force);
+            const result = await client.updatePrior(priorId, fields, !!data.force);
             if (result.status === 'rejected') {
                 let reason = result.reason || 'Validation failed';
                 if (result.hint) { reason += `\n\nHint: ${result.hint}`; }
-                panel.webview.postMessage({ type: 'lesson_rejected', reason, severity: 'error', conflicting_lesson_ids: result.conflicting_prior_ids || [] });
+                panel.webview.postMessage({ type: 'prior_rejected', reason, severity: 'error', conflicting_prior_ids: result.conflicting_prior_ids || [] });
             } else if (result.error) {
-                panel.webview.postMessage({ type: 'lesson_error', error: result.error });
+                panel.webview.postMessage({ type: 'prior_error', error: result.error });
             } else if (result.status === 'updated') {
                 panel.webview.postMessage({
-                    type: 'lesson_updated',
-                    lesson: result,
+                    type: 'prior_updated',
+                    prior: result,
                     validation: result.validation ? {
                         ...result.validation,
-                        conflicting_lesson_ids: result.validation.conflicting_prior_ids || [],
+                        conflicting_prior_ids: result.validation.conflicting_prior_ids || [],
                     } : undefined,
                 });
             } else {
-                panel.webview.postMessage({ type: 'lesson_error', error: 'Unexpected server response' });
+                panel.webview.postMessage({ type: 'prior_error', error: 'Unexpected server response' });
             }
-        } catch (e: any) { panel.webview.postMessage({ type: 'lesson_error', error: e.message }); }
+        } catch (e: any) { panel.webview.postMessage({ type: 'prior_error', error: e.message }); }
     }
 
-    private async _handleDeleteLesson(panel: vscode.WebviewPanel, data: any): Promise<void> {
+    private async _handleDeletePrior(panel: vscode.WebviewPanel, data: any): Promise<void> {
         const client = await this._ensurePriorsClient();
-        if (!client) { panel.webview.postMessage({ type: 'lesson_error', error: 'Priors server not configured' }); return; }
-        const lessonId = data.lesson_id;
-        if (!lessonId) { panel.webview.postMessage({ type: 'lesson_error', error: 'Missing lesson_id' }); return; }
+        if (!client) { panel.webview.postMessage({ type: 'prior_error', error: 'Priors server not configured' }); return; }
+        const priorId = data.prior_id;
+        if (!priorId) { panel.webview.postMessage({ type: 'prior_error', error: 'Missing prior_id' }); return; }
         try {
-            const result = await client.deleteLesson(lessonId);
+            const result = await client.deletePrior(priorId);
             if (result.error) {
-                panel.webview.postMessage({ type: 'lesson_error', error: result.error });
+                panel.webview.postMessage({ type: 'prior_error', error: result.error });
             }
             // SSE event will trigger refresh in all panels
-        } catch (e: any) { panel.webview.postMessage({ type: 'lesson_error', error: e.message }); }
+        } catch (e: any) { panel.webview.postMessage({ type: 'prior_error', error: e.message }); }
     }
 
     // ============================================================
-    // Wire PlaybookClient SSE events to a webview panel
+    // Wire SovaraDBClient SSE events to a webview panel
     // ============================================================
 
-    private _setupPlaybookEvents(panel: vscode.WebviewPanel): void {
-        const client = PlaybookClient.getInstance();
+    private _setupPriorEvents(panel: vscode.WebviewPanel): void {
+        const client = SovaraDBClient.getInstance();
         if (!client) { return; }
 
         const handler = () => {
-            panel.webview.postMessage({ type: 'lessons_refresh' });
+            panel.webview.postMessage({ type: 'priors_refresh' });
         };
-        client.on('lesson_event', handler);
-        panel.onDidDispose(() => { client.removeListener('lesson_event', handler); });
+        client.on('prior_event', handler);
+        panel.onDidDispose(() => { client.removeListener('prior_event', handler); });
     }
 
     // ============================================================
@@ -205,8 +201,8 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         // Find an existing graph panel to determine which column to use
         let existingGraphColumn: vscode.ViewColumn | undefined;
         for (const [key, existingPanel] of this._panels.entries()) {
-            // Check if this is a graph panel (run ID format, not 'lessons' or 'node-editor')
-            if (key !== 'lessons' && key !== 'node-editor' && existingPanel.viewColumn) {
+            // Check if this is a graph panel (run ID format, not priors/editor tabs)
+            if (key !== 'priors' && key !== 'node-editor' && key !== 'prior-editor' && existingPanel.viewColumn) {
                 existingGraphColumn = existingPanel.viewColumn;
                 break;
             }
@@ -274,7 +270,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                     if (this._pythonClient) {
                         this._pythonClient.httpGet(`/ui/graph/${runId}`).then(r => panel.webview.postMessage(r));
                         this._pythonClient.httpGet(`/ui/run/${runId}`).then(r => panel.webview.postMessage(r));
-                        this._pythonClient.httpGet(`/ui/lessons-applied/${runId}`).then(r => panel.webview.postMessage(r));
+                        this._pythonClient.httpGet(`/ui/priors-applied/${runId}`).then(r => panel.webview.postMessage(r));
                         this._pythonClient.httpGet('/ui/runs').then(r => panel.webview.postMessage(r));
                     } else {
                         console.error('[GraphTabProvider] Still no Python client available after getInstance()');
@@ -334,15 +330,15 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         targetPanel.title = `Graph: ${title}`;
                     }
                     break;
-                case 'get_lessons':
-                    this._handleGetLessons(panel);
+                case 'get_priors':
+                    this._handleGetPriors(panel);
                     break;
-                case 'get_lesson':
-                    this._handleGetLesson(panel, data.lesson_id);
+                case 'get_prior':
+                    this._handleGetPrior(panel, data.prior_id);
                     break;
-                case 'openLessonsTab':
-                    // Open the lessons tab
-                    this.createOrShowLessonsTab();
+                case 'openPriorsTab':
+                    // Open the priors tab
+                    this.createOrShowPriorsTab();
                     break;
                 case 'openDocument':
                     this._handleOpenDocument(data.payload, panel);
@@ -374,7 +370,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         // Fetch data for the new run via HTTP
                         this._pythonClient.httpGet(`/ui/graph/${data.runId}`).then(r => panel.webview.postMessage(r));
                         this._pythonClient.httpGet(`/ui/run/${data.runId}`).then(r => panel.webview.postMessage(r));
-                        this._pythonClient.httpGet(`/ui/lessons-applied/${data.runId}`).then(r => panel.webview.postMessage(r));
+                        this._pythonClient.httpGet(`/ui/priors-applied/${data.runId}`).then(r => panel.webview.postMessage(r));
                         // Update tab title
                         if (data.run?.name) {
                             panel.title = `Graph: ${data.run.name}`;
@@ -404,22 +400,22 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     }
 
     // ============================================================
-    // Priors Tab (uses PlaybookClient directly)
+    // Priors Tab (uses SovaraDBClient directly)
     // ============================================================
 
-    public async createOrShowLessonsTab(): Promise<void> {
-        const lessonsTabId = 'lessons';
+    public async createOrShowPriorsTab(): Promise<void> {
+        const priorsTabId = 'priors';
         const columnToShowIn = vscode.window.activeTextEditor ?
             vscode.ViewColumn.Beside :
             vscode.ViewColumn.One;
 
-        // Check if we already have a lessons panel
-        let panel = this._panels.get(lessonsTabId);
+        // Check if we already have a priors panel
+        let panel = this._panels.get(priorsTabId);
 
         if (panel) {
             // Check if panel is disposed
             if ((panel as any)._disposed || (panel as any).disposed) {
-                this._panels.delete(lessonsTabId);
+                this._panels.delete(priorsTabId);
                 panel = undefined;
             } else {
                 // Panel exists and is not disposed, just reveal it
@@ -446,15 +442,15 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         // Set tab icon
         panel.iconPath = this._iconPath;
 
-        // Set up the webview content for lessons
-        panel.webview.html = this._getHtmlForLessonsWebview(panel.webview);
+        // Set up the webview content for priors
+        panel.webview.html = this._getHtmlForPriorsWebview(panel.webview);
 
         // Store panel reference
-        this._panels.set(lessonsTabId, panel);
+        this._panels.set(priorsTabId, panel);
 
         // Handle panel disposal
         panel.onDidDispose(() => {
-            this._panels.delete(lessonsTabId);
+            this._panels.delete(priorsTabId);
         }, null);
 
         // Handle messages from the webview
@@ -467,21 +463,21 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                 case 'folder_ls':
                     this._handleFolderLs(panel, data.path ?? '');
                     break;
-                case 'add_lesson':
-                    this._handleAddLesson(panel, data);
+                case 'add_prior':
+                    this._handleAddPrior(panel, data);
                     break;
-                case 'update_lesson':
-                    this._handleUpdateLesson(panel, data);
+                case 'update_prior':
+                    this._handleUpdatePrior(panel, data);
                     break;
-                case 'delete_lesson':
-                    this._handleDeleteLesson(panel, data);
+                case 'delete_prior':
+                    this._handleDeletePrior(panel, data);
                     break;
-                case 'get_lesson':
-                    this._handleGetLesson(panel, data.lesson_id);
+                case 'get_prior':
+                    this._handleGetPrior(panel, data.prior_id);
                     break;
-                case 'get_runs_for_lesson':
-                    if (data.lesson_id && this._pythonClient) {
-                        this._pythonClient.httpGet(`/ui/runs-for-lesson/${data.lesson_id}`)
+                case 'get_runs_for_prior':
+                    if (data.prior_id && this._pythonClient) {
+                        this._pythonClient.httpGet(`/ui/runs-for-prior/${data.prior_id}`)
                             .then(r => panel.webview.postMessage(r));
                     }
                     break;
@@ -500,9 +496,9 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
             }
         });
 
-        // Wire PlaybookClient SSE events for real-time sync
+        // Wire SovaraDBClient SSE events for real-time sync
         await this._ensurePriorsClient();
-        this._setupPlaybookEvents(panel);
+        this._setupPriorEvents(panel);
 
         // Send theme info
         this._sendThemeToPanel(panel);
@@ -821,7 +817,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         return html;
     }
 
-    private _getHtmlForLessonsWebview(webview: vscode.Webview): string {
+    private _getHtmlForPriorsWebview(webview: vscode.Webview): string {
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview.js'));
         const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'dist', 'codicons', 'codicon.css'));
 
@@ -845,11 +841,11 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     </script>
 </head>
 <body>
-    <div id="lessons-root"></div>
+    <div id="priors-root"></div>
     <script>
         const vscode = acquireVsCodeApi();
         window.vscode = vscode;
-        window.isLessonsView = true;
+        window.isPriorsView = true;
     </script>
     <script src="${scriptUri}"></script>
 </body>
@@ -980,26 +976,26 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     }
 
     // ============================================================
-    // Prior Editor Tab (uses PlaybookClient directly)
+    // Prior Editor Tab (uses SovaraDBClient directly)
     // ============================================================
 
-    public closeLessonEditorTab(): void {
-        const panel = this._panels.get('lesson-editor');
+    public closePriorEditorTab(): void {
+        const panel = this._panels.get('prior-editor');
         if (panel && !(panel as any)._disposed && !(panel as any).disposed) {
             panel.dispose();
         }
-        this._panels.delete('lesson-editor');
+        this._panels.delete('prior-editor');
     }
 
-    public async createOrShowLessonEditorTab(
-        lessonId: string,
-        lessonName: string
+    public async createOrShowPriorEditorTab(
+        priorId: string,
+        priorName: string
     ): Promise<void> {
-        // Single reusable tab for lesson editor (updates content when switching lessons)
-        const tabId = 'lesson-editor';
+        // Single reusable tab for prior editor (updates content when switching priors)
+        const tabId = 'prior-editor';
         const columnToShowIn = vscode.ViewColumn.One;
 
-        // Check if we already have a lesson editor panel
+        // Check if we already have a prior editor panel
         let panel = this._panels.get(tabId);
 
         if (panel) {
@@ -1008,21 +1004,21 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                 this._panels.delete(tabId);
                 panel = undefined;
             } else {
-                // Panel exists - send message to update its content with new lesson data
+                // Panel exists - send message to update its content with new prior data
                 panel.webview.postMessage({
-                    type: 'updateLessonData',
-                    payload: { lessonId, lessonName }
+                    type: 'updatePriorData',
+                    payload: { priorId, priorName }
                 });
-                panel.title = `Lesson: ${lessonName.substring(0, 20)}${lessonName.length > 20 ? '...' : ''}`;
+                panel.title = `Prior: ${priorName.substring(0, 20)}${priorName.length > 20 ? '...' : ''}`;
                 panel.reveal();
                 return;
             }
         }
 
-        // Create new panel for lesson editor
+        // Create new panel for prior editor
         panel = vscode.window.createWebviewPanel(
             GraphTabProvider.viewType,
-            `Lesson: ${lessonName.substring(0, 20)}${lessonName.length > 20 ? '...' : ''}`,
+            `Prior: ${priorName.substring(0, 20)}${priorName.length > 20 ? '...' : ''}`,
             columnToShowIn,
             {
                 enableScripts: true,
@@ -1037,8 +1033,8 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         // Set tab icon
         panel.iconPath = this._iconPath;
 
-        // Set up the webview content for lesson editor
-        panel.webview.html = this._getHtmlForLessonEditorWebview(panel.webview, lessonId, lessonName);
+        // Set up the webview content for prior editor
+        panel.webview.html = this._getHtmlForPriorEditorWebview(panel.webview, priorId, priorName);
 
         // Store panel reference
         this._panels.set(tabId, panel);
@@ -1052,31 +1048,27 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         panel.webview.onDidReceiveMessage(data => {
             switch (data.type) {
                 case 'ready':
-                    // Request lessons list for dropdown directly from the priors server
-                    this._handleGetLessons(panel);
+                    // Request priors list for dropdown directly from the priors server
+                    this._handleGetPriors(panel);
                     break;
-                case 'lessonUpdated':
-                    // Notify sidebar to refresh lessons list
-                    this._sidebarProvider?.refreshLessons();
+                case 'get_priors':
+                    this._handleGetPriors(panel);
                     break;
-                case 'get_lessons':
-                    this._handleGetLessons(panel);
+                case 'get_prior':
+                    this._handleGetPrior(panel, data.prior_id);
                     break;
-                case 'get_lesson':
-                    this._handleGetLesson(panel, data.lesson_id);
+                case 'add_prior':
+                    this._handleAddPrior(panel, data);
                     break;
-                case 'add_lesson':
-                    this._handleAddLesson(panel, data);
-                    break;
-                case 'update_lesson':
-                    this._handleUpdateLesson(panel, data);
+                case 'update_prior':
+                    this._handleUpdatePrior(panel, data);
                     break;
             }
         });
 
-        // Wire PlaybookClient SSE events for real-time sync
+        // Wire SovaraDBClient SSE events for real-time sync
         await this._ensurePriorsClient();
-        this._setupPlaybookEvents(panel);
+        this._setupPriorEvents(panel);
 
         // Send theme info
         this._sendThemeToPanel(panel);
@@ -1085,16 +1077,16 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         });
     }
 
-    private _getHtmlForLessonEditorWebview(
+    private _getHtmlForPriorEditorWebview(
         webview: vscode.Webview,
-        lessonId: string,
-        lessonName: string
+        priorId: string,
+        priorName: string
     ): string {
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview.js'));
         const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'dist', 'codicons', 'codicon.css'));
 
-        const escapedLessonId = lessonId.replace(/'/g, "\\'");
-        const escapedLessonName = lessonName.replace(/'/g, "\\'").replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const escapedPriorId = priorId.replace(/'/g, "\\'");
+        const escapedPriorName = priorName.replace(/'/g, "\\'").replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
         const html = `
 <!DOCTYPE html>
@@ -1102,7 +1094,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lesson Editor</title>
+    <title>Prior Editor</title>
     <link rel="stylesheet" href="${codiconsUri}">
     <style>
         body {
@@ -1123,13 +1115,13 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     </script>
 </head>
 <body>
-    <div id="lesson-editor-root"></div>
+    <div id="prior-editor-root"></div>
     <script>
         const vscode = acquireVsCodeApi();
         window.vscode = vscode;
-        window.lessonEditorContext = {
-            lessonId: '${escapedLessonId}',
-            lessonName: '${escapedLessonName}'
+        window.priorEditorContext = {
+            priorId: '${escapedPriorId}',
+            priorName: '${escapedPriorName}'
         };
     </script>
     <script src="${scriptUri}"></script>

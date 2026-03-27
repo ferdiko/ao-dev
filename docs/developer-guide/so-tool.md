@@ -192,19 +192,21 @@ The value can be a literal string or a path to a file. If the path exists, the f
 
 ---
 
-### `so-tool install-skill`
+### `so-cli install-skill`
 
-Interactive setup for Claude Code integration.
+Install the shared Sovara skill for Codex, Claude Code, or both.
 
 ```bash
-so-tool install-skill
+so-cli install-skill
 ```
 
 **Behavior:**
 
-1. Prompts for target project directory (with tab-completion)
-2. Copies `SKILL.md` to `.claude/skills/sovara/`
-3. Optionally adds Bash permissions to `.claude/settings.local.json`
+1. Defaults to `--level global`, which installs to `$HOME/.agents/skills/sovara/`, `~/.claude/skills/sovara/`, or both
+2. Supports `--level project`, which prompts for a target project directory and installs to `.agents/skills/sovara/`, `.claude/skills/sovara/`, or both inside that project
+
+Use `--target codex`, `--target claude`, or `--target both` to choose the install target. The defaults are `--target both` and `--level global`.
+The installer only copies skill files and does not modify agent settings.
 
 ---
 

@@ -230,23 +230,23 @@ def _init_db(conn):
     """
     )
 
-    # Create lessons_applied table (tracks which priors from so-priors were applied to runs)
+    # Create priors_applied table (tracks which priors from SovaraDB were applied to runs)
     c.execute(
         """
-        CREATE TABLE IF NOT EXISTS lessons_applied (
+        CREATE TABLE IF NOT EXISTS priors_applied (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            lesson_id TEXT NOT NULL,
+            prior_id TEXT NOT NULL,
             run_id TEXT NOT NULL,
             node_uuid TEXT,
             applied_at TIMESTAMP DEFAULT (datetime('now')),
             FOREIGN KEY (run_id) REFERENCES runs (run_id),
-            UNIQUE (lesson_id, run_id, node_uuid)
+            UNIQUE (prior_id, run_id, node_uuid)
         )
     """
     )
     c.execute(
         """
-        CREATE INDEX IF NOT EXISTS lessons_applied_lesson_idx ON lessons_applied(lesson_id)
+        CREATE INDEX IF NOT EXISTS priors_applied_prior_idx ON priors_applied(prior_id)
     """
     )
 
@@ -999,14 +999,14 @@ def delete_all_llm_calls_query():
 
 
 def _delete_runs_data(run_ids):
-    """Delete llm_calls, lessons_applied, and runs for the given run IDs."""
+    """Delete llm_calls, priors_applied, and runs for the given run IDs."""
     if not run_ids:
         return
     placeholders = ",".join("?" * len(run_ids))
     ids = tuple(run_ids)
     execute(f"DELETE FROM run_tags WHERE run_id IN ({placeholders})", ids)
     execute(f"DELETE FROM llm_calls WHERE run_id IN ({placeholders})", ids)
-    execute(f"DELETE FROM lessons_applied WHERE run_id IN ({placeholders})", ids)
+    execute(f"DELETE FROM priors_applied WHERE run_id IN ({placeholders})", ids)
     execute(f"DELETE FROM runs WHERE run_id IN ({placeholders})", ids)
 
 
@@ -1050,7 +1050,7 @@ def delete_runs_by_ids_query(run_ids, user_id=None):
 
 
 def delete_project_query(project_id):
-    """Delete a project and all associated runs, llm_calls, lessons_applied, and locations."""
+    """Delete a project and all associated runs, llm_calls, priors_applied, and locations."""
     runs = query_all("SELECT run_id FROM runs WHERE project_id=?", (project_id,))
     _delete_runs_data([run["run_id"] for run in runs])
     execute("DELETE FROM project_tags WHERE project_id=?", (project_id,))
@@ -1059,7 +1059,7 @@ def delete_project_query(project_id):
 
 
 def delete_user_query(user_id):
-    """Delete a user and all associated runs, llm_calls, lessons_applied, and locations."""
+    """Delete a user and all associated runs, llm_calls, priors_applied, and locations."""
     # 1. Get projects associated to this user
     project_ids = [
         r["project_id"]
@@ -1157,71 +1157,71 @@ def get_llm_call_full_query(run_id, node_uuid):
         (run_id, node_uuid),
     )
 # ============================================================
-# Lessons queries
+# Priors queries
 # ============================================================
 
 
 # ============================================================
-# Lessons Applied queries (tracks which priors from so-priors were applied to runs)
+# Priors Applied queries
 # ============================================================
 
 
-def get_lessons_applied_for_run_query(run_id):
-    """Get lesson application records for a specific run."""
+def get_priors_applied_for_run_query(run_id):
+    """Get prior application records for a specific run."""
     return query_all(
         """
-        SELECT la.lesson_id, la.run_id, la.node_uuid, e.name as name
-        FROM lessons_applied la
-        LEFT JOIN runs e ON la.run_id = e.run_id
-        WHERE la.run_id = ?
-        ORDER BY la.applied_at DESC
+        SELECT pa.prior_id, pa.run_id, pa.node_uuid, e.name as name
+        FROM priors_applied pa
+        LEFT JOIN runs e ON pa.run_id = e.run_id
+        WHERE pa.run_id = ?
+        ORDER BY pa.applied_at DESC
         """,
         (run_id,),
     )
 
 
-def get_lessons_applied_query(lesson_id):
-    """Get all runs/nodes where a specific lesson was applied."""
+def get_priors_applied_query(prior_id):
+    """Get all runs/nodes where a specific prior was applied."""
     return query_all(
         """
-        SELECT la.run_id, la.node_uuid, e.name as name
-        FROM lessons_applied la
-        LEFT JOIN runs e ON la.run_id = e.run_id
-        WHERE la.lesson_id = ?
-        ORDER BY la.applied_at DESC
+        SELECT pa.run_id, pa.node_uuid, e.name as name
+        FROM priors_applied pa
+        LEFT JOIN runs e ON pa.run_id = e.run_id
+        WHERE pa.prior_id = ?
+        ORDER BY pa.applied_at DESC
         """,
-        (lesson_id,),
+        (prior_id,),
     )
 
 
-def add_lesson_applied_query(lesson_id, run_id, node_uuid=None):
-    """Record that a lesson was applied to a run/node."""
+def add_prior_applied_query(prior_id, run_id, node_uuid=None):
+    """Record that a prior was applied to a run/node."""
     execute(
         """
-        INSERT OR IGNORE INTO lessons_applied (lesson_id, run_id, node_uuid)
+        INSERT OR IGNORE INTO priors_applied (prior_id, run_id, node_uuid)
         VALUES (?, ?, ?)
         """,
-        (lesson_id, run_id, node_uuid),
+        (prior_id, run_id, node_uuid),
     )
 
 
-def remove_lesson_applied_query(lesson_id, run_id, node_uuid=None):
-    """Remove a lesson application record."""
+def remove_prior_applied_query(prior_id, run_id, node_uuid=None):
+    """Remove a prior application record."""
     if node_uuid:
         execute(
-            "DELETE FROM lessons_applied WHERE lesson_id = ? AND run_id = ? AND node_uuid = ?",
-            (lesson_id, run_id, node_uuid),
+            "DELETE FROM priors_applied WHERE prior_id = ? AND run_id = ? AND node_uuid = ?",
+            (prior_id, run_id, node_uuid),
         )
     else:
         execute(
-            "DELETE FROM lessons_applied WHERE lesson_id = ? AND run_id = ? AND node_uuid IS NULL",
-            (lesson_id, run_id),
+            "DELETE FROM priors_applied WHERE prior_id = ? AND run_id = ? AND node_uuid IS NULL",
+            (prior_id, run_id),
         )
 
 
-def delete_lessons_applied_for_lesson_query(lesson_id):
-    """Delete all application records for a lesson (when it is deleted from so-priors)."""
-    execute("DELETE FROM lessons_applied WHERE lesson_id = ?", (lesson_id,))
+def delete_priors_applied_for_prior_query(prior_id):
+    """Delete all application records for a prior."""
+    execute("DELETE FROM priors_applied WHERE prior_id = ?", (prior_id,))
 
 
 # ============================================================

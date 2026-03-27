@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
-export interface Lesson {
+export interface Prior {
   id: string;
   name: string;
   summary: string;
@@ -11,7 +11,7 @@ export interface Lesson {
   validationSeverity?: 'info' | 'warning' | 'error';
 }
 
-export interface LessonFormData {
+export interface PriorFormData {
   name: string;
   summary: string;
   content: string;
@@ -21,39 +21,39 @@ export interface LessonFormData {
 export interface ValidationResult {
   feedback: string;
   severity: 'info' | 'warning' | 'error';
-  conflicting_lesson_ids: string[];
+  conflicting_prior_ids: string[];
   isRejected?: boolean;
 }
 
 export interface FolderEntry {
   path: string;
-  lesson_count: number;
+  prior_count: number;
 }
 
 export interface FolderData {
   folders: FolderEntry[];
-  lessons: Lesson[];
-  lessonCount?: number;
+  priors: Prior[];
+  priorCount?: number;
 }
 
-interface LessonsViewProps {
+interface PriorsViewProps {
   isDarkTheme: boolean;
-  onLessonCreate?: (data: LessonFormData, force?: boolean) => void;
-  onLessonUpdate?: (id: string, data: Partial<LessonFormData>, force?: boolean) => void;
-  onLessonDelete?: (id: string) => void;
+  onPriorCreate?: (data: PriorFormData, force?: boolean) => void;
+  onPriorUpdate?: (id: string, data: Partial<PriorFormData>, force?: boolean) => void;
+  onPriorDelete?: (id: string) => void;
   onNavigateToRun?: (runId: string, nodeId?: string) => void;
-  onFetchLessonContent?: (id: string) => void;
+  onFetchPriorContent?: (id: string) => void;
   onFetchFolder?: (path: string) => void;
   validationResult?: ValidationResult | null;
   isValidating?: boolean;
   onClearValidation?: () => void;
   serverUnavailable?: boolean;
   /** Incoming folder data from server — the parent sets this when folder_ls_result arrives */
-  folderResult?: { path: string; folders: FolderEntry[]; lessons: Lesson[]; lessonCount?: number } | null;
-  /** Incoming lesson content update */
-  lessonContentUpdate?: { id: string; content: string } | null;
-  /** Fetch runs a lesson was applied to (lazy, per-lesson). Returns a Promise so each result is handled independently. */
-  onFetchAppliedRuns?: (lessonId: string) => Promise<{ runId: string; nodeId?: string; runName: string }[]>;
+  folderResult?: { path: string; folders: FolderEntry[]; priors: Prior[]; priorCount?: number } | null;
+  /** Incoming prior content update */
+  priorContentUpdate?: { id: string; content: string } | null;
+  /** Fetch runs a prior was applied to (lazy, per-prior). Returns a Promise so each result is handled independently. */
+  onFetchAppliedRuns?: (priorId: string) => Promise<{ runId: string; nodeId?: string; runName: string }[]>;
 }
 
 // Loading spinner component
@@ -92,32 +92,32 @@ const getSeverityColor = (severity: string | undefined, isDark: boolean): string
   }
 };
 
-export const LessonsView: React.FC<LessonsViewProps> = ({
+export const PriorsView: React.FC<PriorsViewProps> = ({
   isDarkTheme,
-  onLessonCreate,
-  onLessonUpdate,
-  onLessonDelete,
+  onPriorCreate,
+  onPriorUpdate,
+  onPriorDelete,
   onNavigateToRun,
-  onFetchLessonContent,
+  onFetchPriorContent,
   onFetchFolder,
   validationResult,
   isValidating,
   onClearValidation,
   serverUnavailable,
   folderResult,
-  lessonContentUpdate,
+  priorContentUpdate,
   onFetchAppliedRuns,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<LessonFormData>({ name: '', summary: '', content: '', path: '' });
+  const [editForm, setEditForm] = useState<PriorFormData>({ name: '', summary: '', content: '', path: '' });
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createForm, setCreateForm] = useState<LessonFormData>({ name: '', summary: '', content: '', path: '' });
+  const [createForm, setCreateForm] = useState<PriorFormData>({ name: '', summary: '', content: '', path: '' });
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [expandedAppliedIds, setExpandedAppliedIds] = useState<Set<string>>(new Set());
   const [loadingContentIds, setLoadingContentIds] = useState<Set<string>>(new Set());
-  const lessonRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const priorRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // Folder tree state
   const [folderData, setFolderData] = useState<Map<string, FolderData>>(new Map());
@@ -133,10 +133,10 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
   // Process incoming folder results
   useEffect(() => {
     if (!folderResult) return;
-    const { path, folders, lessons, lessonCount } = folderResult;
+    const { path, folders, priors, priorCount } = folderResult;
     setFolderData((prev) => {
       const next = new Map(prev);
-      next.set(path, { folders, lessons, lessonCount });
+      next.set(path, { folders, priors, priorCount });
       return next;
     });
     setLoadingFolders((prev) => {
@@ -146,48 +146,48 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
     });
   }, [folderResult]);
 
-  // Process incoming lesson content updates
+  // Process incoming prior content updates
   useEffect(() => {
-    if (!lessonContentUpdate) return;
-    const { id, content } = lessonContentUpdate;
+    if (!priorContentUpdate) return;
+    const { id, content } = priorContentUpdate;
     setLoadingContentIds((prev) => {
       const next = new Set(prev);
       next.delete(id);
       return next;
     });
-    // Update the lesson content in folderData
+    // Update the prior content in folderData
     setFolderData((prev) => {
       const next = new Map(prev);
       for (const [path, data] of next) {
-        const idx = data.lessons.findIndex((l) => l.id === id);
+        const idx = data.priors.findIndex((l) => l.id === id);
         if (idx !== -1) {
-          const updatedLessons = [...data.lessons];
-          updatedLessons[idx] = { ...updatedLessons[idx], content };
-          next.set(path, { ...data, lessons: updatedLessons });
+          const updatedPriors = [...data.priors];
+          updatedPriors[idx] = { ...updatedPriors[idx], content };
+          next.set(path, { ...data, priors: updatedPriors });
           break;
         }
       }
       return next;
     });
-  }, [lessonContentUpdate]);
+  }, [priorContentUpdate]);
 
-  // Fetch applied-run counts when new lessons become visible
+  // Fetch applied-run counts when new priors become visible
   const fetchedAppliedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!folderResult || !onFetchAppliedRuns) return;
-    for (const lesson of folderResult.lessons) {
-      if (!fetchedAppliedRef.current.has(lesson.id)) {
-        fetchedAppliedRef.current.add(lesson.id);
-        const lessonId = lesson.id;
-        onFetchAppliedRuns(lessonId).then(runs => {
+    for (const prior of folderResult.priors) {
+      if (!fetchedAppliedRef.current.has(prior.id)) {
+        fetchedAppliedRef.current.add(prior.id);
+        const priorId = prior.id;
+        onFetchAppliedRuns(priorId).then(runs => {
           setFolderData((prev) => {
             const next = new Map(prev);
             for (const [path, data] of next) {
-              const idx = data.lessons.findIndex((l) => l.id === lessonId);
+              const idx = data.priors.findIndex((l) => l.id === priorId);
               if (idx !== -1) {
-                const updatedLessons = [...data.lessons];
-                updatedLessons[idx] = { ...updatedLessons[idx], appliedTo: runs };
-                next.set(path, { ...data, lessons: updatedLessons });
+                const updatedPriors = [...data.priors];
+                updatedPriors[idx] = { ...updatedPriors[idx], appliedTo: runs };
+                next.set(path, { ...data, priors: updatedPriors });
                 break;
               }
             }
@@ -198,47 +198,47 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
     }
   }, [folderResult, onFetchAppliedRuns]);
 
-  // Collect all loaded lessons for search
-  const allLoadedLessons = useCallback((): Lesson[] => {
-    const lessons: Lesson[] = [];
+  // Collect all loaded priors for search
+  const allLoadedPriors = useCallback((): Prior[] => {
+    const priors: Prior[] = [];
     for (const data of folderData.values()) {
-      lessons.push(...data.lessons);
+      priors.push(...data.priors);
     }
-    return lessons;
+    return priors;
   }, [folderData]);
 
-  // Check if a lesson matches the search query
-  const lessonMatches = useCallback((lesson: Lesson, query: string): boolean => {
+  // Check if a prior matches the search query
+  const priorMatches = useCallback((prior: Prior, query: string): boolean => {
     if (!query) return false;
     const q = query.toLowerCase();
-    if (lesson.name.toLowerCase().includes(q)) return true;
-    if (lesson.summary.toLowerCase().includes(q)) return true;
-    if (expandedIds.has(lesson.id) && lesson.content && lesson.content.toLowerCase().includes(q)) return true;
+    if (prior.name.toLowerCase().includes(q)) return true;
+    if (prior.summary.toLowerCase().includes(q)) return true;
+    if (expandedIds.has(prior.id) && prior.content && prior.content.toLowerCase().includes(q)) return true;
     return false;
   }, [expandedIds]);
 
-  const matchingLessonIds = searchQuery
-    ? allLoadedLessons().filter((lesson) => lessonMatches(lesson, searchQuery)).map((l) => l.id)
+  const matchingPriorIds = searchQuery
+    ? allLoadedPriors().filter((prior) => priorMatches(prior, searchQuery)).map((l) => l.id)
     : [];
 
   useEffect(() => {
     setCurrentMatchIndex(0);
-  }, [searchQuery, matchingLessonIds.length]);
+  }, [searchQuery, matchingPriorIds.length]);
 
   useEffect(() => {
-    if (matchingLessonIds.length > 0 && currentMatchIndex < matchingLessonIds.length) {
-      const matchId = matchingLessonIds[currentMatchIndex];
-      const element = lessonRefs.current.get(matchId);
+    if (matchingPriorIds.length > 0 && currentMatchIndex < matchingPriorIds.length) {
+      const matchId = matchingPriorIds[currentMatchIndex];
+      const element = priorRefs.current.get(matchId);
       if (element) {
         element.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }
-  }, [currentMatchIndex, matchingLessonIds]);
+  }, [currentMatchIndex, matchingPriorIds]);
 
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && matchingLessonIds.length > 0) {
+    if (e.key === 'Enter' && matchingPriorIds.length > 0) {
       e.preventDefault();
-      setCurrentMatchIndex((prev) => (prev + 1) % matchingLessonIds.length);
+      setCurrentMatchIndex((prev) => (prev + 1) % matchingPriorIds.length);
     }
   };
 
@@ -271,20 +271,20 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
     );
   };
 
-  const handleStartEdit = (lesson: Lesson) => {
-    setEditingId(lesson.id);
+  const handleStartEdit = (prior: Prior) => {
+    setEditingId(prior.id);
     setEditForm({
-      name: lesson.name,
-      summary: lesson.summary,
-      content: lesson.content,
-      path: lesson.path || '',
+      name: prior.name,
+      summary: prior.summary,
+      content: prior.content,
+      path: prior.path || '',
     });
     onClearValidation?.();
   };
 
   const handleSaveEdit = (id: string, force: boolean = false) => {
-    if (onLessonUpdate) {
-      onLessonUpdate(id, editForm, force);
+    if (onPriorUpdate) {
+      onPriorUpdate(id, editForm, force);
       // If force save, close immediately. Otherwise wait for validation response.
       if (force) {
         setEditingId(null);
@@ -300,8 +300,8 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
   };
 
   const handleCreate = (force: boolean = false) => {
-    if (onLessonCreate && createForm.name && createForm.content) {
-      onLessonCreate(createForm, force);
+    if (onPriorCreate && createForm.name && createForm.content) {
+      onPriorCreate(createForm, force);
       // If force save, close immediately. Otherwise wait for validation response.
       if (force) {
         setShowCreateModal(false);
@@ -336,7 +336,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
     onClearValidation?.();
   };
 
-  const toggleLessonExpanded = (id: string, lesson: Lesson) => {
+  const togglePriorExpanded = (id: string, prior: Prior) => {
     const isExpanding = !expandedIds.has(id);
     setExpandedIds((prev) => {
       const next = new Set(prev);
@@ -347,9 +347,9 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
       }
       return next;
     });
-    if (isExpanding && !lesson.content && onFetchLessonContent) {
+    if (isExpanding && !prior.content && onFetchPriorContent) {
       setLoadingContentIds((prev) => new Set(prev).add(id));
-      onFetchLessonContent(id);
+      onFetchPriorContent(id);
     }
   };
 
@@ -371,7 +371,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
     }
   };
 
-  // Public method to refresh all expanded folders (called on lessons_refresh)
+  // Public method to refresh all expanded folders (called on priors_refresh)
   // This is handled by the parent re-fetching folders — we expose expandedFolders via callback
 
   const buttonStyle = (isDark: boolean, variant: 'primary' | 'secondary' | 'danger' | 'warning' = 'secondary') => ({
@@ -441,8 +441,8 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
   // Modal component for create/edit with validation feedback panel
   const renderModal = (
     title: string,
-    form: LessonFormData,
-    setForm: React.Dispatch<React.SetStateAction<LessonFormData>>,
+    form: PriorFormData,
+    setForm: React.Dispatch<React.SetStateAction<PriorFormData>>,
     onSave: (force?: boolean) => void,
     onCancel: () => void
   ) => (
@@ -519,7 +519,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 style={inputStyle(isDarkTheme)}
-                placeholder="Lesson title"
+                placeholder="Prior title"
                 maxLength={200}
                 disabled={isValidating}
               />
@@ -543,7 +543,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
                 value={form.content}
                 onChange={(e) => setForm({ ...form, content: e.target.value })}
                 style={{ ...inputStyle(isDarkTheme), minHeight: '120px', resize: 'vertical' }}
-                placeholder="Full lesson content (markdown supported)"
+                placeholder="Full prior content (markdown supported)"
                 disabled={isValidating}
               />
             </div>
@@ -582,13 +582,13 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
             >
               {isValidating ? (
                 <span style={{ color: isDarkTheme ? '#888888' : '#666666', fontStyle: 'italic' }}>
-                  Validating lesson with AI...
+                  Validating prior with AI...
                 </span>
               ) : validationResult?.feedback ? (
                 validationResult.feedback
               ) : (
                 <span style={{ color: isDarkTheme ? '#888888' : '#666666', fontStyle: 'italic' }}>
-                  Click Save to validate the lesson. Feedback from the AI validator will appear here.
+                  Click Save to validate the prior. Feedback from the AI validator will appear here.
                 </span>
               )}
             </div>
@@ -607,9 +607,9 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
                 <span style={{ fontSize: '11px', color: isDarkTheme ? '#cccccc' : '#555555', textTransform: 'capitalize' }}>
                   {validationResult.isRejected ? 'Rejected' : validationResult.severity}
                 </span>
-                {validationResult.conflicting_lesson_ids.length > 0 && (
+                {validationResult.conflicting_prior_ids.length > 0 && (
                   <span style={{ fontSize: '11px', color: isDarkTheme ? '#888888' : '#666666' }}>
-                    ({validationResult.conflicting_lesson_ids.length} conflicts)
+                    ({validationResult.conflicting_prior_ids.length} conflicts)
                   </span>
                 )}
               </div>
@@ -674,21 +674,21 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
     </div>
   );
 
-  // Render a single lesson card
-  const renderLessonCard = (lesson: Lesson) => {
-    const isCurrentMatch = !!(searchQuery && matchingLessonIds[currentMatchIndex] === lesson.id);
+  // Render a single prior card
+  const renderPriorCard = (prior: Prior) => {
+    const isCurrentMatch = !!(searchQuery && matchingPriorIds[currentMatchIndex] === prior.id);
     return (
       <div
-        key={lesson.id}
+        key={prior.id}
         ref={(el) => {
-          if (el) lessonRefs.current.set(lesson.id, el);
-          else lessonRefs.current.delete(lesson.id);
+          if (el) priorRefs.current.set(prior.id, el);
+          else priorRefs.current.delete(prior.id);
         }}
         style={{
           backgroundColor: isDarkTheme ? '#2d2d2d' : '#fafafa',
           border: `1px solid ${isDarkTheme ? '#3c3c3c' : '#e0e0e0'}`,
-          borderLeft: lesson.validationSeverity
-            ? `3px solid ${getSeverityColor(lesson.validationSeverity, isDarkTheme)}`
+          borderLeft: prior.validationSeverity
+            ? `3px solid ${getSeverityColor(prior.validationSeverity, isDarkTheme)}`
             : `1px solid ${isDarkTheme ? '#3c3c3c' : '#e0e0e0'}`,
           borderRadius: '6px',
           padding: '14px 16px',
@@ -704,9 +704,9 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
               color: isDarkTheme ? '#e5e5e5' : '#333333',
             }}
           >
-            {highlightText(lesson.name, isCurrentMatch)}
+            {highlightText(prior.name, isCurrentMatch)}
           </h4>
-          {lesson.path && (
+          {prior.path && (
             <span
               style={{
                 fontSize: '10px',
@@ -718,7 +718,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
                 flexShrink: 0,
               }}
             >
-              {lesson.path}
+              {prior.path}
             </span>
           )}
         </div>
@@ -732,14 +732,14 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
             color: isDarkTheme ? '#999999' : '#666666',
           }}
         >
-          {highlightText(lesson.summary, isCurrentMatch)}
+          {highlightText(prior.summary, isCurrentMatch)}
         </p>
 
         {/* Action Buttons */}
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-          {onLessonUpdate && (
+          {onPriorUpdate && (
             <button
-              onClick={() => handleStartEdit(lesson)}
+              onClick={() => handleStartEdit(prior)}
               style={buttonStyle(isDarkTheme)}
               onMouseEnter={(e) => {
                 e.currentTarget.style.backgroundColor = isDarkTheme ? '#4a4a4a' : '#d0d0d0';
@@ -752,9 +752,9 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
             </button>
           )}
 
-          {onLessonDelete && (
+          {onPriorDelete && (
             <button
-              onClick={() => onLessonDelete(lesson.id)}
+              onClick={() => onPriorDelete(prior.id)}
               style={buttonStyle(isDarkTheme, 'danger')}
               onMouseEnter={(e) => {
                 e.currentTarget.style.backgroundColor = isDarkTheme ? '#6a2a2a' : '#ffcdd2';
@@ -768,7 +768,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
           )}
 
           <button
-            onClick={() => toggleLessonExpanded(lesson.id, lesson)}
+            onClick={() => togglePriorExpanded(prior.id, prior)}
             style={{
               ...buttonStyle(isDarkTheme),
               fontSize: '10px',
@@ -778,18 +778,18 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
               gap: '4px',
             }}
           >
-            <span style={{ transform: expandedIds.has(lesson.id) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+            <span style={{ transform: expandedIds.has(prior.id) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
               ▶
             </span>
-            {expandedIds.has(lesson.id) ? 'Hide content' : 'Show content'}
+            {expandedIds.has(prior.id) ? 'Hide content' : 'Show content'}
           </button>
 
-          {lesson.appliedTo && lesson.appliedTo.length > 0 && (
+          {prior.appliedTo && prior.appliedTo.length > 0 && (
             <button
               onClick={() => setExpandedAppliedIds((prev) => {
                 const next = new Set(prev);
-                if (next.has(lesson.id)) next.delete(lesson.id);
-                else next.add(lesson.id);
+                if (next.has(prior.id)) next.delete(prior.id);
+                else next.add(prior.id);
                 return next;
               })}
               style={{
@@ -801,16 +801,16 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
                 gap: '4px',
               }}
             >
-              <span style={{ transform: expandedAppliedIds.has(lesson.id) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+              <span style={{ transform: expandedAppliedIds.has(prior.id) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
                 ▶
               </span>
-              Applied to ({lesson.appliedTo.length})
+              Applied to ({prior.appliedTo.length})
             </button>
           )}
         </div>
 
         {/* Content (expandable) */}
-        {expandedIds.has(lesson.id) && (
+        {expandedIds.has(prior.id) && (
           <pre
             style={{
               margin: '8px 0 0 0',
@@ -828,16 +828,16 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
               maxHeight: '300px',
             }}
           >
-            {loadingContentIds.has(lesson.id)
+            {loadingContentIds.has(prior.id)
               ? 'Loading...'
-              : (lesson.content ? highlightText(lesson.content, isCurrentMatch) : 'No content available')}
+              : (prior.content ? highlightText(prior.content, isCurrentMatch) : 'No content available')}
           </pre>
         )}
 
         {/* Applied To (expandable list) */}
-        {expandedAppliedIds.has(lesson.id) && lesson.appliedTo && lesson.appliedTo.length > 0 && (
+        {expandedAppliedIds.has(prior.id) && prior.appliedTo && prior.appliedTo.length > 0 && (
           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' }}>
-            {lesson.appliedTo.map((target, idx) => (
+            {prior.appliedTo.map((target, idx) => (
               <button
                 key={idx}
                 onClick={() => onNavigateToRun?.(target.runId, target.nodeId)}
@@ -870,7 +870,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
 
   // Render a folder row and its contents (recursive)
   const renderFolder = (folder: FolderEntry, depth: number) => {
-    const { path: folderPath, lesson_count: lessonCount } = folder;
+    const { path: folderPath, prior_count: priorCount } = folder;
     const isExpanded = expandedFolders.has(folderPath);
     const isLoading = loadingFolders.has(folderPath);
     const data = folderData.get(folderPath);
@@ -928,7 +928,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
             color: isDarkTheme ? '#999999' : '#666666',
             marginLeft: '4px',
           }}>
-            {lessonCount}
+            {priorCount}
           </span>
           {isLoading && <Spinner isDark={isDarkTheme} />}
         </div>
@@ -938,13 +938,13 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
           <div style={{ marginLeft: `${depth * 16}px`, marginTop: '4px' }}>
             {/* Sub-folders */}
             {data.folders.map((subFolder) => renderFolder(subFolder, depth + 1))}
-            {/* Lessons in this folder */}
-            {data.lessons.map((lesson) => (
-              <div key={lesson.id} style={{ marginLeft: '16px', marginTop: '4px' }}>
-                {renderLessonCard(lesson)}
+            {/* Priors in this folder */}
+            {data.priors.map((prior) => (
+              <div key={prior.id} style={{ marginLeft: '16px', marginTop: '4px' }}>
+                {renderPriorCard(prior)}
               </div>
             ))}
-            {data.folders.length === 0 && data.lessons.length === 0 && (
+            {data.folders.length === 0 && data.priors.length === 0 && (
               <div style={{
                 padding: '8px 16px',
                 marginLeft: '16px',
@@ -961,7 +961,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
     );
   };
 
-  // Render root-level content (lessons + folders from root)
+  // Render root-level content (priors + folders from root)
   const renderRootContent = () => {
     const rootData = folderData.get('');
     const isRootLoading = loadingFolders.has('');
@@ -1015,8 +1015,8 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
       );
     }
 
-    const { folders, lessons } = rootData;
-    if (folders.length === 0 && lessons.length === 0) {
+    const { folders, priors } = rootData;
+    if (folders.length === 0 && priors.length === 0) {
       return (
         <div style={{
           textAlign: 'center',
@@ -1032,8 +1032,8 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {/* Folders first */}
         {folders.map((folder) => renderFolder(folder, 0))}
-        {/* Root-level lessons */}
-        {lessons.map((lesson) => renderLessonCard(lesson))}
+        {/* Root-level priors */}
+        {priors.map((prior) => renderPriorCard(prior))}
       </div>
     );
   };
@@ -1071,7 +1071,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
           >
             Priors
           </h2>
-          {onLessonCreate && (
+          {onPriorCreate && (
             <button
               onClick={() => {
                 setShowCreateModal(true);
@@ -1143,14 +1143,14 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
                 top: '50%',
                 transform: 'translateY(-50%)',
                 fontSize: '11px',
-                color: matchingLessonIds.length > 0
+                color: matchingPriorIds.length > 0
                   ? (isDarkTheme ? '#888888' : '#666666')
                   : (isDarkTheme ? '#f48771' : '#d32f2f'),
                 fontWeight: 500,
               }}
             >
-              {matchingLessonIds.length > 0
-                ? `${currentMatchIndex + 1}/${matchingLessonIds.length}`
+              {matchingPriorIds.length > 0
+                ? `${currentMatchIndex + 1}/${matchingPriorIds.length}`
                 : 'No matches'}
             </span>
           )}
@@ -1165,7 +1165,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
       {/* Create Modal */}
       {showCreateModal &&
         renderModal(
-          'Create New Lesson',
+          'Create New Prior',
           createForm,
           setCreateForm,
           handleCreate,
@@ -1175,7 +1175,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
       {/* Edit Modal */}
       {editingId &&
         renderModal(
-          'Edit Lesson',
+          'Edit Prior',
           editForm,
           setEditForm,
           (force) => handleSaveEdit(editingId, force),

@@ -9,8 +9,8 @@ import * as http from 'http';
 import * as https from 'https';
 import { EventEmitter } from 'events';
 
-export class PlaybookClient extends EventEmitter {
-    private static _instance: PlaybookClient | null = null;
+export class SovaraDBClient extends EventEmitter {
+    private static _instance: SovaraDBClient | null = null;
 
     private _baseUrl: string;
     private _sseRequest: http.ClientRequest | null = null;
@@ -22,17 +22,17 @@ export class PlaybookClient extends EventEmitter {
         this._baseUrl = baseUrl.replace(/\/$/, '');
     }
 
-    static init(baseUrl: string): PlaybookClient {
-        if (PlaybookClient._instance) {
-            PlaybookClient._instance.dispose();
+    static init(baseUrl: string): SovaraDBClient {
+        if (SovaraDBClient._instance) {
+            SovaraDBClient._instance.dispose();
         }
-        PlaybookClient._instance = new PlaybookClient(baseUrl);
-        PlaybookClient._instance.connectEvents();
-        return PlaybookClient._instance;
+        SovaraDBClient._instance = new SovaraDBClient(baseUrl);
+        SovaraDBClient._instance.connectEvents();
+        return SovaraDBClient._instance;
     }
 
-    static getInstance(): PlaybookClient | null {
-        return PlaybookClient._instance;
+    static getInstance(): SovaraDBClient | null {
+        return SovaraDBClient._instance;
     }
 
     // ============================================================
@@ -137,25 +137,25 @@ export class PlaybookClient extends EventEmitter {
         return this._request('POST', '/api/v1/priors/folders/ls', { path });
     }
 
-    async getLesson(id: string): Promise<any> {
+    async getPrior(id: string): Promise<any> {
         return this._request('GET', `/api/v1/priors/${id}`);
     }
 
-    async getLessonsList(): Promise<any> {
+    async getPriorsList(): Promise<any> {
         return this._request('GET', '/api/v1/priors');
     }
 
-    async createLesson(data: { name: string; summary: string; content: string; path?: string }, force: boolean): Promise<any> {
+    async createPrior(data: { name: string; summary: string; content: string; path?: string }, force: boolean): Promise<any> {
         const qs = force ? '?force=true' : '';
         return this._sseRequest_mutation('POST', `/api/v1/priors${qs}`, data);
     }
 
-    async updateLesson(id: string, data: { name?: string; summary?: string; content?: string; path?: string }, force: boolean): Promise<any> {
+    async updatePrior(id: string, data: { name?: string; summary?: string; content?: string; path?: string }, force: boolean): Promise<any> {
         const qs = force ? '?force=true' : '';
         return this._sseRequest_mutation('PUT', `/api/v1/priors/${id}${qs}`, data);
     }
 
-    async deleteLesson(id: string): Promise<any> {
+    async deletePrior(id: string): Promise<any> {
         return this._sseRequest_mutation('DELETE', `/api/v1/priors/${id}`);
     }
 
@@ -173,7 +173,7 @@ export class PlaybookClient extends EventEmitter {
 
         const req = mod.request(url, { method: 'GET', headers }, (res) => {
             if (res.statusCode !== 200) {
-                console.warn(`[PlaybookClient] SSE connect failed: ${res.statusCode}`);
+                console.warn(`[SovaraDBClient] SSE connect failed: ${res.statusCode}`);
                 this._scheduleReconnect();
                 return;
             }
@@ -194,7 +194,7 @@ export class PlaybookClient extends EventEmitter {
                         if (currentEvent) {
                             try {
                                 const data = JSON.parse(dataStr);
-                                this.emit('lesson_event', { type: currentEvent, ...data });
+                                this.emit('prior_event', { type: currentEvent, ...data });
                             } catch { /* ignore */ }
                         }
                         currentEvent = '';
@@ -204,18 +204,18 @@ export class PlaybookClient extends EventEmitter {
             });
 
             res.on('end', () => {
-                console.log('[PlaybookClient] SSE connection ended');
+                console.log('[SovaraDBClient] SSE connection ended');
                 this._scheduleReconnect();
             });
 
             res.on('error', (err) => {
-                console.warn('[PlaybookClient] SSE stream error:', err.message);
+                console.warn('[SovaraDBClient] SSE stream error:', err.message);
                 this._scheduleReconnect();
             });
         });
 
         req.on('error', (err) => {
-            console.warn('[PlaybookClient] SSE connect error:', err.message);
+            console.warn('[SovaraDBClient] SSE connect error:', err.message);
             this._scheduleReconnect();
         });
 
@@ -247,8 +247,8 @@ export class PlaybookClient extends EventEmitter {
         this._disposed = true;
         this._cleanupSse();
         this.removeAllListeners();
-        if (PlaybookClient._instance === this) {
-            PlaybookClient._instance = null;
+        if (SovaraDBClient._instance === this) {
+            SovaraDBClient._instance = null;
         }
     }
 }
