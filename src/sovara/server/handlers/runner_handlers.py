@@ -14,7 +14,7 @@ def _find_sessions_with_node(state, node_uuid: str) -> set:
     """Find all sessions containing a specific node UUID."""
     sessions = set()
     for session_id, graph in state.session_graphs.items():
-        if graph.node_by_uuid(node_uuid):
+        if graph.get_node_by_uuid(node_uuid):
             sessions.add(session_id)
     return sessions
 

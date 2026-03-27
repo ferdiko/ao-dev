@@ -16,7 +16,7 @@ def handle_edit_input(state, msg: dict) -> None:
 
     overwrite = DB.set_input_overwrite(session_id, node_uuid, new_input)
     if overwrite and session_id in state.session_graphs:
-        node = state.session_graphs[session_id].node_by_uuid(node_uuid)
+        node = state.session_graphs[session_id].get_node_by_uuid(node_uuid)
         if node:
             node.input = new_input  # graph stores to_show for display
         DB.update_graph_topology(session_id, state.session_graphs[session_id])
@@ -30,7 +30,7 @@ def handle_edit_output(state, msg: dict) -> None:
 
     overwrite = DB.set_output_overwrite(session_id, node_uuid, new_output)
     if overwrite and session_id in state.session_graphs:
-        node = state.session_graphs[session_id].node_by_uuid(node_uuid)
+        node = state.session_graphs[session_id].get_node_by_uuid(node_uuid)
         if node:
             node.output = new_output  # graph stores to_show for display
         DB.update_graph_topology(session_id, state.session_graphs[session_id])
@@ -48,7 +48,7 @@ def handle_update_node(state, msg: dict) -> None:
         return
 
     if session_id in state.session_graphs:
-        node = state.session_graphs[session_id].node_by_uuid(node_uuid)
+        node = state.session_graphs[session_id].get_node_by_uuid(node_uuid)
         if node and hasattr(node, field):
             setattr(node, field, value)
         DB.update_graph_topology(session_id, state.session_graphs[session_id])

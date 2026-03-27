@@ -139,14 +139,14 @@ class SessionGraph:
             "edges": [edge.to_dict() for edge in self.edges],
         }
 
-    def node_by_uuid(self, node_uuid: str) -> GraphNode | None:
+    def get_node_by_uuid(self, node_uuid: str) -> GraphNode | None:
         for node in self.nodes:
             if node.uuid == node_uuid:
                 return node
         return None
 
     def add_node(self, incoming: IncomingNode, incoming_source_uuids: list[str]) -> GraphNode:
-        existing = self.node_by_uuid(incoming.uuid)
+        existing = self.get_node_by_uuid(incoming.uuid)
         if existing is None:
             existing = GraphNode.from_incoming(incoming, step_id=len(self.nodes) + 1)
             self.nodes.append(existing)
