@@ -25,6 +25,7 @@ from sovara.runner.monkey_patching.api_parser import (
     api_obj_to_response_ok,
     merge_filtered_into_raw,
 )
+from sovara.server.graph_models import SessionGraph
 
 
 class ResourceNotFoundError(LookupError):
@@ -46,7 +47,7 @@ class CacheOutput:
     Attributes:
         input_dict: The (potentially modified) input dictionary for the LLM call
         output: The cached output object, None if not cached or cache miss
-        node_id: Unique identifier for this LLM call node, None if new call
+        node_uuid: Unique identifier for this LLM call node, None if new call
         input_pickle: Serialized input data for caching purposes
         input_hash: Hash of the input for efficient cache lookups
         session_id: The session ID associated with this cache operation
@@ -55,7 +56,7 @@ class CacheOutput:
 
     input_dict: dict
     output: Optional[Any]
-    node_id: Optional[str]
+    node_uuid: Optional[str]
     input_pickle: bytes
     input_hash: str
     session_id: str
@@ -114,32 +115,32 @@ class DatabaseManager:
         if callable(clear):
             clear()
 
-    def set_input_overwrite(self, session_id, node_id, new_input):
+    def set_input_overwrite(self, session_id, node_uuid, new_input):
         """UI sends to_show data; merge into original raw to build full format for the runner.
         Returns the full-format overwrite string, or None if unchanged."""
         try:
             new_to_show = json.loads(new_input)
         except json.JSONDecodeError as exc:
             raise BadRequestError(
-                f"Invalid input JSON for session_id={session_id}, node_id={node_id}: {exc.msg}."
+                f"Invalid input JSON for session_id={session_id}, node_uuid={node_uuid}: {exc.msg}."
             ) from exc
 
-        row = self.backend.get_llm_call_input_api_type_query(session_id, node_id)
+        row = self.backend.get_llm_call_input_api_type_query(session_id, node_uuid)
         if not row:
             raise ResourceNotFoundError(
-                f"Input node not found for session_id={session_id}, node_id={node_id}."
+                f"Input node not found for session_id={session_id}, node_uuid={node_uuid}."
             )
 
         try:
             original = json.loads(row["input"])
         except (TypeError, json.JSONDecodeError) as exc:
             raise BadRequestError(
-                f"Stored input payload is invalid for session_id={session_id}, node_id={node_id}."
+                f"Stored input payload is invalid for session_id={session_id}, node_uuid={node_uuid}."
             ) from exc
 
         if not isinstance(original, dict) or "raw" not in original or "to_show" not in original:
             raise BadRequestError(
-                f"Stored input payload is incomplete for session_id={session_id}, node_id={node_id}."
+                f"Stored input payload is incomplete for session_id={session_id}, node_uuid={node_uuid}."
             )
 
         if json.dumps(new_to_show, sort_keys=True) == json.dumps(original["to_show"], sort_keys=True):
@@ -147,41 +148,41 @@ class DatabaseManager:
 
         merged_raw = merge_filtered_into_raw(original["raw"], new_to_show)
         overwrite = json.dumps({"raw": merged_raw, "to_show": new_to_show}, sort_keys=True)
-        self.backend.set_input_overwrite_query(overwrite, session_id, node_id)
+        self.backend.set_input_overwrite_query(overwrite, session_id, node_uuid)
         return overwrite
 
-    def set_output_overwrite(self, session_id, node_id, new_output: str):
+    def set_output_overwrite(self, session_id, node_uuid, new_output: str):
         """UI sends to_show data; merge into original raw to build full format for the runner.
         Returns the full-format overwrite string, or None if unchanged or error."""
         try:
             new_to_show = json.loads(new_output)
         except json.JSONDecodeError as exc:
             raise BadRequestError(
-                f"Invalid output JSON for session_id={session_id}, node_id={node_id}: {exc.msg}."
+                f"Invalid output JSON for session_id={session_id}, node_uuid={node_uuid}: {exc.msg}."
             ) from exc
 
-        row = self.backend.get_llm_call_output_api_type_query(session_id, node_id)
+        row = self.backend.get_llm_call_output_api_type_query(session_id, node_uuid)
 
         if not row:
             raise ResourceNotFoundError(
-                f"Output node not found for session_id={session_id}, node_id={node_id}."
+                f"Output node not found for session_id={session_id}, node_uuid={node_uuid}."
             )
 
         if row["output"] is None:
             raise BadRequestError(
-                f"No stored output is available for session_id={session_id}, node_id={node_id}."
+                f"No stored output is available for session_id={session_id}, node_uuid={node_uuid}."
             )
 
         try:
             original = json.loads(row["output"])
         except (TypeError, json.JSONDecodeError) as exc:
             raise BadRequestError(
-                f"Stored output payload is invalid for session_id={session_id}, node_id={node_id}."
+                f"Stored output payload is invalid for session_id={session_id}, node_uuid={node_uuid}."
             ) from exc
 
         if not isinstance(original, dict) or "raw" not in original or "to_show" not in original:
             raise BadRequestError(
-                f"Stored output payload is incomplete for session_id={session_id}, node_id={node_id}."
+                f"Stored output payload is incomplete for session_id={session_id}, node_uuid={node_uuid}."
             )
 
         try:
@@ -189,11 +190,11 @@ class DatabaseManager:
             overwrite = json.dumps({"raw": merged_raw, "to_show": new_to_show}, sort_keys=True)
 
             json_str_to_api_obj(overwrite, row["api_type"])
-            self.backend.set_output_overwrite_query(overwrite, session_id, node_id)
+            self.backend.set_output_overwrite_query(overwrite, session_id, node_uuid)
             return overwrite
         except Exception as e:
             raise BadRequestError(
-                f"Invalid output edit for session_id={session_id}, node_id={node_id}: {e}"
+                f"Invalid output edit for session_id={session_id}, node_uuid={node_uuid}: {e}"
             ) from e
 
     def erase(self, session_id):
@@ -245,8 +246,8 @@ class DatabaseManager:
             user_id,
         )
 
-    def update_graph_topology(self, session_id, graph_dict):
-        graph_json = json.dumps(graph_dict)
+    def update_graph_topology(self, session_id: str, graph: SessionGraph) -> None:
+        graph_json = graph.to_json_string()
         self.backend.update_experiment_graph_topology_query(graph_json, session_id)
 
     def update_timestamp(self, session_id, timestamp):
@@ -665,14 +666,14 @@ class DatabaseManager:
             return CacheOutput(
                 input_dict=input_dict,
                 output=None,
-                node_id=None,
+                node_uuid=None,
                 input_pickle=input_pickle,
                 input_hash=input_hash,
                 session_id=session_id,
                 stack_trace=stack_trace,
             )
 
-        node_id = row["node_id"]
+        node_uuid = row["node_uuid"]
         output = None
 
         if row["input_overwrite"] is not None:
@@ -688,11 +689,11 @@ class DatabaseManager:
                 f"Cache hit (output set): session_id {str(session_id)[:4]}, input_hash {str(input_hash)[:4]}"
             )
 
-        set_seed(node_id)
+        set_seed(node_uuid)
         return CacheOutput(
             input_dict=input_dict,
             output=output,
-            node_id=node_id,
+            node_uuid=node_uuid,
             input_pickle=input_pickle,
             input_hash=input_hash,
             session_id=session_id,
@@ -707,10 +708,10 @@ class DatabaseManager:
 
         # Reset randomness to avoid generating exact same UUID when re-running
         random.seed()
-        if cache_result.node_id:
-            node_id = cache_result.node_id
+        if cache_result.node_uuid:
+            node_uuid = cache_result.node_uuid
         else:
-            node_id = str(uuid.uuid4())
+            node_uuid = str(uuid.uuid4())
         response_ok = api_obj_to_response_ok(output_obj, api_type)
 
         if response_ok and cache:
@@ -719,17 +720,17 @@ class DatabaseManager:
                 cache_result.session_id,
                 cache_result.input_pickle,
                 cache_result.input_hash,
-                node_id,
+                node_uuid,
                 api_type,
                 output_json_str,
                 cache_result.stack_trace,
             )
             self.checkpoint_active_runtime(cache_result.session_id)
         else:
-            logger.warning(f"Node {node_id} response not OK.")
-        cache_result.node_id = node_id
+            logger.warning(f"Node {node_uuid} response not OK.")
+        cache_result.node_uuid = node_uuid
         cache_result.output = output_obj
-        set_seed(node_id)
+        set_seed(node_uuid)
 
     def get_finished_runs(self, project_id=None):
         return self.backend.get_finished_runs_query(project_id=project_id, user_id=self.user_id)
@@ -821,11 +822,11 @@ class DatabaseManager:
             return []
         return [row["name"]]
 
-    def query_one_llm_call_input(self, session_id, node_id):
-        return self.backend.get_llm_call_input_api_type_query(session_id, node_id)
+    def query_one_llm_call_input(self, session_id, node_uuid):
+        return self.backend.get_llm_call_input_api_type_query(session_id, node_uuid)
 
-    def query_one_llm_call_output(self, session_id, node_id):
-        return self.backend.get_llm_call_output_api_type_query(session_id, node_id)
+    def query_one_llm_call_output(self, session_id, node_uuid):
+        return self.backend.get_llm_call_output_api_type_query(session_id, node_uuid)
 
     def get_next_run_index(self, project_id=None):
         return self.backend.get_next_run_index_query(project_id=project_id, user_id=self.user_id)
@@ -884,8 +885,8 @@ class DatabaseManager:
     def get_llm_calls_for_session(self, session_id):
         return self.backend.get_llm_calls_for_session_query(session_id)
 
-    def get_llm_call_full(self, session_id, node_id):
-        return self.backend.get_llm_call_full_query(session_id, node_id)
+    def get_llm_call_full(self, session_id, node_uuid):
+        return self.backend.get_llm_call_full_query(session_id, node_uuid)
 
     def copy_llm_calls(self, old_session_id, new_session_id):
         self.backend.copy_llm_calls_query(old_session_id, new_session_id)
@@ -901,7 +902,7 @@ class DatabaseManager:
             {
                 "lesson_id": row["lesson_id"],
                 "session_id": row["session_id"],
-                "node_id": row["node_id"],
+                "node_uuid": row["node_uuid"],
                 "run_name": row["run_name"] or "Unknown Run",
             }
             for row in rows
@@ -912,17 +913,17 @@ class DatabaseManager:
         return [
             {
                 "sessionId": row["session_id"],
-                "nodeId": row["node_id"],
+                "nodeUuid": row["node_uuid"],
                 "runName": row["run_name"] or "Unknown Run",
             }
             for row in rows
         ]
 
-    def add_lesson_applied(self, lesson_id, session_id, node_id=None):
-        self.backend.add_lesson_applied_query(lesson_id, session_id, node_id)
+    def add_lesson_applied(self, lesson_id, session_id, node_uuid=None):
+        self.backend.add_lesson_applied_query(lesson_id, session_id, node_uuid)
 
-    def remove_lesson_applied(self, lesson_id, session_id, node_id=None):
-        self.backend.remove_lesson_applied_query(lesson_id, session_id, node_id)
+    def remove_lesson_applied(self, lesson_id, session_id, node_uuid=None):
+        self.backend.remove_lesson_applied_query(lesson_id, session_id, node_uuid)
 
     def delete_lessons_applied_for_lesson(self, lesson_id):
         self.backend.delete_lessons_applied_for_lesson_query(lesson_id)

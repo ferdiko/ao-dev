@@ -21,7 +21,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from sovara.server.graph_payloads import enrich_graph_for_ui
+from sovara.server.graph_models import SessionGraph
 
 # ============================================================
 # Sub-server app
@@ -100,19 +100,16 @@ def _build_trace_from_graph(graph_data: dict):
     """
     from sovara.server.graph_analysis.trace_chat.utils.trace import Trace
 
-    enriched_graph = enrich_graph_for_ui(graph_data)
-    nodes = sorted(
-        enriched_graph.get("nodes", []),
-        key=lambda node: (node.get("step_index", 10**9), node.get("id", "")),
-    )
+    graph = SessionGraph.from_dict(graph_data)
+    nodes = sorted(graph.nodes, key=lambda node: (node.step_id, node.uuid))
     if not nodes:
         return None
 
     lines = []
     for node in nodes:
         try:
-            to_show_in = json.loads(node.get("input", "{}"))
-            to_show_out = json.loads(node.get("output", "{}"))
+            to_show_in = json.loads(node.input or "{}")
+            to_show_out = json.loads(node.output or "{}")
         except (json.JSONDecodeError, TypeError):
             continue
 
@@ -120,11 +117,11 @@ def _build_trace_from_graph(graph_data: dict):
             to_show_in, to_show_out,
         )
         lines.append(json.dumps({
-            "node_id": node["id"],
+            "node_uuid": node.uuid,
             "system_prompt": system_prompt,
             "input": input_messages,
             "output": output_text,
-            "model/tool": node.get("model", ""),
+            "model/tool": node.model or "",
         }))
 
     if not lines:
@@ -140,7 +137,8 @@ def _get_trace_for_session(session_id: str):
     if not graph_row or not graph_row["graph_topology"]:
         return None, False
 
-    graph_data = json.loads(graph_row["graph_topology"])
+    graph = SessionGraph.from_json_string(graph_row["graph_topology"])
+    graph_data = graph.to_dict()
     if not graph_data.get("nodes"):
         return None, False
 

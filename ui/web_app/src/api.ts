@@ -333,9 +333,8 @@ export async function fetchExperimentDetail(sessionId: string): Promise<Experime
 // ============================================================
 
 export interface BackendGraphNode {
-  id: string;
-  step_id?: string;
-  step_index?: number;
+  uuid: string;
+  step_id: number;
   input: string;
   output: string;
   label: string;
@@ -347,8 +346,8 @@ export interface BackendGraphNode {
 
 export interface BackendGraphEdge {
   id: string;
-  source: string;
-  target: string;
+  source_uuid: string;
+  target_uuid: string;
 }
 
 export interface GraphPayload {
@@ -374,11 +373,11 @@ export async function fetchGraph(sessionId: string) {
 // ============================================================
 
 export async function editInput(sessionId: string, nodeId: string, value: string): Promise<void> {
-  await post("/ui/edit-input", { session_id: sessionId, node_id: nodeId, value });
+  await post("/ui/edit-input", { session_id: sessionId, node_uuid: nodeId, value });
 }
 
 export async function editOutput(sessionId: string, nodeId: string, value: string): Promise<void> {
-  await post("/ui/edit-output", { session_id: sessionId, node_id: nodeId, value });
+  await post("/ui/edit-output", { session_id: sessionId, node_uuid: nodeId, value });
 }
 
 export async function restartRun(sessionId: string): Promise<void> {

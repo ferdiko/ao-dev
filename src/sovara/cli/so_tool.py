@@ -45,7 +45,7 @@ def _resolve_value(value: str) -> str:
     return value
 
 
-def _apply_edit(session_id: str, node_id: str, field: str, key: str, value: str) -> dict:
+def _apply_edit(session_id: str, node_uuid: str, field: str, key: str, value: str) -> dict:
     """
     Apply an edit to a single key in a node's input or output.
 
@@ -60,12 +60,12 @@ def _apply_edit(session_id: str, node_id: str, field: str, key: str, value: str)
 
     # Get the node's current data
     if field == "input":
-        row = DB.query_one_llm_call_input(session_id, node_id)
+        row = DB.query_one_llm_call_input(session_id, node_uuid)
     else:
-        row = DB.query_one_llm_call_output(session_id, node_id)
+        row = DB.query_one_llm_call_output(session_id, node_uuid)
 
     if not row:
-        return {"status": "error", "error": f"Node {node_id} not found in session {session_id}"}
+        return {"status": "error", "error": f"Node {node_uuid} not found in session {session_id}"}
 
     api_type = row["api_type"]
 
@@ -117,14 +117,14 @@ def _apply_edit(session_id: str, node_id: str, field: str, key: str, value: str)
 
     # Apply the edit
     if field == "input":
-        DB.set_input_overwrite(session_id, node_id, new_json_str)
+        DB.set_input_overwrite(session_id, node_uuid, new_json_str)
     else:
-        DB.set_output_overwrite(session_id, node_id, new_json_str)
+        DB.set_output_overwrite(session_id, node_uuid, new_json_str)
 
     return {
         "status": "success",
         "session_id": session_id,
-        "node_id": node_id,
+        "node_uuid": node_uuid,
         "field": field,
         "key": key,
     }
@@ -347,25 +347,25 @@ def probe_command(args) -> None:
         output_json({"status": "error", "error": f"Session not found: {session_id}"})
 
     # Parse graph topology from JSON
-    graph_topology = json.loads(experiment["graph_topology"]) if experiment["graph_topology"] else {"nodes": [], "edges": []}
+    graph_topology = SessionGraph.from_json_string(experiment["graph_topology"]).to_dict()
     edges = graph_topology.get("edges", [])
 
     # Build parent/child relationships from edges
-    parent_ids = {}  # node_id -> list of parent node_ids
-    child_ids = {}   # node_id -> list of child node_ids
+    parent_ids = {}  # node_uuid -> list of parent node_uuids
+    child_ids = {}   # node_uuid -> list of child node_uuids
     for edge in edges:
-        src, tgt = edge["source"], edge["target"]
+        src, tgt = edge["source_uuid"], edge["target_uuid"]
         parent_ids.setdefault(tgt, []).append(src)
         child_ids.setdefault(src, []).append(tgt)
 
     # Handle --node or --nodes: return detailed info for specific node(s)
     if args.node or args.nodes:
-        node_ids = [args.node] if args.node else args.nodes.split(",")
+        node_uuids = [args.node] if args.node else args.nodes.split(",")
         nodes_data = []
-        for node_id in node_ids:
-            llm_call = DB.get_llm_call_full(session_id, node_id.strip())
+        for node_uuid in node_uuids:
+            llm_call = DB.get_llm_call_full(session_id, node_uuid.strip())
             if not llm_call:
-                output_json({"status": "error", "error": f"Node not found: {node_id}"})
+                output_json({"status": "error", "error": f"Node not found: {node_uuid}"})
 
             # Parse input/output JSON, extracting to_show fields
             input_to_show = None
@@ -414,13 +414,13 @@ def probe_command(args) -> None:
                 stack_trace = [line.strip() for line in stack_trace.split("\n") if line.strip()]
 
             node_info = {
-                "node_id": llm_call["node_id"],
+                "node_uuid": llm_call["node_uuid"],
                 "session_id": session_id,
                 "api_type": llm_call["api_type"],
                 "label": llm_call["label"],
                 "timestamp": format_timestamp(llm_call["timestamp"]),
-                "parent_ids": parent_ids.get(node_id.strip(), []),
-                "child_ids": child_ids.get(node_id.strip(), []),
+                "parent_uuids": parent_ids.get(node_uuid.strip(), []),
+                "child_uuids": child_ids.get(node_uuid.strip(), []),
                 "has_input_overwrite": llm_call["input_overwrite"] is not None,
                 "stack_trace": stack_trace,
             }
@@ -452,14 +452,15 @@ def probe_command(args) -> None:
         "node_count": len(graph_topology.get("nodes", [])),
         "nodes": [
             {
-                "node_id": n["id"],
+                "node_uuid": n["uuid"],
+                "step_id": n.get("step_id"),
                 "label": n.get("label", ""),
-                "parent_ids": parent_ids.get(n["id"], []),
-                "child_ids": child_ids.get(n["id"], []),
+                "parent_uuids": parent_ids.get(n["uuid"], []),
+                "child_uuids": child_ids.get(n["uuid"], []),
             }
             for n in graph_topology.get("nodes", [])
         ],
-        "edges": [{"source": e["source"], "target": e["target"]} for e in edges],
+        "edges": [{"source_uuid": e["source_uuid"], "target_uuid": e["target_uuid"]} for e in edges],
     })
 
 
@@ -559,7 +560,7 @@ def _copy_experiment(session_id: str, run_name: str | None = None) -> str | dict
 
     # Copy graph topology from original
     if experiment["graph_topology"]:
-        graph = json.loads(experiment["graph_topology"])
+        graph = SessionGraph.from_json_string(experiment["graph_topology"])
         DB.update_graph_topology(new_session_id, graph)
 
     # Copy all LLM calls to new session
@@ -571,7 +572,7 @@ def _copy_experiment(session_id: str, run_name: str | None = None) -> str | dict
 def edit_and_rerun_command(args) -> None:
     """Edit a single key in a node's input or output and immediately rerun."""
     session_id = args.session_id
-    node_id = args.node_id
+    node_uuid = args.node_uuid
 
     # Determine field, key, and value from mutually exclusive args
     if args.input:
@@ -588,13 +589,13 @@ def edit_and_rerun_command(args) -> None:
     session_id = result
 
     # Step 1: Apply the edit
-    edit_result = _apply_edit(session_id, node_id, field, key, value)
+    edit_result = _apply_edit(session_id, node_uuid, field, key, value)
     if edit_result.get("status") == "error":
         output_json(edit_result)
 
     # Step 2: Spawn rerun and block until completion
     result = _spawn_rerun(session_id, timeout=args.timeout)
-    result["node_id"] = node_id
+    result["node_uuid"] = node_uuid
     result["edited_field"] = field
     result["edited_key"] = key
     output_json(result)
@@ -1222,7 +1223,7 @@ def create_parser() -> ArgumentParser:
                     "Value can be a literal or a path to a file.",
     )
     edit_and_rerun.add_argument("session_id", help="Session ID containing the node")
-    edit_and_rerun.add_argument("node_id", help="Node ID to edit")
+    edit_and_rerun.add_argument("node_uuid", help="Node UUID to edit")
     edit_and_rerun_group = edit_and_rerun.add_mutually_exclusive_group(required=True)
     edit_and_rerun_group.add_argument(
         "--input",

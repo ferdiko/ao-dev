@@ -54,12 +54,12 @@ def patch_mcp_send_request(bound_obj, bound_cls):
 
         # Store output strings for future matching
         store_output_strings(
-            cache_output.session_id, cache_output.node_id, cache_output.output, api_type
+            cache_output.session_id, cache_output.node_uuid, cache_output.output, api_type
         )
 
         # Send graph node to server
         send_graph_node_and_edges(
-            node_id=cache_output.node_id,
+            node_id=cache_output.node_uuid,
             input_dict=cache_output.input_dict,
             output_obj=cache_output.output,
             source_node_ids=source_node_ids,

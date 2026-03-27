@@ -24,7 +24,7 @@ from sovara.common.constants import (
     SOVARA_GIT_DIR,
 )
 from sovara.server.database_manager import DB
-from sovara.server.graph_payloads import enrich_graph_for_ui
+from sovara.server.graph_models import SessionGraph
 
 logger = create_file_logger(MAIN_SERVER_LOG)
 
@@ -52,7 +52,7 @@ class ServerState:
     def __init__(self):
         # Session state
         self.sessions: dict[str, Session] = {}
-        self.session_graphs: dict[str, dict] = {}
+        self.session_graphs: dict[str, SessionGraph] = {}
         self.rerun_sessions: set[str] = set()
         # Runtime checkpointing can happen inside add-node handling, which
         # already holds this lock while mutating session_graphs.
@@ -116,7 +116,7 @@ class ServerState:
     async def broadcast_graph_update(self, session_id: str) -> None:
         """Broadcast current graph state for a session to all UIs."""
         if session_id in self.session_graphs:
-            graph = enrich_graph_for_ui(self.session_graphs[session_id])
+            graph = self.session_graphs[session_id].to_dict()
             await self.broadcast_to_all_uis({
                 "type": "graph_update",
                 "session_id": session_id,
@@ -220,7 +220,7 @@ class ServerState:
 
     def _clear_session_ui(self, session_id: str) -> None:
         """Clear UI state for a session (graphs and color previews)."""
-        empty_graph = {"nodes": [], "edges": []}
+        empty_graph = SessionGraph.empty()
         self.session_graphs[session_id] = empty_graph
         DB.update_graph_topology(session_id, empty_graph)
         DB.update_color_preview(session_id, [])
@@ -228,13 +228,14 @@ class ServerState:
     def clear_session_ui_and_schedule_broadcast(self, session_id: str) -> None:
         """Clear UI state and schedule broadcast updates."""
         self._clear_session_ui(session_id)
+        empty_graph = self.session_graphs[session_id]
         self.schedule_broadcast(
             {"type": "color_preview_update", "session_id": session_id, "color_preview": []}
         )
         self.schedule_broadcast({
             "type": "graph_update",
             "session_id": session_id,
-            "payload": {"nodes": [], "edges": []},
+            "payload": empty_graph.to_dict(),
             "active_runtime_seconds": self.get_persisted_active_runtime_seconds(session_id),
         })
 

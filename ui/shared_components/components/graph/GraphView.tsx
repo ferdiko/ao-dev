@@ -105,6 +105,13 @@ export const GraphView: React.FC<GraphViewProps> = ({
   const [viewport, setViewport] = useState<{ x: number; y: number; zoom: number }>({ x: 0, y: 0, zoom: 1 });
   const [isMetadataPanelOpen, setIsMetadataPanelOpen] = useState(false);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const orderedNodes = useMemo(
+    () =>
+      [...initialNodes].sort(
+        (a, b) => (a.step_id ?? Number.MAX_SAFE_INTEGER) - (b.step_id ?? Number.MAX_SAFE_INTEGER)
+      ),
+    [initialNodes]
+  );
 
   // Compute connected nodes and edges for highlighting
   const { highlightedNodes, highlightedEdges } = useMemo(() => {
@@ -151,7 +158,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
       onNodeUpdate(nodeId, field, value);
       messageSender.send({
         type: 'update_node',
-        node_id: nodeId,
+        node_uuid: nodeId,
         field,
         value,
         session_id
@@ -167,7 +174,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
     if (containerWidth === 0) return;
 
     // Use the current container width for layout calculation (responds to resize)
-    const layout = layoutEngine.layoutGraph(initialNodes, initialEdges, containerWidth);
+    const layout = layoutEngine.layoutGraph(orderedNodes, initialEdges, containerWidth);
 
     // Calculate if we have left bands that need negative positioning
     const hasLeftBands = layout.edges.some(edge => edge.band?.includes('Left'));
@@ -190,7 +197,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
     const maxY = Math.max(0, ...Array.from(layout.positions.values()).map((pos) => pos.y)) + 300;
     setContainerHeight(maxY);
 
-    const flowNodes: Node[] = initialNodes.map((node) => {
+    const flowNodes: Node[] = orderedNodes.map((node) => {
       const position = layout.positions.get(node.id) || { x: 0, y: 0 };
       return {
         id: node.id,
@@ -257,7 +264,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
     const x = -minXAll * zoom + (availableW - widthSpan * zoom) / 2;
     setViewport({ x, y: 0, zoom });
   }, [
-    initialNodes,
+    orderedNodes,
     initialEdges,
     handleNodeUpdate,
     setNodes,
@@ -288,7 +295,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
     // Don't process until we have container dimensions
     if (containerWidth === 0) return;
 
-    const currentNodeIds = initialNodes.map(n => n.id).sort().join(',');
+    const currentNodeIds = orderedNodes.map(n => n.id).sort().join(',');
     const currentEdgeIds = initialEdges.map(e => e.id).sort().join(',');
     const prev = prevLayoutRef.current;
 
@@ -302,7 +309,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
     } else {
       // Only data changed - update node data in place without layout recalc
       setNodes(currentNodes => currentNodes.map(node => {
-        const updatedData = initialNodes.find(n => n.id === node.id);
+        const updatedData = orderedNodes.find(n => n.id === node.id);
         if (updatedData) {
           return {
             ...node,
@@ -319,7 +326,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
         return node;
       }));
     }
-  }, [initialNodes, initialEdges, calculateLayout, setNodes, handleNodeUpdate, session_id, messageSender, isDarkTheme, containerWidth]);
+  }, [orderedNodes, initialEdges, calculateLayout, setNodes, handleNodeUpdate, session_id, messageSender, isDarkTheme, containerWidth]);
 
   // Update viewport when container width changes (metadata panel opens/closes)
   useEffect(() => {

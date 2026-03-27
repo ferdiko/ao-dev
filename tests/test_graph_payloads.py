@@ -1,55 +1,48 @@
-from sovara.server.graph_payloads import enrich_graph_for_ui
+from sovara.server.graph_models import IncomingNode, SessionGraph
 
 
-def test_enrich_graph_assigns_topological_step_ids():
-    graph = {
-        "nodes": [
-            {"id": "c", "label": "C"},
-            {"id": "a", "label": "A"},
-            {"id": "b", "label": "B"},
-        ],
-        "edges": [
-            {"id": "ea-b", "source": "a", "target": "b"},
-            {"id": "eb-c", "source": "b", "target": "c"},
-        ],
-    }
-
-    enriched = enrich_graph_for_ui(graph)
-
-    assert [node["id"] for node in enriched["nodes"]] == ["c", "a", "b"]
-    assert {node["id"]: node["step_id"] for node in enriched["nodes"]} == {
-        "a": "step 1",
-        "b": "step 2",
-        "c": "step 3",
-    }
+def _incoming(uuid: str, label: str) -> IncomingNode:
+    return IncomingNode(
+        uuid=uuid,
+        input="{}",
+        output="{}",
+        label=label,
+        border_color="#000000",
+    )
 
 
-def test_enrich_graph_uses_original_order_as_parallel_tiebreaker():
-    graph = {
-        "nodes": [
-            {"id": "root", "label": "Root"},
-            {"id": "right", "label": "Right"},
-            {"id": "left", "label": "Left"},
-        ],
-        "edges": [
-            {"id": "eroot-right", "source": "root", "target": "right"},
-            {"id": "eroot-left", "source": "root", "target": "left"},
-        ],
-    }
+def test_session_graph_assigns_monotonic_step_ids():
+    graph = SessionGraph.empty()
 
-    enriched = enrich_graph_for_ui(graph)
+    graph.add_node(_incoming("a", "A"), [])
+    graph.add_node(_incoming("b", "B"), ["a"])
+    graph.add_node(_incoming("c", "C"), ["b"])
 
-    assert {node["id"]: node["step_id"] for node in enriched["nodes"]} == {
-        "root": "step 1",
-        "right": "step 2",
-        "left": "step 3",
-    }
+    assert [node.uuid for node in graph.nodes] == ["a", "b", "c"]
+    assert [node.step_id for node in graph.nodes] == [1, 2, 3]
 
 
-def test_enrich_graph_is_non_mutating():
-    graph = {"nodes": [{"id": "a"}], "edges": []}
+def test_session_graph_preserves_arrival_order_for_parallel_nodes():
+    graph = SessionGraph.empty()
 
-    enriched = enrich_graph_for_ui(graph)
+    graph.add_node(_incoming("root", "Root"), [])
+    graph.add_node(_incoming("right", "Right"), ["root"])
+    graph.add_node(_incoming("left", "Left"), ["root"])
 
-    assert enriched["nodes"][0]["step_id"] == "step 1"
-    assert "step_id" not in graph["nodes"][0]
+    assert [(node.uuid, node.step_id) for node in graph.nodes] == [
+        ("root", 1),
+        ("right", 2),
+        ("left", 3),
+    ]
+
+
+def test_session_graph_serialization_round_trip():
+    graph = SessionGraph.empty()
+    graph.add_node(_incoming("a", "A"), [])
+    graph.add_node(_incoming("b", "B"), ["a"])
+
+    restored = SessionGraph.from_dict(graph.to_dict())
+
+    assert restored.to_dict() == graph.to_dict()
+    assert restored.edges[0].source_uuid == "a"
+    assert restored.edges[0].target_uuid == "b"

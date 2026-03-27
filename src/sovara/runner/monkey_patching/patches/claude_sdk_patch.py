@@ -160,7 +160,7 @@ def _create_redacted_llm_node(session_id: str, api_type: str, stack_trace: str, 
     cache_output = DB.get_in_out(input_dict, api_type)
     if cache_output.output is None:
         DB.cache_output(cache_result=cache_output, output_obj=output_obj, api_type=api_type)
-    node_id = cache_output.node_id
+    node_id = cache_output.node_uuid
 
     send_graph_node_and_edges(
         node_id=node_id,
@@ -198,7 +198,7 @@ def _process_tool_use(
     cache_output = DB.get_in_out(input_dict, api_type)
     if cache_output.output is None:
         DB.cache_output(cache_result=cache_output, output_obj=output_obj, api_type=api_type)
-    node_id = cache_output.node_id
+    node_id = cache_output.node_uuid
 
     # Send graph node
     send_graph_node_and_edges(
@@ -238,7 +238,7 @@ def _process_text_block(block, session_id: str, api_type: str, stack_trace: str,
     cache_output = DB.get_in_out(input_dict, api_type)
     if cache_output.output is None:
         DB.cache_output(cache_result=cache_output, output_obj=output_obj, api_type=api_type)
-    node_id = cache_output.node_id
+    node_id = cache_output.node_uuid
 
     send_graph_node_and_edges(
         node_id=node_id,

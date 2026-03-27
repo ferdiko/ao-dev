@@ -11,49 +11,46 @@ from sovara.server.handlers.handler_utils import logger
 def handle_edit_input(state, msg: dict) -> None:
     """Handle input edit from UI."""
     session_id = msg["session_id"]
-    node_id = msg["node_id"]
+    node_uuid = msg["node_uuid"]
     new_input = msg["value"]
 
-    overwrite = DB.set_input_overwrite(session_id, node_id, new_input)
+    overwrite = DB.set_input_overwrite(session_id, node_uuid, new_input)
     if overwrite and session_id in state.session_graphs:
-        for node in state.session_graphs[session_id]["nodes"]:
-            if node["id"] == node_id:
-                node["input"] = new_input  # graph stores to_show for display
-                break
+        node = state.session_graphs[session_id].get_node_by_uuid(node_uuid)
+        if node:
+            node.input = new_input  # graph stores to_show for display
         DB.update_graph_topology(session_id, state.session_graphs[session_id])
 
 
 def handle_edit_output(state, msg: dict) -> None:
     """Handle output edit from UI."""
     session_id = msg["session_id"]
-    node_id = msg["node_id"]
+    node_uuid = msg["node_uuid"]
     new_output = msg["value"]
 
-    overwrite = DB.set_output_overwrite(session_id, node_id, new_output)
+    overwrite = DB.set_output_overwrite(session_id, node_uuid, new_output)
     if overwrite and session_id in state.session_graphs:
-        for node in state.session_graphs[session_id]["nodes"]:
-            if node["id"] == node_id:
-                node["output"] = new_output  # graph stores to_show for display
-                break
+        node = state.session_graphs[session_id].get_node_by_uuid(node_uuid)
+        if node:
+            node.output = new_output  # graph stores to_show for display
         DB.update_graph_topology(session_id, state.session_graphs[session_id])
 
 
 def handle_update_node(state, msg: dict) -> None:
     """Handle updateNode message for updating node properties like label."""
     session_id = msg.get("session_id")
-    node_id = msg.get("node_id")
+    node_uuid = msg.get("node_uuid")
     field = msg.get("field")
     value = msg.get("value")
 
-    if not all([session_id, node_id, field]):
+    if not all([session_id, node_uuid, field]):
         logger.error(f"Missing required fields in updateNode message: {msg}")
         return
 
     if session_id in state.session_graphs:
-        for node in state.session_graphs[session_id]["nodes"]:
-            if node["id"] == node_id:
-                node[field] = value
-                break
+        node = state.session_graphs[session_id].get_node_by_uuid(node_uuid)
+        if node and hasattr(node, field):
+            setattr(node, field, value)
         DB.update_graph_topology(session_id, state.session_graphs[session_id])
     else:
         logger.warning(f"Session {session_id} not found in session_graphs")

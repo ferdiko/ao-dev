@@ -19,6 +19,31 @@ declare global {
   }
 }
 
+function normalizeGraphPayload(payload: any): GraphData {
+  const nodes = Array.isArray(payload?.nodes)
+    ? payload.nodes.map((node: any) => ({
+        id: String(node.uuid ?? node.id),
+        step_id: typeof node.step_id === 'number' ? node.step_id : undefined,
+        input: node.input,
+        output: node.output,
+        stack_trace: node.stack_trace ?? '',
+        label: node.label ?? String(node.uuid ?? node.id ?? ''),
+        border_color: node.border_color,
+        model: node.model,
+        attachments: node.attachments,
+      }))
+    : [];
+  const edges = Array.isArray(payload?.edges)
+    ? payload.edges.map((edge: any) => ({
+        id: String(edge.id),
+        source: String(edge.source_uuid ?? edge.source),
+        target: String(edge.target_uuid ?? edge.target),
+      }))
+    : [];
+
+  return { nodes, edges };
+}
+
 // Inner component that uses the document context
 const GraphTabAppInner: React.FC = () => {
   const [experiment, setExperiment] = useState<ProcessInfo | null>(null);
@@ -81,7 +106,7 @@ const GraphTabAppInner: React.FC = () => {
         case 'graph_update':
           // Always accept graph updates - the provider already filters by session
           // This avoids stale closure issues when switching experiments
-          setGraphData(message.payload);
+          setGraphData(normalizeGraphPayload(message.payload));
           break;
         case 'configUpdate':
           // Forward config updates to config bridge
@@ -168,7 +193,7 @@ const GraphTabAppInner: React.FC = () => {
     if (currentSessionId && window.vscode) {
       const baseMsg = {
         session_id: currentSessionId,
-        node_id: nodeId,
+        node_uuid: nodeId,
         value,
         ...(attachments && { attachments }),
       };

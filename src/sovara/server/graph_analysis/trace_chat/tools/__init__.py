@@ -156,10 +156,10 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "step_index": {
+                    "step_id": {
                         "type": "integer",
                         "description": (
-                            "1-based step index. If omitted and only one prompt exists, "
+                            "1-based step ID. If omitted and only one prompt exists, "
                             "defaults to the step that introduced it."
                         ),
                     },
@@ -176,9 +176,9 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "step_index": {
+                    "step_id": {
                         "type": "integer",
-                        "description": "1-based step index.",
+                        "description": "1-based step ID.",
                     },
                     "index": {
                         "type": "integer",
@@ -200,9 +200,9 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "step_index": {
+                    "step_id": {
                         "type": "integer",
-                        "description": "1-based step index.",
+                        "description": "1-based step ID.",
                     },
                     "index": {
                         "type": "integer",
@@ -228,9 +228,9 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "step_index": {
+                    "step_id": {
                         "type": "integer",
-                        "description": "1-based step index.",
+                        "description": "1-based step ID.",
                     },
                     "instruction": {
                         "type": "string",
@@ -249,9 +249,9 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "step_index": {
+                    "step_id": {
                         "type": "integer",
-                        "description": "1-based step index.",
+                        "description": "1-based step ID.",
                     },
                     "after_index": {
                         "type": "integer",
@@ -274,9 +274,9 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "step_index": {
+                    "step_id": {
                         "type": "integer",
-                        "description": "1-based step index.",
+                        "description": "1-based step ID.",
                     },
                     "index": {
                         "type": "integer",
@@ -295,9 +295,9 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "step_index": {
+                    "step_id": {
                         "type": "integer",
-                        "description": "1-based step index.",
+                        "description": "1-based step ID.",
                     },
                     "from_index": {
                         "type": "integer",
@@ -320,9 +320,9 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "step_index": {
+                    "step_id": {
                         "type": "integer",
-                        "description": "1-based step index.",
+                        "description": "1-based step ID.",
                     },
                 },
                 "required": [],

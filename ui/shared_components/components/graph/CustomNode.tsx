@@ -35,7 +35,6 @@ interface CustomNodeData extends GraphNode {
 export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
   data,
   id,
-  yPos,
 }) => {
   const [showPopover, setShowPopover] = useState(false);
   const [isEditingLabel, setIsEditingLabel] = useState(false);
@@ -160,6 +159,23 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
         data.onHover?.(null);
       }}
     >
+      {typeof data.step_id === "number" && (
+        <div
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 10,
+            fontSize: "10px",
+            fontWeight: 700,
+            opacity: 0.72,
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+          }}
+          title={`Step ${data.step_id}`}
+        >
+          {`Step ${data.step_id}`}
+        </div>
+      )}
       {showPopover && !isEditingLabel && popoverCoords && (
         <NodePopover
           onAction={handleAction}
@@ -262,7 +278,7 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
           opacity: isEditingLabel ? 0 : 1,
           color: "var(--vscode-foreground)",
           textAlign: "center",
-          padding: "0 8px",
+          padding: typeof data.step_id === "number" ? "0 54px 0 8px" : "0 8px",
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
@@ -278,18 +294,6 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
             width: "100%",
           }}
         >
-          {data.step_id && (
-            <div
-              style={{
-                fontSize: "10px",
-                fontWeight: 700,
-                opacity: 0.75,
-                textTransform: "uppercase",
-              }}
-            >
-              {data.step_id}
-            </div>
-          )}
           <div style={{ width: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>
             {truncateLabel(data.label)}
           </div>

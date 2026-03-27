@@ -24,25 +24,25 @@ def _edit_system(instruction: str) -> str:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _resolve_step_index(trace: Trace, step_index) -> Tuple[int, Optional[str]]:
-    """Resolve and validate step_index (1-based). Returns (0-based index, error_or_None).
+def _resolve_step_id(trace: Trace, step_id) -> Tuple[int, Optional[str]]:
+    """Resolve and validate step_id (1-based). Returns (0-based index, error_or_None).
 
-    If step_index is omitted and only one prompt exists, defaults to the
+    If step_id is omitted and only one prompt exists, defaults to the
     first step that introduced it.
     """
-    if step_index is not None:
+    if step_id is not None:
         try:
-            step_index = int(step_index)
+            step_id = int(step_id)
         except (TypeError, ValueError):
-            return -1, "Invalid step_index: must be an integer."
-        if step_index < 1 or step_index > len(trace.records):
-            return -1, f"step_index {step_index} out of range (1–{len(trace.records)})."
-        return step_index - 1, None
+            return -1, "Invalid step_id: must be an integer."
+        if step_id < 1 or step_id > len(trace.records):
+            return -1, f"step_id {step_id} out of range (1–{len(trace.records)})."
+        return step_id - 1, None
 
     # Auto-resolve: find the first step that introduced the single prompt
     registry = trace.prompt_registry
     if len(registry) == 0:
-        return -1, "No system prompts found. Specify step_index."
+        return -1, "No system prompts found. Specify step_id."
     if len(registry) == 1:
         # Find the first step where prompt_is_new=True
         for d in trace.diffed:
@@ -50,7 +50,7 @@ def _resolve_step_index(trace: Trace, step_index) -> Tuple[int, Optional[str]]:
                 return d.index, None
         return 0, None  # fallback
 
-    lines = ["Multiple prompts found. Specify step_index for the step to edit:"]
+    lines = ["Multiple prompts found. Specify step_id for the step to edit:"]
     for pid, text in registry.items():
         steps = [str(d.index + 1) for d in trace.diffed if d.prompt_id == pid and d.prompt_is_new]
         preview = text[:80].replace("\n", " ")
@@ -107,7 +107,7 @@ def _write_back(trace: Trace, idx: int, ps: PromptSections) -> str:
 
 def list_sections(trace: Trace, **params) -> str:
     """List all editable sections for a step."""
-    idx, err = _resolve_step_index(trace, params.get("step_index"))
+    idx, err = _resolve_step_id(trace, params.get("step_id"))
     if err:
         return err
     model = params.get("model", "anthropic/claude-sonnet-4-6")
@@ -119,7 +119,7 @@ def list_sections(trace: Trace, **params) -> str:
 
 def get_section(trace: Trace, **params) -> str:
     """Return the full text of one section."""
-    idx, err = _resolve_step_index(trace, params.get("step_index"))
+    idx, err = _resolve_step_id(trace, params.get("step_id"))
     if err:
         return err
     model = params.get("model", "anthropic/claude-sonnet-4-6")
@@ -136,7 +136,7 @@ def get_section(trace: Trace, **params) -> str:
 
 def edit_section(trace: Trace, **params) -> str:
     """Rewrite one section based on a natural-language instruction."""
-    idx, err = _resolve_step_index(trace, params.get("step_index"))
+    idx, err = _resolve_step_id(trace, params.get("step_id"))
     if err:
         return err
     model = params.get("model", "anthropic/claude-sonnet-4-6")
@@ -173,7 +173,7 @@ def edit_section(trace: Trace, **params) -> str:
 
 def bulk_edit(trace: Trace, **params) -> str:
     """Apply the same editing instruction to every section in parallel."""
-    idx, err = _resolve_step_index(trace, params.get("step_index"))
+    idx, err = _resolve_step_id(trace, params.get("step_id"))
     if err:
         return err
     model = params.get("model", "anthropic/claude-sonnet-4-6")
@@ -209,7 +209,7 @@ def bulk_edit(trace: Trace, **params) -> str:
 
 def insert_section(trace: Trace, **params) -> str:
     """Insert a new section after the given index (-1 to prepend)."""
-    idx, err = _resolve_step_index(trace, params.get("step_index"))
+    idx, err = _resolve_step_id(trace, params.get("step_id"))
     if err:
         return err
     model = params.get("model", "anthropic/claude-sonnet-4-6")
@@ -243,7 +243,7 @@ def insert_section(trace: Trace, **params) -> str:
 
 def delete_section(trace: Trace, **params) -> str:
     """Remove a section by index."""
-    idx, err = _resolve_step_index(trace, params.get("step_index"))
+    idx, err = _resolve_step_id(trace, params.get("step_id"))
     if err:
         return err
     model = params.get("model", "anthropic/claude-sonnet-4-6")
@@ -266,7 +266,7 @@ def delete_section(trace: Trace, **params) -> str:
 
 def move_section(trace: Trace, **params) -> str:
     """Move a section from one index to another."""
-    idx, err = _resolve_step_index(trace, params.get("step_index"))
+    idx, err = _resolve_step_id(trace, params.get("step_id"))
     if err:
         return err
     model = params.get("model", "anthropic/claude-sonnet-4-6")
@@ -296,7 +296,7 @@ def move_section(trace: Trace, **params) -> str:
 
 def undo(trace: Trace, **params) -> str:
     """Revert the last edit."""
-    idx, err = _resolve_step_index(trace, params.get("step_index"))
+    idx, err = _resolve_step_id(trace, params.get("step_id"))
     if err:
         return err
 

@@ -249,17 +249,17 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                     break;
                 case 'edit_input':
                     this._pythonClient?.httpPost('/ui/edit-input', {
-                        session_id: data.session_id, node_id: data.node_id, value: data.value,
+                        session_id: data.session_id, node_uuid: data.node_uuid, value: data.value,
                     });
                     break;
                 case 'edit_output':
                     this._pythonClient?.httpPost('/ui/edit-output', {
-                        session_id: data.session_id, node_id: data.node_id, value: data.value,
+                        session_id: data.session_id, node_uuid: data.node_uuid, value: data.value,
                     });
                     break;
                 case 'update_node':
                     this._pythonClient?.httpPost('/ui/update-node', {
-                        session_id: data.session_id, node_id: data.node_id,
+                        session_id: data.session_id, node_uuid: data.node_uuid,
                         field: data.field, value: data.value,
                     });
                     break;
@@ -573,12 +573,12 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                     break;
                 case 'edit_input':
                     this._pythonClient?.httpPost('/ui/edit-input', {
-                        session_id: data.session_id, node_id: data.node_id, value: data.value,
+                        session_id: data.session_id, node_uuid: data.node_uuid, value: data.value,
                     });
                     break;
                 case 'edit_output':
                     this._pythonClient?.httpPost('/ui/edit-output', {
-                        session_id: data.session_id, node_id: data.node_id, value: data.value,
+                        session_id: data.session_id, node_uuid: data.node_uuid, value: data.value,
                     });
                     break;
                 case 'openDocument':

@@ -18,11 +18,11 @@ except ImportError:
 
 def _deepresearch_asserts(run_data_obj: RunData):
     """Check that every node has at least one parent node, except GPT-4.1 and first o3."""
-    target_nodes = {edge["target"] for edge in run_data_obj.graph["edges"]}
+    target_nodes = {edge["target_uuid"] for edge in run_data_obj.graph["edges"]}
     first_o3_found = False
 
     for node in run_data_obj.graph["nodes"]:
-        node_id = node["id"]
+        node_uuid = node["uuid"]
         label = node.get("label", "")
 
         # Skip check for "gpt-4.1" nodes
@@ -36,8 +36,8 @@ def _deepresearch_asserts(run_data_obj: RunData):
 
         # All other nodes must have at least one parent
         assert (
-            node_id in target_nodes
-        ), f"[DeepResearch] Node {node_id} with label '{label}' has no parent nodes"
+            node_uuid in target_nodes
+        ), f"[DeepResearch] Node {node_uuid} with label '{label}' has no parent nodes"
 
 
 @pytest.mark.parametrize(

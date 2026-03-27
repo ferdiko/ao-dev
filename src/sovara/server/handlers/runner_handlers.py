@@ -7,46 +7,38 @@ Broadcasting is handled by the route layer after calling these handlers.
 from sovara.server.database_manager import DB
 from sovara.server.handlers.handler_utils import logger
 from sovara.runner.string_matching import clear_matching_data
+from sovara.server.graph_models import IncomingNode, SessionGraph
 
 
-def _find_sessions_with_node(state, node_id: str) -> set:
-    """Find all sessions containing a specific node ID."""
+def _find_sessions_with_node(state, node_uuid: str) -> set:
+    """Find all sessions containing a specific node UUID."""
     sessions = set()
     for session_id, graph in state.session_graphs.items():
-        if any(node["id"] == node_id for node in graph.get("nodes", [])):
+        if graph.get_node_by_uuid(node_uuid):
             sessions.add(session_id)
     return sessions
 
 
 def _add_node_to_session(state, sid: str, node: dict, incoming_edges: list) -> None:
     """Add a node to a specific session's graph."""
-    graph = state.session_graphs.setdefault(sid, {"nodes": [], "edges": []})
+    graph = state.session_graphs.setdefault(sid, SessionGraph.empty())
+    incoming_node = IncomingNode.from_dict(node)
+    added_node = graph.add_node(incoming_node, incoming_edges)
 
-    # Check for duplicate node
-    node_exists = any(n["id"] == node["id"] for n in graph["nodes"])
-    if not node_exists:
-        graph["nodes"].append(node)
-
-    # Build set of existing edge IDs for duplicate checking
-    existing_edge_ids = {e["id"] for e in graph["edges"]}
-    existing_node_ids = {n["id"] for n in graph["nodes"]}
-
-    # Add incoming edges (only if source nodes exist and edge doesn't already exist)
-    for source in incoming_edges:
-        if source in existing_node_ids:
-            target = node["id"]
-            edge_id = f"e{source}-{target}"
-            if edge_id not in existing_edge_ids:
-                graph["edges"].append({"id": edge_id, "source": source, "target": target})
-                existing_edge_ids.add(edge_id)
-                logger.info(f"Added edge {edge_id} in session {sid}")
-        else:
-            logger.debug(f"Skipping edge from non-existent node {source} to {node['id']}")
+    existing_node_uuids = {n.uuid for n in graph.nodes}
+    for source_uuid in incoming_edges:
+        if source_uuid not in existing_node_uuids:
+            logger.debug(
+                f"Skipping edge from non-existent node {source_uuid} to {incoming_node.uuid}"
+            )
+            continue
+        edge_id = f"e{source_uuid}-{added_node.uuid}"
+        logger.info(f"Added edge {edge_id} in session {sid}")
 
     state.checkpoint_session_runtime(sid)
 
     # Update color preview in database
-    node_colors = [n["border_color"] for n in graph["nodes"]]
+    node_colors = [n.border_color for n in graph.nodes]
     color_preview = node_colors[-6:]
     DB.update_color_preview(sid, color_preview)
     DB.update_graph_topology(sid, graph)

@@ -76,3 +76,8 @@ docs = [
     "mkdocs-minify-plugin",
     "mkdocstrings[python]>=0.24",
 ]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:'_UnionGenericAlias' is deprecated and slated for removal in Python 3\\.17:DeprecationWarning:google\\.genai\\.types",
+]

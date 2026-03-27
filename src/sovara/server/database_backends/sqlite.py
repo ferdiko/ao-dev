@@ -155,7 +155,7 @@ def _init_db(conn):
         """
         CREATE TABLE IF NOT EXISTS llm_calls (
             session_id TEXT,
-            node_id TEXT,
+            node_uuid TEXT,
             input TEXT,
             input_hash TEXT,
             input_overwrite TEXT,
@@ -165,7 +165,7 @@ def _init_db(conn):
             api_type TEXT,
             stack_trace TEXT,
             timestamp TIMESTAMP DEFAULT (datetime('now')),
-            PRIMARY KEY (session_id, node_id),
+            PRIMARY KEY (session_id, node_uuid),
             FOREIGN KEY (session_id) REFERENCES experiments (session_id)
         )
     """
@@ -237,10 +237,10 @@ def _init_db(conn):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             lesson_id TEXT NOT NULL,
             session_id TEXT NOT NULL,
-            node_id TEXT,
+            node_uuid TEXT,
             applied_at TIMESTAMP DEFAULT (datetime('now')),
             FOREIGN KEY (session_id) REFERENCES experiments (session_id),
-            UNIQUE (lesson_id, session_id, node_id)
+            UNIQUE (lesson_id, session_id, node_uuid)
         )
     """
     )
@@ -414,19 +414,19 @@ def add_experiment_query(
     )
 
 
-def set_input_overwrite_query(input_overwrite, session_id, node_id):
+def set_input_overwrite_query(input_overwrite, session_id, node_uuid):
     """Execute SQLite-specific UPDATE for llm_calls input_overwrite"""
     execute(
-        "UPDATE llm_calls SET input_overwrite=?, output=NULL WHERE session_id=? AND node_id=?",
-        (input_overwrite, session_id, node_id),
+        "UPDATE llm_calls SET input_overwrite=?, output=NULL WHERE session_id=? AND node_uuid=?",
+        (input_overwrite, session_id, node_uuid),
     )
 
 
-def set_output_overwrite_query(output_overwrite, session_id, node_id):
+def set_output_overwrite_query(output_overwrite, session_id, node_uuid):
     """Execute SQLite-specific UPDATE for llm_calls output"""
     execute(
-        "UPDATE llm_calls SET output=? WHERE session_id=? AND node_id=?",
-        (output_overwrite, session_id, node_id),
+        "UPDATE llm_calls SET output=? WHERE session_id=? AND node_uuid=?",
+        (output_overwrite, session_id, node_uuid),
     )
 
 
@@ -717,23 +717,23 @@ def get_parent_session_id_query(session_id):
 def get_llm_call_by_session_and_hash_query(session_id, input_hash, offset=0):
     """Get LLM call by session_id and input_hash. offset selects the Nth match."""
     return query_one(
-        "SELECT node_id, input_overwrite, output FROM llm_calls WHERE session_id=? AND input_hash=? ORDER BY rowid LIMIT 1 OFFSET ?",
+        "SELECT node_uuid, input_overwrite, output FROM llm_calls WHERE session_id=? AND input_hash=? ORDER BY rowid LIMIT 1 OFFSET ?",
         (session_id, input_hash, offset),
     )
 
 
 def insert_llm_call_with_output_query(
-    session_id, input_pickle, input_hash, node_id, api_type, output_pickle, stack_trace=None
+    session_id, input_pickle, input_hash, node_uuid, api_type, output_pickle, stack_trace=None
 ):
     """Insert new LLM call record with output in a single operation (upsert)."""
     execute(
         """
-        INSERT INTO llm_calls (session_id, input, input_hash, node_id, api_type, output, stack_trace)
+        INSERT INTO llm_calls (session_id, input, input_hash, node_uuid, api_type, output, stack_trace)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (session_id, node_id)
+        ON CONFLICT (session_id, node_uuid)
         DO UPDATE SET output = excluded.output, stack_trace = excluded.stack_trace
         """,
-        (session_id, input_pickle, input_hash, node_id, api_type, output_pickle, stack_trace),
+        (session_id, input_pickle, input_hash, node_uuid, api_type, output_pickle, stack_trace),
     )
 
 
@@ -978,8 +978,8 @@ def copy_llm_calls_query(old_session_id, new_session_id):
     """Copy all llm_calls from one session to another with a new session_id."""
     execute(
         """
-        INSERT INTO llm_calls (session_id, node_id, input, input_hash, input_overwrite, output, color, label, api_type, stack_trace, timestamp)
-        SELECT ?, node_id, input, input_hash, input_overwrite, output, color, label, api_type, stack_trace, timestamp
+        INSERT INTO llm_calls (session_id, node_uuid, input, input_hash, input_overwrite, output, color, label, api_type, stack_trace, timestamp)
+        SELECT ?, node_uuid, input, input_hash, input_overwrite, output, color, label, api_type, stack_trace, timestamp
         FROM llm_calls WHERE session_id=?
         """,
         (new_session_id, old_session_id),
@@ -1089,19 +1089,19 @@ def get_session_name_query(session_id):
     return query_one("SELECT name FROM experiments WHERE session_id=?", (session_id,))
 
 
-def get_llm_call_input_api_type_query(session_id, node_id):
-    """Get input and api_type from llm_calls by session_id and node_id."""
+def get_llm_call_input_api_type_query(session_id, node_uuid):
+    """Get input and api_type from llm_calls by session_id and node_uuid."""
     return query_one(
-        "SELECT input, api_type FROM llm_calls WHERE session_id=? AND node_id=?",
-        (session_id, node_id),
+        "SELECT input, api_type FROM llm_calls WHERE session_id=? AND node_uuid=?",
+        (session_id, node_uuid),
     )
 
 
-def get_llm_call_output_api_type_query(session_id, node_id):
-    """Get output and api_type from llm_calls by session_id and node_id."""
+def get_llm_call_output_api_type_query(session_id, node_uuid):
+    """Get output and api_type from llm_calls by session_id and node_uuid."""
     return query_one(
-        "SELECT output, api_type FROM llm_calls WHERE session_id=? AND node_id=?",
-        (session_id, node_id),
+        "SELECT output, api_type FROM llm_calls WHERE session_id=? AND node_uuid=?",
+        (session_id, node_uuid),
     )
 
 
@@ -1143,18 +1143,18 @@ def get_experiment_metadata_query(session_id):
 def get_llm_calls_for_session_query(session_id):
     """Get all LLM calls for a session, ordered by insertion time."""
     return query_all(
-        """SELECT node_id, input, input_overwrite, output, api_type, label, timestamp
+        """SELECT node_uuid, input, input_overwrite, output, api_type, label, timestamp
            FROM llm_calls WHERE session_id=? ORDER BY rowid""",
         (session_id,),
     )
 
 
-def get_llm_call_full_query(session_id, node_id):
+def get_llm_call_full_query(session_id, node_uuid):
     """Get full LLM call data including input, output, overwrites, and stack_trace."""
     return query_one(
-        """SELECT node_id, input, input_hash, input_overwrite, output, api_type, label, timestamp, stack_trace
-           FROM llm_calls WHERE session_id=? AND node_id=?""",
-        (session_id, node_id),
+        """SELECT node_uuid, input, input_hash, input_overwrite, output, api_type, label, timestamp, stack_trace
+           FROM llm_calls WHERE session_id=? AND node_uuid=?""",
+        (session_id, node_uuid),
     )
 # ============================================================
 # Lessons queries
@@ -1170,7 +1170,7 @@ def get_lessons_applied_for_session_query(session_id):
     """Get lesson application records for a specific session."""
     return query_all(
         """
-        SELECT la.lesson_id, la.session_id, la.node_id, e.name as run_name
+        SELECT la.lesson_id, la.session_id, la.node_uuid, e.name as run_name
         FROM lessons_applied la
         LEFT JOIN experiments e ON la.session_id = e.session_id
         WHERE la.session_id = ?
@@ -1184,7 +1184,7 @@ def get_lessons_applied_query(lesson_id):
     """Get all sessions/nodes where a specific lesson was applied."""
     return query_all(
         """
-        SELECT la.session_id, la.node_id, e.name as run_name
+        SELECT la.session_id, la.node_uuid, e.name as run_name
         FROM lessons_applied la
         LEFT JOIN experiments e ON la.session_id = e.session_id
         WHERE la.lesson_id = ?
@@ -1194,27 +1194,27 @@ def get_lessons_applied_query(lesson_id):
     )
 
 
-def add_lesson_applied_query(lesson_id, session_id, node_id=None):
+def add_lesson_applied_query(lesson_id, session_id, node_uuid=None):
     """Record that a lesson was applied to a session/node."""
     execute(
         """
-        INSERT OR IGNORE INTO lessons_applied (lesson_id, session_id, node_id)
+        INSERT OR IGNORE INTO lessons_applied (lesson_id, session_id, node_uuid)
         VALUES (?, ?, ?)
         """,
-        (lesson_id, session_id, node_id),
+        (lesson_id, session_id, node_uuid),
     )
 
 
-def remove_lesson_applied_query(lesson_id, session_id, node_id=None):
+def remove_lesson_applied_query(lesson_id, session_id, node_uuid=None):
     """Remove a lesson application record."""
-    if node_id:
+    if node_uuid:
         execute(
-            "DELETE FROM lessons_applied WHERE lesson_id = ? AND session_id = ? AND node_id = ?",
-            (lesson_id, session_id, node_id),
+            "DELETE FROM lessons_applied WHERE lesson_id = ? AND session_id = ? AND node_uuid = ?",
+            (lesson_id, session_id, node_uuid),
         )
     else:
         execute(
-            "DELETE FROM lessons_applied WHERE lesson_id = ? AND session_id = ? AND node_id IS NULL",
+            "DELETE FROM lessons_applied WHERE lesson_id = ? AND session_id = ? AND node_uuid IS NULL",
             (lesson_id, session_id),
         )
 

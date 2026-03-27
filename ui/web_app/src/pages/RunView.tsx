@@ -44,7 +44,7 @@ function LLMNode({ data, selected }: NodeProps) {
     label: string;
     model?: string;
     nodeId: string;
-    stepId?: string;
+    stepId?: number;
     focused?: boolean;
     borderColor?: string;
   };
@@ -56,8 +56,10 @@ function LLMNode({ data, selected }: NodeProps) {
       <Handle type="target" position={Position.Top} id="top" className="graph-handle" />
       <Handle type="target" position={Position.Left} id="left" className="graph-handle graph-handle-side" />
       <Handle type="target" position={Position.Right} id="right" className="graph-handle graph-handle-side" />
-      {d.stepId && <div className="graph-node-model">{d.stepId}</div>}
-      <div className="graph-node-label">{d.label}</div>
+      <div className={`graph-node-title-row${typeof d.stepId === "number" ? " has-step" : ""}`}>
+        <div className="graph-node-label">{d.label}</div>
+        {typeof d.stepId === "number" && <div className="graph-node-step">{`Step ${d.stepId}`}</div>}
+      </div>
       {d.model && <div className="graph-node-model">{d.model}</div>}
       <Handle type="source" position={Position.Bottom} id="bottom" className="graph-handle" />
       <Handle type="source" position={Position.Left} id="left" className="graph-handle graph-handle-side" />
@@ -375,10 +377,15 @@ function RunViewContent({
   const graphHandleDown = useResize("horizontal", onGraphResize, onGraphResizeEnd);
   const chatHandleDown = useResize("horizontal", onChatResize, onChatResizeEnd);
 
+  const orderedGraphNodes = useMemo(
+    () => [...graphNodes].sort((a, b) => a.step_id - b.step_id),
+    [graphNodes]
+  );
+
   // Compute full graph layout (positions + routed edges)
   const graphLayout = useMemo(
-    () => layoutGraph(graphNodes, graphEdges),
-    [graphNodes, graphEdges],
+    () => layoutGraph(orderedGraphNodes, graphEdges),
+    [orderedGraphNodes, graphEdges],
   );
   const sortedNodeIds = graphLayout.sortedIds;
   const {
@@ -393,15 +400,15 @@ function RunViewContent({
   });
 
   // ReactFlow data from layout engine
-  const nodeById = useMemo(() => new Map(graphNodes.map((n) => [n.id, n])), [graphNodes]);
+  const nodeById = useMemo(() => new Map(orderedGraphNodes.map((n) => [n.id, n])), [orderedGraphNodes]);
   const nodeIdByStepId = useMemo(
     () =>
       new Map(
-        graphNodes
-          .filter((node) => node.step_id)
-          .map((node) => [node.step_id as string, node.id])
+        orderedGraphNodes
+          .filter((node) => typeof node.step_id === "number")
+          .map((node) => [String(node.step_id), node.id])
       ),
-    [graphNodes]
+    [orderedGraphNodes]
   );
 
   const rfNodes: Node[] = useMemo(() => {
@@ -457,7 +464,7 @@ function RunViewContent({
     [rfNodes, focusedNodeId]
   );
 
-  const hasGraph = graphNodes.length > 0;
+  const hasGraph = orderedGraphNodes.length > 0;
 
   if (loading) {
     return (
@@ -582,8 +589,7 @@ function RunViewContent({
           <div className="run-detail-body">
             {hasGraph ? (
               <RunTraceFlow
-                nodes={graphNodes}
-                edges={graphEdges}
+                nodes={orderedGraphNodes}
                 viewMode={viewMode}
                 focusedNodeId={focusedNodeId}
                 nodeRefs={nodeRefs}
