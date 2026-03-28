@@ -330,9 +330,28 @@ COMPILED_URL_PATTERN_TO_NODE_NAME = [
 # Order matters: more specific patterns should come before general ones
 MODEL_NAME_PATTERNS = [
     # OpenAI - GPT-5 series
+    (r"^(openai/)?gpt-5\.4-pro", "GPT-5.4 Pro"),
+    (r"^(openai/)?gpt-5\.4", "GPT-5.4"),
+    (r"^(openai/)?gpt-5\.3-codex", "GPT-5.3 Codex"),
+    (r"^(openai/)?gpt-5\.3-chat(?:-latest)?", "GPT-5.3 Chat"),
+    (r"^(openai/)?gpt-5\.2-codex", "GPT-5.2 Codex"),
+    (r"^(openai/)?gpt-5\.2-chat(?:-latest)?", "GPT-5.2 Chat"),
+    (r"^(openai/)?gpt-5\.2-pro", "GPT-5.2 Pro"),
+    (r"^(openai/)?gpt-5\.2", "GPT-5.2"),
+    (r"^(openai/)?gpt-5\.1-codex-max", "GPT-5.1 Codex Max"),
+    (r"^(openai/)?gpt-5\.1-codex-mini", "GPT-5.1 Codex Mini"),
+    (r"^(openai/)?gpt-5\.1-codex", "GPT-5.1 Codex"),
+    (r"^(openai/)?gpt-5\.1-chat(?:-latest)?", "GPT-5.1 Chat"),
+    (r"^(openai/)?gpt-5\.1", "GPT-5.1"),
+    (r"^(openai/)?gpt-5-codex", "GPT-5 Codex"),
+    (r"^(openai/)?gpt-5-chat(?:-latest)?", "GPT-5 Chat"),
+    (r"^(openai/)?gpt-5-pro", "GPT-5 Pro"),
     (r"^(openai/)?gpt-5-mini", "GPT-5 Mini"),
     (r"^(openai/)?gpt-5-nano", "GPT-5 Nano"),
     (r"^(openai/)?gpt-5", "GPT-5"),
+    # OpenAI - open-weight models
+    (r"^(openai/)?gpt-oss-120b", "GPT-OSS 120B"),
+    (r"^(openai/)?gpt-oss-20b", "GPT-OSS 20B"),
     # OpenAI - GPT-4.1 series
     (r"^(openai/)?gpt-4\.1-mini", "GPT-4.1 Mini"),
     (r"^(openai/)?gpt-4\.1-nano", "GPT-4.1 Nano"),
@@ -359,6 +378,9 @@ MODEL_NAME_PATTERNS = [
     (r"^o1-preview", "o1 Preview"),
     (r"^o1-mini", "o1 Mini"),
     (r"^o1", "o1"),
+    # Anthropic - Claude 4.6 series
+    (r"^claude-opus-4-6", "Claude Opus 4.6"),
+    (r"^claude-sonnet-4-6", "Claude Sonnet 4.6"),
     # Anthropic - Claude 4.5 series
     (r"^claude-opus-4-5", "Claude Opus 4.5"),
     (r"^claude-sonnet-4-5", "Claude Sonnet 4.5"),
@@ -391,6 +413,29 @@ MODEL_NAME_PATTERNS = [
     # Google - Gemini 1.5 series
     (r"^gemini-1\.5-pro", "Gemini 1.5 Pro"),
     (r"^gemini-1\.5-flash", "Gemini 1.5 Flash"),
+    # xAI - Grok 4 series
+    (
+        r"^grok-4(?:[.-])20-beta(?:-latest)?-non-reasoning",
+        "Grok 4.20 Beta Non-Reasoning",
+    ),
+    (r"^grok-4(?:[.-])20-beta(?:-latest)?-reasoning", "Grok 4.20 Beta Reasoning"),
+    (r"^grok-4(?:[.-])20-beta", "Grok 4.20 Beta"),
+    (r"^grok-4-1-fast-reasoning", "Grok 4.1 Fast Reasoning"),
+    (r"^grok-4-1-fast-non-reasoning", "Grok 4.1 Fast Non-Reasoning"),
+    (r"^grok-4-1-fast", "Grok 4.1 Fast"),
+    (r"^grok-4-fast-reasoning", "Grok 4 Fast Reasoning"),
+    (r"^grok-4-fast-non-reasoning", "Grok 4 Fast Non-Reasoning"),
+    (r"^grok-4-fast", "Grok 4 Fast"),
+    (r"^grok-4-0709", "Grok 4"),
+    (r"^grok-4", "Grok 4"),
+    # Mistral - frontier and coding models
+    (r"^mistral-large-2512", "Mistral Large 3"),
+    (r"^mistral-medium-2508", "Mistral Medium 3.1"),
+    (r"^mistral-small-2506", "Mistral Small 3.2"),
+    (r"^labs-devstral-small-2512", "Devstral Small 2"),
+    # DeepSeek - current API aliases
+    (r"^deepseek-chat", "DeepSeek Chat"),
+    (r"^deepseek-reasoner", "DeepSeek Reasoner"),
 ]
 COMPILED_MODEL_NAME_PATTERNS = [
     (re.compile(pattern), name) for pattern, name in MODEL_NAME_PATTERNS
