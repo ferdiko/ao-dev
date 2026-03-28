@@ -1,3 +1,5 @@
+import pytest
+
 from sovara.runner.monkey_patching.patching_utils import _sanitize_for_display
 
 
@@ -44,3 +46,31 @@ def test_open_weight_families_preserve_vendor_casing():
     assert _sanitize_for_display("tiny-aya-earth") == "Tiny Aya Earth"
     assert _sanitize_for_display("granite-4.0-h-1b") == "Granite 4.0 H 1B"
     assert _sanitize_for_display("devstral-small-2505") == "Devstral Small 2505"
+
+
+@pytest.mark.parametrize(
+    ("raw_model_name", "expected_display_name"),
+    [
+        ("grok-4-0709", "Grok 4"),
+        ("grok-4-latest", "Grok 4"),
+        ("grok-4-fast-reasoning", "Grok 4 Fast"),
+        ("grok-4-fast-non-reasoning", "Grok 4 Fast"),
+        ("grok-4.20-beta-latest-non-reasoning", "Grok 4.20 Beta"),
+        ("grok-4.20-multi-agent-beta-0309", "Grok 4.20 Multi-Agent Beta"),
+        ("command-a-03-2025", "Command A"),
+        ("amazon.nova-premier-v1:0", "Amazon Nova Premier"),
+        ("us.amazon.nova-pro-v1:0", "Amazon Nova Pro"),
+        ("amazon.nova-lite-v1:0", "Amazon Nova Lite"),
+        ("amazon.nova-micro-v1:0", "Amazon Nova Micro"),
+        ("amazon.nova-sonic-v1:0", "Amazon Nova Sonic"),
+        ("amazon.nova-2-sonic-v1:0", "Amazon Nova 2 Sonic"),
+        (
+            "amazon.nova-2-multimodal-embeddings-v1:0",
+            "Amazon Nova 2 Multimodal Embeddings",
+        ),
+        ("magistral-medium-2507", "Magistral Medium 1.1"),
+        ("magistral-small-2507", "Magistral Small 1.1"),
+    ],
+)
+def test_recent_model_display_aliases(raw_model_name: str, expected_display_name: str):
+    assert _sanitize_for_display(raw_model_name) == expected_display_name
