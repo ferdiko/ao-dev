@@ -1089,6 +1089,32 @@ def get_run_name_query(run_id):
     return query_one("SELECT name FROM runs WHERE run_id=?", (run_id,))
 
 
+def find_run_ids_by_prefix_query(run_id_prefix):
+    """Find run IDs matching a UUID prefix, ignoring hyphens and case."""
+    return query_all(
+        """
+        SELECT run_id
+        FROM runs
+        WHERE REPLACE(LOWER(run_id), '-', '') LIKE ?
+        ORDER BY timestamp DESC
+        """,
+        (f"{run_id_prefix.lower()}%",),
+    )
+
+
+def find_node_uuids_by_prefix_query(run_id, node_uuid_prefix):
+    """Find node UUIDs in a run matching a UUID prefix, ignoring hyphens and case."""
+    return query_all(
+        """
+        SELECT node_uuid
+        FROM llm_calls
+        WHERE run_id=? AND REPLACE(LOWER(node_uuid), '-', '') LIKE ?
+        ORDER BY rowid
+        """,
+        (run_id, f"{node_uuid_prefix.lower()}%",),
+    )
+
+
 def get_llm_call_input_api_type_query(run_id, node_uuid):
     """Get input and api_type from llm_calls by run_id and node_uuid."""
     return query_one(

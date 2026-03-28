@@ -19,6 +19,9 @@ if TYPE_CHECKING:
     from sovara.server.state import ServerState
 
 
+UUID_PREFIX_MIN_LENGTH = 8
+
+
 def format_timestamp(ts) -> str | None:
     """Format a timestamp to a compact local string."""
     if ts is None:
@@ -110,6 +113,61 @@ def _run_status(state: "ServerState | None", run_id: str) -> str:
     return run.status if run else "finished"
 
 
+def _is_empty_probe_payload(value: Any) -> bool:
+    """Return True when a filtered probe payload has no visible matches."""
+    return value is None or value == {} or value == []
+
+
+def _normalize_uuid_prefix(value: str, *, label: str) -> str:
+    compact = value.strip().lower().replace("-", "")
+    if not compact:
+        raise BadRequestError(f"{label} must not be empty.")
+    if len(compact) < UUID_PREFIX_MIN_LENGTH:
+        raise BadRequestError(
+            f"{label} prefix must be at least {UUID_PREFIX_MIN_LENGTH} hex characters."
+        )
+    if len(compact) > 32 or not re.fullmatch(r"[0-9a-f]+", compact):
+        raise BadRequestError(
+            f"{label} must be a UUID or UUID prefix containing only hex characters and optional hyphens."
+        )
+    return compact
+
+
+def _resolve_uuid_prefix(value: str, candidates: list[str], *, label: str) -> str:
+    normalized = _normalize_uuid_prefix(value, label=label)
+    exact_matches = [
+        candidate
+        for candidate in candidates
+        if candidate.lower().replace("-", "") == normalized
+    ]
+    if exact_matches:
+        return exact_matches[0]
+
+    matches = [
+        candidate
+        for candidate in candidates
+        if candidate.lower().replace("-", "").startswith(normalized)
+    ]
+    if not matches:
+        raise ResourceNotFoundError(f"{label} not found: {value}")
+    if len(matches) > 1:
+        joined = ", ".join(sorted(matches))
+        raise BadRequestError(
+            f"Ambiguous {label} prefix '{value}'. Matches: {joined}. Provide a longer prefix."
+        )
+    return matches[0]
+
+
+def _resolve_run_id(value: str) -> str:
+    candidates = DB.find_run_ids_by_prefix(_normalize_uuid_prefix(value, label="Run ID"))
+    return _resolve_uuid_prefix(value, candidates, label="Run ID")
+
+
+def _resolve_node_uuid(run_id: str, value: str) -> str:
+    candidates = DB.find_node_uuids_by_prefix(run_id, _normalize_uuid_prefix(value, label="Node UUID"))
+    return _resolve_uuid_prefix(value, candidates, label="Node UUID")
+
+
 def build_probe_response(
     run_id: str,
     *,
@@ -122,7 +180,8 @@ def build_probe_response(
     key_regex: str | None = None,
 ) -> dict:
     """Return the probe payload previously built inside so-cli."""
-    run = DB.get_run_metadata(run_id)
+    resolved_run_id = _resolve_run_id(run_id)
+    run = DB.get_run_metadata(resolved_run_id)
     if not run:
         raise ResourceNotFoundError(f"Run not found: {run_id}")
 
@@ -140,13 +199,13 @@ def build_probe_response(
         include_output = not show_input or show_output
 
         for raw_node_uuid in requested:
-            current_node_uuid = raw_node_uuid.strip()
-            row = DB.get_llm_call_full(run_id, current_node_uuid)
+            current_node_uuid = _resolve_node_uuid(resolved_run_id, raw_node_uuid.strip())
+            row = DB.get_llm_call_full(resolved_run_id, current_node_uuid)
             if not row:
                 raise ResourceNotFoundError(f"Node not found: {current_node_uuid}")
 
             llm_call = dict(row)
-            llm_call["run_id"] = run_id
+            llm_call["run_id"] = resolved_run_id
 
             input_to_show = _effective_input_to_show(llm_call)
             output_to_show = _effective_output_to_show(llm_call)
@@ -170,7 +229,7 @@ def build_probe_response(
 
             node_info = {
                 "node_uuid": current_node_uuid,
-                "run_id": run_id,
+                "run_id": resolved_run_id,
                 "api_type": llm_call["api_type"],
                 "label": llm_call["label"],
                 "timestamp": format_timestamp(llm_call["timestamp"]),
@@ -184,6 +243,16 @@ def build_probe_response(
                 node_info["input"] = input_to_show
             if include_output:
                 node_info["output"] = output_to_show
+            if key_regex and (
+                (include_input and _is_empty_probe_payload(input_to_show))
+                and (include_output and _is_empty_probe_payload(output_to_show))
+                or (include_input and not include_output and _is_empty_probe_payload(input_to_show))
+                or (include_output and not include_input and _is_empty_probe_payload(output_to_show))
+            ):
+                node_info["hint"] = (
+                    "No keys matched --key-regex in the selected fields. "
+                    "Re-run probe with --preview on this node to inspect available flattened keys."
+                )
 
             nodes_data.append(node_info)
 
@@ -192,9 +261,9 @@ def build_probe_response(
         return {"nodes": nodes_data}
 
     return {
-        "run_id": run_id,
+        "run_id": resolved_run_id,
         "name": run["name"],
-        "status": _run_status(state, run_id),
+        "status": _run_status(state, resolved_run_id),
         "timestamp": format_timestamp(run["timestamp"]),
         "custom_metrics": DB._parse_custom_metrics(run["custom_metrics"]),
         "thumb_label": DB._normalize_thumb_label(run["thumb_label"]),
@@ -295,22 +364,25 @@ def prepare_edit_rerun(
     run_name: str | None = None,
 ) -> dict:
     """Clone a run, apply one key edit, and return the spawn context for the CLI."""
-    run = DB.get_run_metadata(source_run_id)
+    resolved_source_run_id = _resolve_run_id(source_run_id)
+    run = DB.get_run_metadata(resolved_source_run_id)
     if not run:
         raise ResourceNotFoundError(f"Run not found: {source_run_id}")
 
-    cwd, command, environment = DB.get_exec_command(source_run_id)
+    resolved_node_uuid = _resolve_node_uuid(resolved_source_run_id, node_uuid)
+
+    cwd, command, environment = DB.get_exec_command(resolved_source_run_id)
     if not command:
-        raise BadRequestError(f"No command stored for run: {source_run_id}")
+        raise BadRequestError(f"No command stored for run: {resolved_source_run_id}")
 
     run_context = DB.query_one(
         "SELECT project_id, user_id FROM runs WHERE run_id=?",
-        (source_run_id,),
+        (resolved_source_run_id,),
     )
 
     new_run_id = str(uuid.uuid4())
     if run_name is None:
-        base_name = run["name"] or source_run_id
+        base_name = run["name"] or resolved_source_run_id
         run_name = f"Edit of {base_name}"
 
     DB.add_run(
@@ -329,10 +401,10 @@ def prepare_edit_rerun(
     if run["graph_topology"]:
         DB.update_graph_topology(new_run_id, RunGraph.from_json_string(run["graph_topology"]))
 
-    DB.copy_llm_calls(source_run_id, new_run_id)
+    DB.copy_llm_calls(resolved_source_run_id, new_run_id)
 
-    new_value = build_key_edit_value(new_run_id, node_uuid, field, key, value)
-    message = {"run_id": new_run_id, "node_uuid": node_uuid, "value": new_value}
+    new_value = build_key_edit_value(new_run_id, resolved_node_uuid, field, key, value)
+    message = {"run_id": new_run_id, "node_uuid": resolved_node_uuid, "value": new_value}
     if field == "input":
         handle_edit_input(state, message)
     else:
@@ -340,7 +412,7 @@ def prepare_edit_rerun(
 
     return {
         "run_id": new_run_id,
-        "node_uuid": node_uuid,
+        "node_uuid": resolved_node_uuid,
         "edited_field": field,
         "edited_key": key,
         "cwd": cwd,

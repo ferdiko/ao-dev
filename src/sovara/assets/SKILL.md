@@ -78,6 +78,8 @@ options:
                         Filter keys using regex pattern on flattened keys (e.g., 'messages.*content'). Lists use index notation: content.0.hello
 ```
 
+`run_id`, `--node`, and `--nodes` accept full UUIDs or any unambiguous prefix. Start with the first 8 hex characters; if that is ambiguous, use a longer prefix.
+
 Examples:
 To return the metadata, the nodes in the graph, and the graph topology, run
 ```bash
@@ -113,6 +115,8 @@ This will return a structured JSON with the run metadata and the graph informati
 ```
 
 Then, after having found the graph topology and the node IDs, you can investigate a node in more detail, but make sure to use preview to not spam your context with unnecessary tokens.
+
+Important: use `--preview` together with `--node` or `--nodes`. Running `probe <run_id> --preview` only shows run topology; it does not show the flattened input/output keys inside a node.
 
 ```bash
 uv run so-cli probe b6aaf796-8e25-4e9a-aae6-a47f261ced54 --node 00b0e4b8-db1d-4f44-bd5e-23c049c7b8c0 --preview
@@ -283,6 +287,8 @@ options:
 
 Keys use flattened dot-notation matching the keys from `probe --preview` output (e.g., `body.messages.0.content`, `body.temperature`). The value can be a literal string or a path to an existing file whose contents will be used.
 
+`run_id` and `node_uuid` accept full UUIDs or any unambiguous prefix. Start with the first 8 hex characters; if that is ambiguous, use a longer prefix.
+
 ### Workflow
 
 The typical workflow is: **probe** a node to see its flattened keys → **edit-and-rerun** a specific key → **probe** the downstream nodes to verify the effect.
@@ -322,6 +328,8 @@ uv run so-cli edit-and-rerun 77772451-2bea-4401-89aa-1b32cb34f688 ee5643e0-04e0-
 ```
 
 **Step 3:** Probe downstream nodes in the new run to verify the effect of the change.
+
+If `--key-regex` returns an empty `input` or `output` object, do not guess the field names. Re-run `probe` with `--preview` on that node first and inspect the flattened keys that actually exist for that API call.
 
 ### Using file contents as value
 For longer edits (e.g., replacing a system prompt), write the new value to a file and pass the path:

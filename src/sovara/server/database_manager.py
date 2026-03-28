@@ -838,6 +838,14 @@ class DatabaseManager:
             return []
         return [row["name"]]
 
+    def find_run_ids_by_prefix(self, run_id_prefix):
+        rows = self.backend.find_run_ids_by_prefix_query(run_id_prefix)
+        return [row["run_id"] for row in rows]
+
+    def find_node_uuids_by_prefix(self, run_id, node_uuid_prefix):
+        rows = self.backend.find_node_uuids_by_prefix_query(run_id, node_uuid_prefix)
+        return [row["node_uuid"] for row in rows]
+
     def query_one_llm_call_input(self, run_id, node_uuid):
         return self.backend.get_llm_call_input_api_type_query(run_id, node_uuid)
 

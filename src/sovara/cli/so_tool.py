@@ -435,8 +435,6 @@ def runs_command(args) -> None:
 
 def edit_and_rerun_command(args) -> None:
     """Edit a single key in a node's input or output and immediately rerun."""
-    node_uuid = args.node_uuid
-
     # Determine field, key, and value from mutually exclusive args
     if args.input:
         field = "input"
@@ -449,7 +447,7 @@ def edit_and_rerun_command(args) -> None:
         "POST",
         f"/ui/run/{args.run_id}/prepare-edit-rerun",
         data={
-            "node_uuid": node_uuid,
+            "node_uuid": args.node_uuid,
             "field": field,
             "key": key,
             "value": _resolve_value(value),
@@ -460,7 +458,7 @@ def edit_and_rerun_command(args) -> None:
         output_json(prepared)
 
     result = _spawn_rerun(prepared, timeout=args.timeout)
-    result["node_uuid"] = node_uuid
+    result["node_uuid"] = prepared.get("node_uuid", args.node_uuid)
     result["edited_field"] = field
     result["edited_key"] = key
     output_json(result)
@@ -1005,14 +1003,14 @@ def create_parser() -> ArgumentParser:
         help="Query run state",
         description="Query metadata or specific nodes of a run.",
     )
-    probe.add_argument("run_id", help="Run ID to probe")
+    probe.add_argument("run_id", help="Run UUID or unambiguous prefix to probe")
     probe.add_argument(
         "--node",
-        help="Return detailed info for a single node",
+        help="Return detailed info for a single node UUID or unambiguous prefix",
     )
     probe.add_argument(
         "--nodes",
-        help="Return detailed info for multiple nodes (comma-separated IDs)",
+        help="Return detailed info for multiple node UUIDs or prefixes (comma-separated)",
     )
     probe.add_argument(
         "--preview",
@@ -1066,8 +1064,8 @@ def create_parser() -> ArgumentParser:
                     "Keys use flattened dot-notation from probe output (e.g., messages.0.content). "
                     "Value can be a literal or a path to a file.",
     )
-    edit_and_rerun.add_argument("run_id", help="Run ID containing the node")
-    edit_and_rerun.add_argument("node_uuid", help="Node UUID to edit")
+    edit_and_rerun.add_argument("run_id", help="Run UUID or unambiguous prefix containing the node")
+    edit_and_rerun.add_argument("node_uuid", help="Node UUID or unambiguous prefix to edit")
     edit_and_rerun_group = edit_and_rerun.add_mutually_exclusive_group(required=True)
     edit_and_rerun_group.add_argument(
         "--input",
