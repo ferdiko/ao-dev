@@ -85,6 +85,7 @@ nav:
       - Installation: developer-guide/installation.md
       - Architecture: developer-guide/architecture.md
       - Server: developer-guide/server.md
+      - Priors Integration: developer-guide/priors-integration.md
       - Edge Detection: developer-guide/edge-detection.md
       - API Patching: developer-guide/api-patching.md
       - Sovara Tool CLI: developer-guide/so-tool.md
