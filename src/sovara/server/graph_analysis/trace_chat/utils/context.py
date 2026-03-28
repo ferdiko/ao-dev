@@ -6,7 +6,7 @@ history within a character budget.
 
 import logging
 
-from .llm_backend import infer_text
+from ....llm_backend import infer_text
 
 logger = logging.getLogger("sovara_agent")
 

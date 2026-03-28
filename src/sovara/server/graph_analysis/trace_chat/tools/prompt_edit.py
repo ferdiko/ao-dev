@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple
 
 from ..utils.edit_persist import write_prompt_edit, write_input_sections_edit
-from ..utils.llm_backend import infer_text
+from ....llm_backend import infer_text
 from ..utils.prompt_sections import PromptSections, Section, label_sections, flatten_turn
 from ..utils.trace import Trace
 

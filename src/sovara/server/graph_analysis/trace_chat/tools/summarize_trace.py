@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from .get_overview import get_overview
 from .get_summary import get_summary
-from ..utils.llm_backend import infer_text
+from ....llm_backend import infer_text
 from ..utils.trace import Trace
 
 SYNTHESIZE_SYSTEM = (

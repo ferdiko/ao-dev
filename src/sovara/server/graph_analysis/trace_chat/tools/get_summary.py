@@ -1,6 +1,6 @@
 """get_summary tool — returns (or generates) a three-sentence summary for a step."""
 
-from ..utils.llm_backend import infer_text
+from ....llm_backend import infer_text
 from ..utils.trace import Trace, format_messages, stringify_field
 
 SUMMARIZE_STEP_SYSTEM = (

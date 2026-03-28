@@ -9,7 +9,7 @@ from pathlib import Path
 from .tools import execute_tool, TOOLS_SCHEMA
 from .tools.summarize_trace import _generate_summary
 from .utils.context import compact_tool_results
-from .utils.llm_backend import infer
+from ...llm_backend import infer
 from .utils.trace import Trace
 
 logger = logging.getLogger("sovara_agent")
