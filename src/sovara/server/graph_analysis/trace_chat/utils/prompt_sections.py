@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Dict, List, TYPE_CHECKING
 
-from .llm_backend import infer_text
+from ....llm_backend import infer_text
 from .trace import extract_text_content
 
 if TYPE_CHECKING:

@@ -1,6 +1,6 @@
 """ask_step tool — answers a specific question about a step without injecting full content."""
 
-from ..utils.llm_backend import infer_text
+from ....llm_backend import infer_text
 from ..utils.trace import Trace, format_messages, stringify_field
 
 ASK_STEP_SYSTEM = (

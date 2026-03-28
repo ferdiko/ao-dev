@@ -2,7 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 
-from ..utils.llm_backend import infer
+from ....llm_backend import infer
 from ..utils.trace import Trace, extract_tag, format_messages, stringify_field
 
 VERIFY_STEP_SYSTEM = """\

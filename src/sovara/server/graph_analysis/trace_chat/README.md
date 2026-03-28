@@ -18,9 +18,14 @@ tools/
   prompt_edit.py            Section-level prompt editing with undo (LLM)
 utils/
   trace.py                  Trace/TraceRecord/DiffedRecord parsing and diffing
-  llm_backend.py            LiteLLM wrapper with tier routing and retries
   context.py                Message history compaction
   prompt_sections.py        Section/PromptSections splitting and labeling
+```
+
+Shared server module:
+
+```
+../../llm_backend.py        LiteLLM wrapper with tier routing and retries
 ```
 
 ### ReAct loop (`main.py`)
@@ -86,7 +91,7 @@ On startup, a background thread generates a full trace summary (overview + paral
 
 As the ReAct loop accumulates tool results, total message size grows. After each iteration, `compact_tool_results` checks whether tool results exceed 16K chars. If so, it replaces older results (never the most recent) with 1-2 sentence LLM-generated summaries, preserving key findings while freeing context budget.
 
-### Two-tier model routing (`utils/llm_backend.py`)
+### Two-tier model routing (`../../llm_backend.py`)
 
 `infer()` accepts a `tier` parameter. `tier="expensive"` uses the configured model; `tier="cheap"` routes to a smaller model (e.g., Haiku instead of Sonnet). Helper operations (labeling, summarization, verification, compaction) use the cheap tier. Only the ReAct planner and direct Q&A use the expensive model.
 
