@@ -51,7 +51,9 @@ def patch_httpx_send(bound_obj, bound_cls):
 
         input_dict = get_input_dict(original_function, *args, **kwargs)
 
-        request = input_dict["request"]
+        request = input_dict.get("request")
+        if request is None:
+            return original_function(*args, **kwargs)
         url = str(request.url)
         path = request.url.path
         if not is_whitelisted_endpoint(url, path):
@@ -117,7 +119,9 @@ def patch_async_httpx_send(bound_obj, bound_cls):
 
         input_dict = get_input_dict(original_function, *args, **kwargs)
 
-        request = input_dict["request"]
+        request = input_dict.get("request")
+        if request is None:
+            return await original_function(*args, **kwargs)
         url = str(request.url)
         path = request.url.path
         if not is_whitelisted_endpoint(url, path):

@@ -49,7 +49,7 @@ _RESPONSE_SCHEMA = {
 def collect_folder_priors(store, path: str = "") -> tuple[list[tuple[str, list[dict]]], dict[str, dict]]:
     result = []
     all_priors: dict[str, dict] = {}
-    data = store.list_folders(path)
+    data = store.list_folders(path, include_content=True)
     active_priors = [prior for prior in data["priors"] if prior.get("prior_status", "active") == "active"]
 
     if active_priors:

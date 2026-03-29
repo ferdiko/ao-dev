@@ -28,10 +28,32 @@ _TIER_MODELS = {
 # --- Inference ---
 
 
-def infer(messages, tier="expensive", **kwargs):
+def _resolve_model(model: str | None, tier: str) -> str:
+    """Resolve the effective model for a request.
+
+    `tier` remains the default routing knob, but callers may also provide an
+    explicit model override. For cheap-mode requests, known flagship models can
+    downshift to their smaller sibling automatically.
+    """
+    if not model:
+        return _TIER_MODELS.get(tier, MODEL)
+
+    if tier != "cheap":
+        return model
+
+    if model.endswith(("-mini", "-nano")):
+        return model
+
+    if model in {"openai/gpt-5.4", "gpt-5.4"}:
+        return f"{model}-mini"
+
+    return model
+
+
+def infer(messages, model=None, tier="expensive", **kwargs):
     """Sync LLM call via litellm. Returns the full response object."""
     kwargs.setdefault("temperature", 0)
-    resolved = _TIER_MODELS.get(tier, MODEL)
+    resolved = _resolve_model(model, tier)
 
     # Normalize system= kwarg into a system message for cross-provider compat
     system = kwargs.pop("system", None)
