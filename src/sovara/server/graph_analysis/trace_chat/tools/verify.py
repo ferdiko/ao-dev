@@ -1,10 +1,14 @@
 """verify tool — checks whether steps have correct output."""
 
-from concurrent.futures import ThreadPoolExecutor
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ....llm_backend import infer
+from ..logger import get_logger
 from ..utils.step_ids import resolve_step_index
 from ..utils.trace import Trace, extract_tag, render_record_markdown
+
+logger = get_logger()
 
 VERIFY_STEP_SYSTEM = """\
 You verify whether a single step's output is correct given its instructions and input.
@@ -39,18 +43,31 @@ def _verify_one(trace: Trace, index: int, record):
     if index in trace.verdict_cache:
         return (index, *trace.verdict_cache[index])
 
+    step_id = index + 1
+    t0 = time.monotonic()
+    logger.info("VERIFY step %d start", step_id)
     user_msg = render_record_markdown(record, trace.get_diffed(index), view="full")
 
-    response = infer(
-        [{"role": "system", "content": VERIFY_STEP_SYSTEM},
-         {"role": "user", "content": user_msg}],
-        tier="cheap",
-        max_tokens=256,
-    )
-    raw = response.choices[0].message.content or ""
-    verdict, justification = _parse_verdict(raw)
-    trace.verdict_cache[index] = (verdict, justification)
-    return index, verdict, justification
+    try:
+        response = infer(
+            [{"role": "system", "content": VERIFY_STEP_SYSTEM},
+             {"role": "user", "content": user_msg}],
+            tier="cheap",
+            max_tokens=256,
+        )
+        raw = response.choices[0].message.content or ""
+        verdict, justification = _parse_verdict(raw)
+        trace.verdict_cache[index] = (verdict, justification)
+        logger.info(
+            "VERIFY step %d done in %.1fs verdict=%s",
+            step_id,
+            time.monotonic() - t0,
+            verdict,
+        )
+        return index, verdict, justification
+    except Exception:
+        logger.exception("VERIFY step %d failed after %.1fs", step_id, time.monotonic() - t0)
+        raise
 
 
 def _resolve_cached(trace: Trace, record, idx: int):
@@ -66,6 +83,7 @@ def _resolve_cached(trace: Trace, record, idx: int):
 
 
 def verify(trace: Trace, step_id=None) -> str:
+    t0 = time.monotonic()
 
     # Single-step mode
     if step_id is not None:
@@ -77,9 +95,12 @@ def verify(trace: Trace, step_id=None) -> str:
         cached = _resolve_cached(trace, record, index)
         if cached:
             verdict, justification = cached
+            logger.info("VERIFY step %d cache hit verdict=%s", step_id, verdict)
         else:
             _, verdict, justification = _verify_one(trace, index, record)
 
+        logger.info("VERIFY single-step done in %.1fs step=%d verdict=%s",
+                    time.monotonic() - t0, step_id, verdict)
         return f"Step {step_id}: {verdict}\n  {justification}"
 
     # All-steps mode
@@ -94,12 +115,31 @@ def verify(trace: Trace, step_id=None) -> str:
         else:
             to_verify.append((idx, record))
 
+    logger.info(
+        "VERIFY all start: total_steps=%d cached=%d llm_calls=%d",
+        len(trace),
+        len(results),
+        len(to_verify),
+    )
+
     if to_verify:
         with ThreadPoolExecutor() as pool:
-            results.extend(pool.map(
-                lambda args: _verify_one(trace, args[0], args[1]),
-                to_verify,
-            ))
+            futures = {
+                pool.submit(_verify_one, trace, idx, record): idx + 1
+                for idx, record in to_verify
+            }
+            completed = len(results)
+            for future in as_completed(futures):
+                result = future.result()
+                results.append(result)
+                completed += 1
+                logger.info(
+                    "VERIFY all progress: %d/%d complete (latest step=%d verdict=%s)",
+                    completed,
+                    len(trace),
+                    result[0] + 1,
+                    result[1],
+                )
 
     results.sort(key=lambda x: x[0])
 
@@ -127,4 +167,11 @@ def verify(trace: Trace, step_id=None) -> str:
     if not wrong and not uncertain:
         header_parts.append("all correct")
 
+    logger.info(
+        "VERIFY all done in %.1fs: total_steps=%d wrong=%d uncertain=%d",
+        time.monotonic() - t0,
+        len(trace),
+        len(wrong),
+        len(uncertain),
+    )
     return " | ".join(header_parts) + "\n\n" + "\n".join(lines)

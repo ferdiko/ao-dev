@@ -1,12 +1,12 @@
 """summarize_trace tool — one-shot full trace summary, avoiding extra ReAct rounds."""
 
-import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .get_overview import get_overview
-from .get_summary import get_summary
+from .get_trace_overview import get_trace_overview
+from .get_step_overview import STEP_SUMMARIZE_SYSTEM, get_or_compute_step_semantic_summary
 from ....llm_backend import infer_text
+from ..logger import format_log_tags, get_logger
 from ..utils.trace import Trace
 
 SYNTHESIZE_SYSTEM = (
@@ -21,35 +21,88 @@ SYNTHESIZE_SYSTEM = (
     "One line per phase. No headers, emoji, or filler."
 )
 
+logger = get_logger()
 
-logger = logging.getLogger("sovara_agent")
+
+def _summary_tag(trace: Trace, **fields) -> str:
+    return format_log_tags("trace_summary", run_id=trace.run_id or "-", **fields)
+
+
+def _summarize_step_semantically(trace: Trace, step_id: int) -> str:
+    step_tag = _summary_tag(trace, phase="step", step=step_id)
+    t0 = time.monotonic()
+    semantic_summary = get_or_compute_step_semantic_summary(trace, step_id)
+    logger.info(
+        "%s semantic summary ready in %.1fs chars=%d",
+        step_tag,
+        time.monotonic() - t0,
+        len(semantic_summary),
+    )
+    return f"Step {step_id} summary:\n{semantic_summary}"
 
 
 def _generate_summary(trace: Trace) -> str:
     """Do the actual work: overview + per-step summaries + synthesis."""
     t0 = time.monotonic()
-    overview = get_overview(trace)
+    base_tag = _summary_tag(trace)
+    logger.info("%s start steps=%d", base_tag, len(trace))
 
-    def _get_one(tid):
-        return get_summary(trace, step_id=tid + 1)
+    try:
+        overview = get_trace_overview(trace)
+        logger.info(
+            "%s overview ready chars=%d elapsed=%.1fs",
+            _summary_tag(trace, phase="overview"),
+            len(overview),
+            time.monotonic() - t0,
+        )
 
-    with ThreadPoolExecutor() as pool:
-        summaries = list(pool.map(_get_one, range(len(trace))))
-    t_summaries = time.monotonic()
+        summaries_by_step = {}
+        with ThreadPoolExecutor() as pool:
+            futures = {
+                pool.submit(_summarize_step_semantically, trace, step_id): step_id
+                for step_id in range(1, len(trace) + 1)
+            }
+            for completed, future in enumerate(as_completed(futures), start=1):
+                step_id = futures[future]
+                summaries_by_step[step_id] = future.result()
+                logger.info(
+                    "%s completed=%d/%d latest_step=%d elapsed=%.1fs",
+                    _summary_tag(trace, phase="steps_progress"),
+                    completed,
+                    len(trace),
+                    step_id,
+                    time.monotonic() - t0,
+                )
+        t_summaries = time.monotonic()
 
-    combined = f"## Overview\n{overview}\n\n## Step Summaries\n"
-    combined += "\n".join(summaries)
+        summaries = [summaries_by_step[step_id] for step_id in range(1, len(trace) + 1)]
+        combined = f"## Overview\n{overview}\n\n## Step Summaries\n"
+        combined += "\n".join(summaries)
+        logger.info(
+            "%s combined context chars=%d",
+            _summary_tag(trace, phase="synthesis_input"),
+            len(combined),
+        )
 
-    result = infer_text(
-        [{"role": "system", "content": SYNTHESIZE_SYSTEM},
-         {"role": "user", "content": combined}],
-        max_tokens=512,
-    )
-    t_synth = time.monotonic()
+        result = infer_text(
+            [{"role": "system", "content": SYNTHESIZE_SYSTEM},
+             {"role": "user", "content": combined}],
+            max_tokens=512,
+        )
+        t_synth = time.monotonic()
 
-    logger.info("Summary profiling: per-step summaries %.1fs, synthesis %.1fs, total %.1fs",
-                t_summaries - t0, t_synth - t_summaries, t_synth - t0)
-    return result
+        logger.info(
+            "%s done summary_chars=%d per_step=%.1fs synthesis=%.1fs total=%.1fs",
+            base_tag,
+            len(result),
+            t_summaries - t0,
+            t_synth - t_summaries,
+            t_synth - t0,
+        )
+        return result
+    except Exception:
+        logger.exception("%s failed after %.1fs", base_tag, time.monotonic() - t0)
+        raise
 
 
 def summarize_trace(trace: Trace) -> str:

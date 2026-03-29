@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { chatWithTrace, fetchProjectRuns, updateRunTags } from "./api";
+import { chatWithTrace, fetchProjectRuns, post, updateRunTags } from "./api";
 
 describe("api", () => {
   const fetchMock = vi.fn();
@@ -97,5 +97,16 @@ describe("api", () => {
       "/_sovara/start-server",
       "/ui/chat/run-1",
     ]);
+  });
+
+  it("uses backend detail text for failed posts", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      json: async () => ({ detail: "Trace chat timed out after 120 seconds" }),
+    });
+
+    await expect(post("/ui/chat/run-1", { message: "hello" })).rejects.toThrow(
+      "Trace chat timed out after 120 seconds",
+    );
   });
 });

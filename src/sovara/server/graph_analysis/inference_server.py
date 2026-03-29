@@ -16,18 +16,25 @@ import json
 import os
 import subprocess
 import sys
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from sovara.server.graph_models import RunGraph
+from sovara.server.graph_analysis.trace_chat.logger import (
+    configure_inference_process_logging,
+    format_log_tags,
+    get_logger,
+)
 
 # ============================================================
 # Sub-server app
 # ============================================================
 
 app = FastAPI()
+logger = get_logger()
 
 
 @app.get("/health")
@@ -45,6 +52,17 @@ def health():
 _trace_cache: dict = {}
 _prefetch_futures: dict[str, Future] = {}
 _pool = ThreadPoolExecutor(max_workers=4)
+
+
+def _log_preview(text: str, max_len: int = 160) -> str:
+    compact = " ".join(str(text).split()).strip()
+    if len(compact) <= max_len:
+        return compact
+    return compact[:max_len] + "..."
+
+
+def _prefetch_tag(run_id: str, **fields) -> str:
+    return format_log_tags("trace_summary", run_id=run_id, **fields)
 
 
 def _graph_fingerprint(graph_data: dict) -> str:
@@ -126,7 +144,9 @@ def _get_trace_for_run(run_id: str):
 
 def _ensure_prefetch_future(run_id: str, trace, *, is_new: bool) -> Future:
     if is_new:
-        _prefetch_futures.pop(run_id, None)
+        stale = _prefetch_futures.pop(run_id, None)
+        if stale is not None and not stale.done():
+            logger.info("%s dropped stale running future", _prefetch_tag(run_id, phase="prefetch"))
 
     future = _prefetch_futures.get(run_id)
     if future is not None:
@@ -143,7 +163,60 @@ def _ensure_prefetch_future(run_id: str, trace, *, is_new: bool) -> Future:
         from sovara.server.graph_analysis.trace_chat.tools.summarize_trace import _generate_summary
 
         future = _pool.submit(_generate_summary, trace)
+        future._sovara_started_at = time.monotonic()
+        future._sovara_run_id = run_id
         _prefetch_futures[run_id] = future
+        logger.info(
+            "%s queued steps=%d is_new=%s",
+            _prefetch_tag(run_id, phase="prefetch"),
+            len(trace),
+            is_new,
+        )
+
+        def _log_done(done_future: Future) -> None:
+            started_at = getattr(done_future, "_sovara_started_at", None)
+            elapsed = (
+                max(0.0, time.monotonic() - started_at)
+                if started_at is not None else 0.0
+            )
+            if done_future.cancelled():
+                logger.warning(
+                    "%s future cancelled after %.1fs",
+                    _prefetch_tag(run_id, phase="prefetch"),
+                    elapsed,
+                )
+                return
+            try:
+                summary = done_future.result()
+                logger.info(
+                    "%s future complete in %.1fs summary_chars=%d",
+                    _prefetch_tag(run_id, phase="prefetch"),
+                    elapsed,
+                    len(summary),
+                )
+            except Exception as exc:
+                logger.error(
+                    "%s future failed after %.1fs: %s",
+                    _prefetch_tag(run_id, phase="prefetch"),
+                    elapsed,
+                    exc,
+                )
+
+        if hasattr(future, "add_done_callback"):
+            future.add_done_callback(_log_done)
+    else:
+        started_at = getattr(future, "_sovara_started_at", None)
+        elapsed = (
+            max(0.0, time.monotonic() - started_at)
+            if started_at is not None else 0.0
+        )
+        state = "done" if future.done() else "running"
+        logger.info(
+            "%s reusing existing future state=%s age=%.1fs",
+            _prefetch_tag(run_id, phase="prefetch"),
+            state,
+            elapsed,
+        )
 
     return future
 
@@ -161,27 +234,56 @@ class ChatRequest(BaseModel):
 def prefetch(run_id: str):
     """Fire-and-forget: build trace + start summary prefetch. Returns immediately."""
     def _do():
-        trace, is_new = _get_trace_for_run(run_id)
-        if trace is None:
-            return
-        _ensure_prefetch_future(run_id, trace, is_new=is_new)
+        try:
+            trace, is_new = _get_trace_for_run(run_id)
+            if trace is None:
+                logger.warning("Prefetch skipped for run_id=%s: no trace found", run_id)
+                return
+            _ensure_prefetch_future(run_id, trace, is_new=is_new)
+            logger.info("Prefetch queued for run_id=%s steps=%d", run_id, len(trace))
+        except Exception:
+            logger.exception("Prefetch failed for run_id=%s", run_id)
     _pool.submit(_do)
     return {"status": "prefetching"}
 
 
 @app.post("/chat/{run_id}")
 async def chat(run_id: str, req: ChatRequest):
-    trace, is_new = await asyncio.to_thread(_get_trace_for_run, run_id)
+    logger.info(
+        "Trace chat request: run_id=%s history_messages=%d message=%s",
+        run_id,
+        len(req.history),
+        _log_preview(req.message),
+    )
+
+    try:
+        trace, is_new = await asyncio.to_thread(_get_trace_for_run, run_id)
+    except Exception:
+        logger.exception("Failed to load trace for run_id=%s", run_id)
+        raise
+
     if trace is None:
+        logger.warning("Trace chat rejected for run_id=%s: no LLM calls found", run_id)
         raise HTTPException(400, "No LLM calls found for this run")
 
     # (Re-)prefetch summary on first request or when the trace changed after a rerun/edit
     prefetch_future = _ensure_prefetch_future(run_id, trace, is_new=is_new)
 
     from sovara.server.graph_analysis.trace_chat.main import handle_question
-    result = await asyncio.to_thread(
-        handle_question, req.message, trace, req.history,
-        prefetch_future,
+    try:
+        result = await asyncio.to_thread(
+            handle_question, req.message, trace, req.history,
+            prefetch_future,
+        )
+    except Exception:
+        logger.exception("Trace chat request failed for run_id=%s", run_id)
+        raise
+
+    logger.info(
+        "Trace chat response ready: run_id=%s answer_chars=%d edits_applied=%s",
+        run_id,
+        len(result.get("answer", "")),
+        result.get("edits_applied", False),
     )
     return result
 
@@ -235,4 +337,6 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=5961)
     args = parser.parse_args()
 
+    logger = configure_inference_process_logging()
+    logger.info("Inference server starting on %s:%s", args.host, args.port)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

@@ -1,12 +1,18 @@
 import asyncio
 import json
+import logging
 import sys
 import types
+from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi import HTTPException
 
 from sovara.server.graph_analysis.inference_server import _ensure_prefetch_future, _graph_fingerprint
+from sovara.server.graph_analysis.trace_chat.logger import (
+    LOGGER_NAME,
+    configure_inference_process_logging,
+)
 from sovara.server.graph_analysis.trace_chat.main import handle_question
 from sovara.server.graph_analysis.trace_chat.tools import execute_tool
 from sovara.server.graph_analysis.trace_chat.utils.trace import Trace
@@ -20,11 +26,11 @@ def test_graph_fingerprint_accepts_uuid_shaped_nodes():
     assert _graph_fingerprint(graph_data) == _graph_fingerprint(legacy_graph_data)
 
 
-def test_graph_fingerprint_ignores_deprecated_model_or_tool_key():
+def test_graph_fingerprint_ignores_unrelated_extra_keys():
     graph_a = {"nodes": [{"uuid": "node-a", "input": "in", "output": "out", "name": "demo"}]}
     graph_b = {
         "nodes": [
-            {"uuid": "node-a", "input": "in", "output": "out", "name": "demo", "model_or_tool": "tool"}
+            {"uuid": "node-a", "input": "in", "output": "out", "name": "demo", "ignored": "value"}
         ]
     }
 
@@ -94,6 +100,92 @@ def test_handle_question_does_not_block_on_running_prefetch(monkeypatch):
     assert trace.prefetched_summary == ""
 
 
+def test_handle_question_logs_llm_exceptions(monkeypatch):
+    calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def fake_infer(messages, system, tools, max_tokens):
+        raise RuntimeError("llm exploded")
+
+    class FakeLogger:
+        def info(self, *args, **kwargs):
+            return None
+
+        def warning(self, *args, **kwargs):
+            return None
+
+        def exception(self, message, *args):
+            calls.append((message, args))
+
+    monkeypatch.setattr("sovara.server.graph_analysis.trace_chat.main.infer", fake_infer)
+    monkeypatch.setattr("sovara.server.graph_analysis.trace_chat.main.logger", FakeLogger())
+
+    try:
+        handle_question("hello", Trace(raw="", records=[], run_id="run-1"), [])
+        assert False, "Expected RuntimeError"
+    except RuntimeError as exc:
+        assert str(exc) == "llm exploded"
+
+    assert calls == [("LLM call failed on iteration %d", (1,))]
+
+
+def test_configure_inference_process_logging_routes_agent_logs_to_inference_file(monkeypatch, tmp_path):
+    inference_log = tmp_path / "inference_server.log"
+    old_log = tmp_path / "agent.log"
+
+    agent_logger = logging.getLogger(LOGGER_NAME)
+    previous_handlers = list(agent_logger.handlers)
+    previous_level = agent_logger.level
+    previous_propagate = agent_logger.propagate
+
+    root_logger = logging.getLogger("Sovara")
+    previous_root_handlers = list(root_logger.handlers)
+    previous_root_level = root_logger.level
+
+    existing_handler = logging.FileHandler(old_log, mode="a")
+    root_handler = logging.StreamHandler()
+    root_handler.setLevel(logging.DEBUG)
+
+    try:
+        for handler in list(agent_logger.handlers):
+            agent_logger.removeHandler(handler)
+        agent_logger.addHandler(existing_handler)
+
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        root_logger.addHandler(root_handler)
+        root_logger.setLevel(logging.DEBUG)
+
+        monkeypatch.setattr(
+            "sovara.server.graph_analysis.trace_chat.logger.INFERENCE_SERVER_LOG",
+            str(inference_log),
+        )
+
+        configured_logger = configure_inference_process_logging()
+
+        assert configured_logger is agent_logger
+        assert configured_logger.level == logging.INFO
+        assert configured_logger.propagate is False
+        assert len(configured_logger.handlers) == 1
+        assert Path(configured_logger.handlers[0].baseFilename) == inference_log.resolve()
+        assert Path(configured_logger.handlers[0].baseFilename) != old_log.resolve()
+        assert root_logger.level == logging.WARNING
+        assert root_handler.level == logging.WARNING
+    finally:
+        for handler in list(agent_logger.handlers):
+            agent_logger.removeHandler(handler)
+            handler.close()
+        for handler in previous_handlers:
+            agent_logger.addHandler(handler)
+        agent_logger.setLevel(previous_level)
+        agent_logger.propagate = previous_propagate
+
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+            handler.close()
+        for handler in previous_root_handlers:
+            root_logger.addHandler(handler)
+        root_logger.setLevel(previous_root_level)
+
 
 def test_chat_returns_plain_text_upstream_errors_without_crashing(monkeypatch):
     class FakeResponse:
@@ -149,6 +241,35 @@ def test_chat_rejects_invalid_json_success_payload(monkeypatch):
     except HTTPException as exc:
         assert exc.status_code == 502
         assert exc.detail == "Invalid response from inference server"
+
+
+def test_chat_returns_gateway_timeout_when_inference_proxy_times_out(monkeypatch):
+    class FakeAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            raise TimeoutError("slow")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "httpx",
+        types.SimpleNamespace(
+            AsyncClient=FakeAsyncClient,
+            TimeoutException=TimeoutError,
+            HTTPError=Exception,
+        ),
+    )
+
+    try:
+        asyncio.run(chat("run-1", ChatMessageRequest(message="hello")))
+        assert False, "Expected HTTPException"
+    except HTTPException as exc:
+        assert exc.status_code == 504
+        assert exc.detail == "Trace chat timed out after 120 seconds"
 
 
 def test_execute_tool_logs_exceptions(monkeypatch):

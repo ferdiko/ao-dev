@@ -165,6 +165,18 @@ class RenderBlock:
         return extract_text_content(self.raw_value)
 
 
+def block_char_count(block: RenderBlock) -> int:
+    """Count the user-visible chars represented by one render block."""
+    if block.kind == "text":
+        return len(block.text)
+    return len(stringify_field(block.raw_value))
+
+
+def blocks_char_count(blocks: List[RenderBlock]) -> int:
+    """Count the user-visible chars represented by multiple render blocks."""
+    return sum(block_char_count(block) for block in blocks)
+
+
 @dataclass
 class TraceRecord:
     """A single record in a trace."""
@@ -714,6 +726,8 @@ class Trace:
     prompt_registry: Dict[str, str] = field(default_factory=dict)
     diffed: List[DiffedRecord] = field(default_factory=list)
     summary_cache: Dict[int, str] = field(default_factory=dict, repr=False)
+    step_overview_cache: Dict[int, str] = field(default_factory=dict, repr=False)
+    step_semantic_summary_cache: Dict[int, str] = field(default_factory=dict, repr=False)
     verdict_cache: Dict[int, tuple] = field(default_factory=dict, repr=False)
     prompt_sections_cache: Dict[str, Any] = field(default_factory=dict, repr=False)
     prefetched_summary: str = field(default="", repr=False)
@@ -756,6 +770,8 @@ class Trace:
                 self.records[idx].correct = None
 
         self.summary_cache.clear()
+        self.step_overview_cache.clear()
+        self.step_semantic_summary_cache.clear()
         self.verdict_cache.clear()
         self.prefetched_summary = ""
 

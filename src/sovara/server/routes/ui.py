@@ -905,12 +905,20 @@ async def chat(run_id: str, req: ChatMessageRequest):
     import httpx
     from fastapi import HTTPException
     from sovara.common.constants import HOST, INFERENCE_PORT
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"http://{HOST}:{INFERENCE_PORT}/chat/{run_id}",
-            json=req.model_dump(),
-            timeout=120.0,
-        )
+    timeout_seconds = 120.0
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"http://{HOST}:{INFERENCE_PORT}/chat/{run_id}",
+                json=req.model_dump(),
+                timeout=timeout_seconds,
+            )
+    except httpx.TimeoutException:
+        logger.error("Trace chat proxy timed out after %.1fs for run %s", timeout_seconds, run_id)
+        raise HTTPException(504, f"Trace chat timed out after {int(timeout_seconds)} seconds")
+    except httpx.HTTPError as e:
+        logger.error("Trace chat proxy failed for run %s: %s", run_id, e)
+        raise HTTPException(502, "Could not reach inference server")
     if resp.status_code != 200:
         raise HTTPException(resp.status_code, _extract_http_error_detail(resp))
     try:

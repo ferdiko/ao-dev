@@ -14,8 +14,10 @@ litellm.suppress_debug_info = True
 
 # --- Model settings ---
 # TODO: Get from settings in UI
-MODEL = "anthropic/claude-sonnet-4-6"
-CHEAP_MODEL = "anthropic/claude-haiku-4-5-20251001"
+# MODEL = "anthropic/claude-sonnet-4-6"
+# CHEAP_MODEL = "anthropic/claude-haiku-4-5-20251001"
+MODEL = "together_ai/Qwen/Qwen3.5-397B-A17B"
+CHEAP_MODEL = "together_ai/Qwen/Qwen3.5-9B"
 
 _TIER_MODELS = {
     "expensive": MODEL,

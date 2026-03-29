@@ -11,7 +11,7 @@ interface ChatMessage {
   editsApplied?: boolean;
 }
 
-const STEP_LABEL_RE = /\b(steps?\s+\d{1,3}(?:(?:\s*[–-]\s*|\s+to\s+|\s+and\s+|\s*&\s*)\d{1,3}|(?:\s*,\s*\d{1,3})+)?)\b/gi;
+const STEP_LABEL_RE = /\b(steps?\s+\d{1,3}(?:(?:\s*[–-]\s*|\s+to\s+)\d{1,3}|(?:\s*,\s*(?:and\s+)?|\s+and\s+|\s*&\s*)\d{1,3})*)\b/gi;
 
 function getPrimaryStepNodeId(label: string): string | null {
   const firstStepNumber = label.match(/\d{1,3}/);
@@ -98,8 +98,12 @@ export function TraceChat({
     try {
       const { answer, edits_applied } = await chatWithTrace(runId, userMsg.content, history);
       setMessages((prev) => [...prev, { id: `a-${Date.now()}`, role: "assistant", content: answer, editsApplied: edits_applied }]);
-    } catch {
-      setMessages((prev) => [...prev, { id: `e-${Date.now()}`, role: "assistant", content: "Error: could not reach the chat backend." }]);
+    } catch (error) {
+      const detail = error instanceof Error && error.message
+        ? error.message
+        : "could not reach the chat backend.";
+      const content = detail.startsWith("Error:") ? detail : `Error: ${detail}`;
+      setMessages((prev) => [...prev, { id: `e-${Date.now()}`, role: "assistant", content }]);
     } finally {
       setIsLoading(false);
     }

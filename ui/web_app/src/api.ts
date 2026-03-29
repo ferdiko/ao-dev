@@ -63,7 +63,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   });
   if (!resp.ok) {
     const data = await resp.json().catch(() => null);
-    throw new Error(data?.error ?? `POST ${path} failed: ${resp.status}`);
+    throw new Error(data?.detail ?? data?.error ?? `POST ${path} failed: ${resp.status}`);
   }
   return resp.json();
 }

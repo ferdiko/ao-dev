@@ -20,6 +20,7 @@ from ..utils.trace import Trace, build_trace_record_from_to_show
 
 logger = logging.getLogger("sovara_agent")
 _PARAGRAPH_REF_RE = re.compile(r"^(.*)::p(\d+)$")
+_CONTENT_ID_RE = re.compile(r"^c(\d+)$")
 
 
 def _edit_system(instruction: str) -> str:
@@ -100,7 +101,33 @@ def _resolve_section(ps: PromptSections, *, path) -> tuple[Optional[Section], Op
     for section in ps.sections:
         if section.path == path:
             return section, None
-    return None, f"Path `{format_path(path)}` not found. Call list_sections first."
+    return None, f"Path `{format_path(path)}` not found. Call get_step_overview first."
+
+
+def _resolve_content_id(content_id) -> tuple[Optional[int], Optional[str]]:
+    if content_id is None:
+        return None, None
+    normalized = str(content_id).strip()
+    if not normalized:
+        return None, "Missing required parameter: content_id"
+    match = _CONTENT_ID_RE.fullmatch(normalized)
+    if not match:
+        return None, "Invalid content_id: must look like c0, c1, c2, ..."
+    return int(match.group(1)), None
+
+
+def _resolve_content_paragraph(
+    section: Section,
+    content_id,
+) -> tuple[Optional[int], Optional[str]]:
+    content_index, err = _resolve_content_id(content_id)
+    if err:
+        return None, err
+    if content_index is None:
+        return None, None
+    if content_index >= len(section.paragraphs):
+        return None, f"content_id {content_id} out of range for path `{section.display_path}`."
+    return content_index, None
 
 
 def _resolve_paragraph(
@@ -227,7 +254,7 @@ def list_sections(trace: Trace, step_id=None) -> str:
     return ps.to_table()
 
 
-def get_section(trace: Trace, path, step_id=None, paragraph=None) -> str:
+def get_content(trace, path, step_id=None, paragraph=None, content_id=None) -> str:
     idx, err = _resolve_step_id(trace, step_id)
     if err:
         return err
@@ -238,6 +265,14 @@ def get_section(trace: Trace, path, step_id=None, paragraph=None) -> str:
     section, err = _resolve_section(ps, path=path)
     if err:
         return err
+
+    if content_id is not None:
+        if paragraph is not None or inferred_paragraph is not None:
+            return "Use either content_id or paragraph, not both."
+        content_paragraph, err = _resolve_content_paragraph(section, content_id)
+        if err:
+            return err
+        return f"`{section.display_path}` `content_id={content_id}`:\n{section.paragraphs[content_paragraph]}"
 
     paragraph, err = _resolve_paragraph(
         section,
@@ -266,7 +301,7 @@ def get_section(trace: Trace, path, step_id=None, paragraph=None) -> str:
     return "\n".join(lines)
 
 
-def edit_section(trace: Trace, path, instruction, step_id=None, paragraph=None) -> str:
+def edit_content(trace, path, instruction, step_id=None, paragraph=None, content_id=None) -> str:
     idx, err = _resolve_step_id(trace, step_id)
     if err:
         return err
@@ -277,11 +312,16 @@ def edit_section(trace: Trace, path, instruction, step_id=None, paragraph=None) 
     section, err = _resolve_section(ps, path=path)
     if err:
         return err
-    paragraph, err = _resolve_paragraph(
-        section,
-        paragraph,
-        inferred=inferred_paragraph,
-    )
+    if content_id is not None:
+        if paragraph is not None or inferred_paragraph is not None:
+            return "Use either content_id or paragraph, not both."
+        paragraph, err = _resolve_content_paragraph(section, content_id)
+    else:
+        paragraph, err = _resolve_paragraph(
+            section,
+            paragraph,
+            inferred=inferred_paragraph,
+        )
     if err:
         return err
 
@@ -301,22 +341,26 @@ def edit_section(trace: Trace, path, instruction, step_id=None, paragraph=None) 
         section.text = new_text
 
     logger.info(
-        "edit_section step=%d path=%s paragraph=%s instruction=%r",
+        "edit_content step=%d path=%s paragraph=%s content_id=%s instruction=%r",
         idx + 1,
         section.path,
         paragraph,
+        content_id,
         instruction,
     )
 
     preview = new_text[:300] + ("..." if len(new_text) > 300 else "")
-    target_ref = section.paragraph_ref(paragraph) if paragraph is not None else section.display_path
+    if content_id is not None:
+        target_ref = f"{section.display_path} content_id={content_id}"
+    else:
+        target_ref = section.paragraph_ref(paragraph) if paragraph is not None else section.display_path
     outcome = _write_back(trace, idx, ps)
     if not outcome.ok:
         return outcome.message.strip() or "Error: failed to write to database."
     return f"Edited `{target_ref}`:\n{preview}" + outcome.message
 
 
-def insert_section(trace: Trace, path, content, step_id=None, after_paragraph=None) -> str:
+def insert_content_paragraph(trace, path, content, step_id=None, after_paragraph=None, after_content_id=None) -> str:
     idx, err = _resolve_step_id(trace, step_id)
     if err:
         return err
@@ -328,20 +372,25 @@ def insert_section(trace: Trace, path, content, step_id=None, after_paragraph=No
     if err:
         return err
 
-    after_paragraph, err = _resolve_paragraph(
-        section,
-        after_paragraph,
-        required=True,
-        inferred=inferred_paragraph,
-        param_name="after_paragraph",
-        min_index=-1,
-    )
+    if after_content_id is not None:
+        if after_paragraph is not None or inferred_paragraph is not None:
+            return "Use either after_content_id or after_paragraph, not both."
+        after_paragraph, err = _resolve_content_paragraph(section, after_content_id)
+    else:
+        after_paragraph, err = _resolve_paragraph(
+            section,
+            after_paragraph,
+            required=True,
+            inferred=inferred_paragraph,
+            param_name="after_paragraph",
+            min_index=-1,
+        )
     if err:
         return err
 
     ps.push_undo()
     section.paragraphs.insert(after_paragraph + 1, str(content))
-    logger.info("insert_section step=%d path=%s after=%d", idx + 1, section.path, after_paragraph)
+    logger.info("insert_content_paragraph step=%d path=%s after=%d", idx + 1, section.path, after_paragraph)
     inserted_ref = format_paragraph_ref(section.path, after_paragraph + 1)
     outcome = _write_back(trace, idx, ps)
     if not outcome.ok:
@@ -349,7 +398,7 @@ def insert_section(trace: Trace, path, content, step_id=None, after_paragraph=No
     return f"Inserted paragraph `{inserted_ref}`." + outcome.message
 
 
-def delete_section(trace: Trace, path, step_id=None, paragraph=None) -> str:
+def delete_content_paragraph(trace, path, step_id=None, paragraph=None, content_id=None) -> str:
     idx, err = _resolve_step_id(trace, step_id)
     if err:
         return err
@@ -360,20 +409,25 @@ def delete_section(trace: Trace, path, step_id=None, paragraph=None) -> str:
     section, err = _resolve_section(ps, path=path)
     if err:
         return err
-    paragraph, err = _resolve_paragraph(
-        section,
-        paragraph,
-        required=True,
-        inferred=inferred_paragraph,
-    )
+    if content_id is not None:
+        if paragraph is not None or inferred_paragraph is not None:
+            return "Use either content_id or paragraph, not both."
+        paragraph, err = _resolve_content_paragraph(section, content_id)
+    else:
+        paragraph, err = _resolve_paragraph(
+            section,
+            paragraph,
+            required=True,
+            inferred=inferred_paragraph,
+        )
     if err:
         return err
     if len(section.paragraphs) == 1:
-        return "Cannot delete the only paragraph. Use edit_section to clear or rewrite it."
+        return "Cannot delete the only paragraph. Use edit_content to clear or rewrite it."
 
     ps.push_undo()
     deleted = section.paragraphs.pop(paragraph)
-    logger.info("delete_section step=%d path=%s paragraph=%d", idx + 1, section.path, paragraph)
+    logger.info("delete_content_paragraph step=%d path=%s paragraph=%d", idx + 1, section.path, paragraph)
     preview = deleted[:120] + ("..." if len(deleted) > 120 else "")
     outcome = _write_back(trace, idx, ps)
     if not outcome.ok:
@@ -381,7 +435,7 @@ def delete_section(trace: Trace, path, step_id=None, paragraph=None) -> str:
     return f"Deleted `{section.paragraph_ref(paragraph)}`: {preview}" + outcome.message
 
 
-def move_section(trace: Trace, path, to_paragraph, step_id=None, from_paragraph=None) -> str:
+def move_content_paragraph(trace, path, to_paragraph, step_id=None, from_paragraph=None, from_content_id=None) -> str:
     idx, err = _resolve_step_id(trace, step_id)
     if err:
         return err
@@ -393,13 +447,18 @@ def move_section(trace: Trace, path, to_paragraph, step_id=None, from_paragraph=
     if err:
         return err
 
-    from_paragraph, err = _resolve_paragraph(
-        section,
-        from_paragraph,
-        required=True,
-        inferred=inferred_paragraph,
-        param_name="from_paragraph",
-    )
+    if from_content_id is not None:
+        if from_paragraph is not None or inferred_paragraph is not None:
+            return "Use either from_content_id or from_paragraph, not both."
+        from_paragraph, err = _resolve_content_paragraph(section, from_content_id)
+    else:
+        from_paragraph, err = _resolve_paragraph(
+            section,
+            from_paragraph,
+            required=True,
+            inferred=inferred_paragraph,
+            param_name="from_paragraph",
+        )
     if err:
         return err
     to_paragraph, err = _resolve_paragraph(
@@ -418,7 +477,7 @@ def move_section(trace: Trace, path, to_paragraph, step_id=None, from_paragraph=
     paragraph = section.paragraphs.pop(from_paragraph)
     section.paragraphs.insert(to_paragraph, paragraph)
     logger.info(
-        "move_section step=%d path=%s %d -> %d",
+        "move_content_paragraph step=%d path=%s %d -> %d",
         idx + 1,
         section.path,
         from_paragraph,
