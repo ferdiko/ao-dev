@@ -1,10 +1,10 @@
-"""Editable path/paragraph views for trace-chat prompt editing."""
+"""Editable path/paragraph views for trace-chat editing."""
 
 import copy
 from dataclasses import dataclass, field
 from typing import Dict, List, TYPE_CHECKING
 
-from .trace import split_prompt
+from .trace import split_prompt, stringify_field
 
 if TYPE_CHECKING:
     from .trace import Trace
@@ -20,11 +20,12 @@ def format_paragraph_ref(path: str, paragraph: int) -> str:
 
 @dataclass
 class Section:
-    """Editable text content for one flattened input path."""
+    """Editable content for one flattened input or output path."""
 
     path: str
     paragraphs: List[str]
     codec: str
+    branch: str = "input"
     role: str = ""
     prompt_id: str = ""
     shared_prompt: bool = False
@@ -83,6 +84,8 @@ class PromptSections:
         lines = [f"Step [{self.prompt_id}] — {len(self.sections)} editable path(s):"]
         for section in self.sections:
             tags = []
+            if section.branch == "output":
+                tags.append("output")
             if section.role:
                 tags.append(section.role)
             if section.shared_prompt:
@@ -97,16 +100,14 @@ class PromptSections:
         return "\n".join(lines)
 
 
-def flatten_turn(trace: "Trace", turn_index: int) -> List[Section]:
-    """Expose editable text blocks for a step.
+def _block_paragraphs(block) -> List[str]:
+    if block.kind == "text":
+        return list(block.paragraphs) or [block.text]
+    rendered = stringify_field(block.raw_value).strip()
+    return split_prompt(rendered) if rendered else [""]
 
-    If semantic diffing worked, this returns the step's newly introduced text
-    blocks plus a newly introduced shared prompt. If not, it falls back to all
-    editable input text blocks for the step.
-    """
-    diff = trace.diffed[turn_index]
-    blocks = [block for block in diff.new_input_blocks if block.editable]
 
+def _blocks_to_sections(blocks, *, branch: str, prompt_id: str = "") -> List[Section]:
     seen_paths = set()
     sections: List[Section] = []
     for block in blocks:
@@ -115,28 +116,23 @@ def flatten_turn(trace: "Trace", turn_index: int) -> List[Section]:
         seen_paths.add(block.path)
         sections.append(Section(
             path=block.path,
-            paragraphs=list(block.paragraphs) or [block.text],
+            paragraphs=_block_paragraphs(block),
             codec=block.codec,
+            branch=branch,
             role=block.role,
-            prompt_id=diff.prompt_id or "",
-            shared_prompt=bool(block.is_prompt and diff.prompt_id),
+            prompt_id=prompt_id if branch == "input" else "",
+            shared_prompt=bool(branch == "input" and block.is_prompt and prompt_id),
         ))
+    return sections
 
-    if sections:
-        return sections
 
+def flatten_turn(trace: "Trace", turn_index: int) -> List[Section]:
+    """Expose all visible editable paths for a step."""
     record = trace.records[turn_index]
-    fallback_sections: List[Section] = []
-    for block in record.input_blocks:
-        if not block.editable or block.path in seen_paths:
-            continue
-        seen_paths.add(block.path)
-        fallback_sections.append(Section(
-            path=block.path,
-            paragraphs=list(block.paragraphs) or [block.text],
-            codec=block.codec,
-            role=block.role,
-            prompt_id=record.prompt_key or "",
-            shared_prompt=bool(block.is_prompt and record.prompt_key),
-        ))
-    return fallback_sections
+    sections = _blocks_to_sections(
+        record.input_blocks,
+        branch="input",
+        prompt_id=record.prompt_key or "",
+    )
+    sections.extend(_blocks_to_sections(record.output_blocks, branch="output"))
+    return sections

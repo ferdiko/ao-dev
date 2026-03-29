@@ -87,7 +87,8 @@ If you want to clear all recorded runs and cached LLM calls (i.e., clear the DB)
 Git versioning for user files is coordinated in [state.py](/Users/jub/ao-dev/src/sovara/server/state.py) so runs can be tied to code snapshots. To see logs, use these commands:
 
  - Logs of the main server: `so-server logs`
- - Clear the log file before a fresh restart: `so-server clear-logs`
+ - Logs of the inference server: `so-server infer-logs`
+ - Clear both log files before a fresh restart: `so-server clear-logs`
 
 Note that all server logs are printed to files and not visible from any terminal.
 

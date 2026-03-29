@@ -1,9 +1,9 @@
 """get_step_overview tool — compact step overview with content IDs."""
 
 import re
-from dataclasses import dataclass
 
 from ....llm_backend import infer_text
+from ..utils.content_items import StepContentItem, build_step_content_items
 from ..logger import format_log_tags, get_logger
 from ..utils.step_ids import resolve_step_index
 from ..utils.trace import Trace, render_record_markdown
@@ -23,21 +23,12 @@ STEP_SUMMARIZE_SYSTEM = (
 )
 
 SEGMENT_SUMMARIZE_SYSTEM = (
-    "You label text segments from AI agent prompts and inputs. "
+    "You label text segments from AI agent traces. "
     "For each item, write a concrete summary of exactly 4 or 5 words. "
     "Use noun phrases or short descriptive fragments, not full sentences. "
     "Do not mention 'summary', 'segment', 'paragraph', or quote the text. "
     "Return one line per item as '<id>\\t<label>' and nothing else."
 )
-
-INLINE_CONTENT_CHAR_LIMIT = 80
-
-
-@dataclass(frozen=True)
-class StepContentSegment:
-    content_id: str
-    text: str
-    summarized: bool
 
 
 def _content_tag(trace: Trace, *, step: int, phase: str = "") -> str:
@@ -61,38 +52,22 @@ def _fallback_segment_summary(text: str) -> str:
     return " ".join(words[:5])
 
 
-def _build_segments(section) -> list[StepContentSegment]:
-    if len(section.paragraphs) > 1:
-        return [
-            StepContentSegment(content_id=f"c{idx}", text=paragraph, summarized=True)
-            for idx, paragraph in enumerate(section.paragraphs)
-        ]
-
-    text = section.text
-    return [StepContentSegment(content_id="c0", text=text, summarized=len(text) >= INLINE_CONTENT_CHAR_LIMIT)]
-
-
-def _summarize_segments(trace: Trace, step_id: int, sections: list) -> dict[tuple[str, str], str]:
-    pending_items: list[tuple[str, str, str]] = []
-    for section in sections:
-        for segment in _build_segments(section):
-            if not segment.summarized:
-                continue
-            pending_items.append((section.path, segment.content_id, segment.text))
+def _summarize_content_items(trace: Trace, step_id: int, items: list[StepContentItem]) -> dict[str, str]:
+    pending_items = [item for item in items if item.summarized]
 
     if not pending_items:
         return {}
 
     lines = []
-    id_map: dict[str, tuple[str, str, str]] = {}
-    for idx, (path, content_id, text) in enumerate(pending_items):
+    id_map: dict[str, StepContentItem] = {}
+    for idx, item in enumerate(pending_items):
         item_id = f"i{idx}"
-        id_map[item_id] = (path, content_id, text)
+        id_map[item_id] = item
         lines.extend([
             f"{item_id}",
-            f"Path: {path or '<root>'}",
+            f"Path: {item.display_path}",
             "Text:",
-            text or "(empty)",
+            item.text or "(empty)",
             "",
         ])
 
@@ -122,61 +97,80 @@ def _summarize_segments(trace: Trace, step_id: int, sections: list) -> dict[tupl
         if fallback_label:
             parsed[only_item_id] = fallback_label
 
-    summaries: dict[tuple[str, str], str] = {}
-    for item_id, (path, content_id, text) in id_map.items():
-        summaries[(path, content_id)] = parsed.get(item_id) or _fallback_segment_summary(text)
+    summaries: dict[str, str] = {}
+    for item_id, item in id_map.items():
+        summaries[item.content_id] = parsed.get(item_id) or _fallback_segment_summary(item.text)
     return summaries
+
+
+def _render_get_content_call(step_id: int, item: StepContentItem) -> str:
+    return (
+        f"`get_content(step_id={step_id}, path=\"{item.display_path}\", "
+        f"content_id=\"{item.content_id}\")`"
+    )
+
+
+def _render_edit_content_call(step_id: int, item: StepContentItem) -> str:
+    return (
+        f"`edit_content(step_id={step_id}, path=\"{item.display_path}\", "
+        f"content_id=\"{item.content_id}\", instruction=\"...\")`"
+    )
+
+
+def _render_content_items(
+    lines: list[str],
+    sections,
+    items_by_path: dict[tuple[str, str], list[StepContentItem]],
+    item_summaries: dict[str, str],
+    *,
+    step_id: int,
+) -> None:
+    if not sections:
+        lines.append("(empty)")
+        return
+
+    for section in sections:
+        lines.append(f"### `{section.display_path}`")
+        for item in items_by_path.get((section.branch, section.path), []):
+            label = "Summarized" if item.summarized else "Full"
+            if item.summarized:
+                rendered_text = item_summaries.get(item.content_id) or _fallback_segment_summary(item.text)
+            else:
+                rendered_text = _compact_text(item.text) or "(empty)"
+            lines.append(
+                f"- [content_id={item.content_id}] {label} content ({len(item.text)} chars): {rendered_text}"
+            )
+            if item.summarized:
+                lines.append(f"  Load unsummarized content with {_render_get_content_call(step_id, item)}.")
+            lines.append(f"  Edit this content with {_render_edit_content_call(step_id, item)}.")
+            lines.append("")
+        lines.append("")
 
 
 def _build_step_content(trace: Trace, index: int) -> str:
     step_id = index + 1
-    semantic_summary = get_or_compute_step_semantic_summary(trace, step_id)
+    semantic_summary = get_cached_step_semantic_summary(trace, step_id)
     sections = list(_get_sections(trace, index).sections)
-    segment_summaries = _summarize_segments(trace, step_id, sections)
     record = trace.get(index)
+    content_items = build_step_content_items(sections)
+    item_summaries = _summarize_content_items(trace, step_id, content_items)
+    input_sections = [section for section in sections if section.branch == "input"]
+    output_sections = [section for section in sections if section.branch == "output"]
+    items_by_path: dict[tuple[str, str], list[StepContentItem]] = {}
+    for item in content_items:
+        items_by_path.setdefault((item.branch, item.path), []).append(item)
 
     lines = [f"# Step {step_id}"]
     if record.name:
         lines.append(f"Name: {record.name}")
-    lines.extend(["", "## Three-Sentence Summary", "", semantic_summary])
+    if semantic_summary:
+        lines.extend(["", "## Summary", "", semantic_summary])
 
     lines.extend(["", "## Input Content", ""])
-    if not sections:
-        lines.append("This step has no editable input text fields.")
-        return "\n".join(lines).strip()
+    _render_content_items(lines, input_sections, items_by_path, item_summaries, step_id=step_id)
 
-    for section in sections:
-        tags = []
-        if section.role:
-            tags.append(section.role)
-        if section.shared_prompt:
-            tags.append("shared prompt")
-        tag_str = f" [{' | '.join(tags)}]" if tags else ""
-        lines.append(f"### `{section.display_path}`{tag_str}")
-
-        segments = _build_segments(section)
-        for segment in segments:
-            if not segment.summarized:
-                rendered = segment.text or "(empty)"
-                lines.append(
-                    f"- `content_id={segment.content_id}` full content ({len(segment.text)} chars): {rendered}"
-                )
-                continue
-
-            summary = segment_summaries.get((section.path, segment.content_id)) or _fallback_segment_summary(segment.text)
-            lines.append(
-                f"- `content_id={segment.content_id}` summarized content ({len(segment.text)} chars): {summary}"
-            )
-
-        lines.append(
-            "  Load one content unit with "
-            f"`get_content(step_id={step_id}, path=\"{section.display_path}\", content_id=\"...\")`."
-        )
-        lines.append(
-            "  Edit one content unit with "
-            f"`edit_content(step_id={step_id}, path=\"{section.display_path}\", content_id=\"...\", instruction=\"...\")`."
-        )
-        lines.append("")
+    lines.extend(["", "## Output Content", ""])
+    _render_content_items(lines, output_sections, items_by_path, item_summaries, step_id=step_id)
 
     return "\n".join(lines).strip()
 
@@ -227,9 +221,12 @@ def get_step_overview(trace: Trace, step_id=None) -> str:
     if err:
         return err
 
+    cached_summary = get_cached_step_semantic_summary(trace, index + 1)
     if index in trace.step_overview_cache:
-        logger.info("%s cache hit", _content_tag(trace, step=index + 1))
-        return trace.step_overview_cache[index]
+        cached_result = trace.step_overview_cache[index]
+        if not cached_summary or "\n## Summary\n" in cached_result:
+            logger.info("%s cache hit", _content_tag(trace, step=index + 1))
+            return cached_result
 
     result = _build_step_content(trace, index)
     trace.step_overview_cache[index] = result

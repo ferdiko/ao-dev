@@ -40,8 +40,9 @@ def get_trace_overview(trace: Trace) -> str:
             dr.name or "unnamed",
             f"{blocks_char_count(dr.new_input_blocks)} input chars (diff)",
             f"{blocks_char_count(record.output_blocks)} output chars",
-            cached_summary or "(3-sentence summary not cached)",
         ]
+        if cached_summary:
+            parts.append(cached_summary)
         lines.append(" | ".join(parts))
 
     return "\n".join(lines)

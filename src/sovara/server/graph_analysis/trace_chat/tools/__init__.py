@@ -51,7 +51,7 @@ TOOLS_SCHEMA = [
             "description": (
                 "Returns a high-level overview: step count, conversation structure "
                 "(which steps share system prompts and how message history grows), "
-                "and per-step metadata (name, diff input size, output size, cached summary)."
+                "and per-step metadata (name, diff input size, output size, optional cached summary)."
             ),
             "parameters": {
                 "type": "object",
@@ -92,10 +92,10 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "get_step_overview",
             "description": (
-                "Returns the cached 3-sentence summary for a step plus explicit "
-                "input-content sections keyed by flattened paths. Longer content "
-                "is summarized into expandable entries with content_id handles. "
-                "Every visible content unit gets a content_id."
+                "Returns the cached step summary for a step when available plus "
+                "explicit input and output path sections. Longer content is summarized into "
+                "expandable entries with step-global content_id handles. Every visible "
+                "input and output content unit gets a content_id."
             ),
             "parameters": {
                 "type": "object",
@@ -180,10 +180,9 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "get_content",
             "description": (
-                "Returns one editable path, one content unit inside that path, "
-                "or one paragraph inside that path. Use path plus content_id for "
-                "content units shown in get_step_overview, or path plus paragraph "
-                "for paragraph-level editing compatibility."
+                "Returns one content unit from get_step_overview by step-global "
+                "content_id, optionally validating path when provided. Path and "
+                "paragraph refs remain supported for compatibility."
             ),
             "parameters": {
                 "type": "object",
@@ -194,7 +193,7 @@ TOOLS_SCHEMA = [
                     },
                     "path": {
                         "type": "string",
-                        "description": "Flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
+                        "description": "Optional flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
                     },
                     "content_id": {
                         "type": "string",
@@ -205,7 +204,7 @@ TOOLS_SCHEMA = [
                         "description": "Optional 0-based paragraph index within the selected path. Omit when path already includes ::pN.",
                     },
                 },
-                "required": ["path"],
+                "required": [],
             },
         },
     },
@@ -214,10 +213,9 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "edit_content",
             "description": (
-                "Rewrites one editable input path, or one paragraph inside that path, "
-                "based on a natural-language instruction. Prefer path plus content_id "
-                "for units shown in get_step_overview. Paragraph refs like "
-                "body.system::p2 remain supported."
+                "Rewrites one content unit from get_step_overview by "
+                "step-global content_id, optionally validating path when provided. "
+                "Paragraph refs like body.system::p2 remain supported."
             ),
             "parameters": {
                 "type": "object",
@@ -228,7 +226,7 @@ TOOLS_SCHEMA = [
                     },
                     "path": {
                         "type": "string",
-                        "description": "Flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
+                        "description": "Optional flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
                     },
                     "content_id": {
                         "type": "string",
@@ -243,7 +241,7 @@ TOOLS_SCHEMA = [
                         "description": "What to change (e.g. 'make it more concise', 'add a rule about JSON output').",
                     },
                 },
-                "required": ["path", "instruction"],
+                "required": ["instruction"],
             },
         },
     },
@@ -252,9 +250,10 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "insert_content_paragraph",
             "description": (
-                "Inserts a new paragraph inside one editable path. Use "
+                "Inserts a new paragraph inside one visible path. Use "
                 "after_paragraph=-1 to insert at the start. You may also use "
-                "after_content_id from get_step_overview, or a paragraph ref in path."
+                "after_content_id from get_step_overview; path becomes optional when "
+                "that content_id is provided."
             ),
             "parameters": {
                 "type": "object",
@@ -265,7 +264,7 @@ TOOLS_SCHEMA = [
                     },
                     "path": {
                         "type": "string",
-                        "description": "Flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
+                        "description": "Optional flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
                     },
                     "after_content_id": {
                         "type": "string",
@@ -280,7 +279,7 @@ TOOLS_SCHEMA = [
                         "description": "The text for the new paragraph.",
                     },
                 },
-                "required": ["path", "content"],
+                "required": ["content"],
             },
         },
     },
@@ -289,8 +288,9 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "delete_content_paragraph",
             "description": (
-                "Removes one paragraph from an editable path. Use content_id from "
-                "get_step_overview, paragraph, or a paragraph ref like body.system::p2."
+                "Removes one paragraph from a visible path. Use a step-global "
+                "content_id from get_step_overview, paragraph, or a paragraph ref "
+                "like body.system::p2."
             ),
             "parameters": {
                 "type": "object",
@@ -301,7 +301,7 @@ TOOLS_SCHEMA = [
                     },
                     "path": {
                         "type": "string",
-                        "description": "Flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
+                        "description": "Optional flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
                     },
                     "content_id": {
                         "type": "string",
@@ -312,7 +312,7 @@ TOOLS_SCHEMA = [
                         "description": "0-based paragraph index to delete. Omit when path already includes ::pN.",
                     },
                 },
-                "required": ["path"],
+                "required": [],
             },
         },
     },
@@ -321,9 +321,9 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "move_content_paragraph",
             "description": (
-                "Moves a paragraph to another position within one editable path. "
-                "Use from_content_id from get_step_overview, from_paragraph, or a "
-                "paragraph ref like body.system::p2."
+                "Moves a paragraph to another position within one visible path. "
+                "Use step-global from_content_id from get_step_overview, "
+                "from_paragraph, or a paragraph ref like body.system::p2."
             ),
             "parameters": {
                 "type": "object",
@@ -334,7 +334,7 @@ TOOLS_SCHEMA = [
                     },
                     "path": {
                         "type": "string",
-                        "description": "Flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
+                        "description": "Optional flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
                     },
                     "from_content_id": {
                         "type": "string",
@@ -349,7 +349,7 @@ TOOLS_SCHEMA = [
                         "description": "Target paragraph index.",
                     },
                 },
-                "required": ["path", "to_paragraph"],
+                "required": ["to_paragraph"],
             },
         },
     },

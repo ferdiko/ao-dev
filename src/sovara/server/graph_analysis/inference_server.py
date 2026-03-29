@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from sovara.server.graph_models import RunGraph
 from sovara.server.graph_analysis.trace_chat.logger import (
     configure_inference_process_logging,
+    format_log_event_banner,
     format_log_tags,
     get_logger,
 )
@@ -62,7 +63,7 @@ def _log_preview(text: str, max_len: int = 160) -> str:
 
 
 def _prefetch_tag(run_id: str, **fields) -> str:
-    return format_log_tags("trace_summary", run_id=run_id, **fields)
+    return format_log_tags("prefetch", run_id=run_id, **fields)
 
 
 def _graph_fingerprint(graph_data: dict) -> str:
@@ -239,6 +240,13 @@ def prefetch(run_id: str):
             if trace is None:
                 logger.warning("Prefetch skipped for run_id=%s: no trace found", run_id)
                 return
+            logger.info(format_log_event_banner("Trace Opened", f"run_id={run_id}"))
+            logger.info(
+                "%s trace_opened steps=%d is_new=%s",
+                format_log_tags("trace_chat", run_id=run_id, source="prefetch"),
+                len(trace),
+                is_new,
+            )
             _ensure_prefetch_future(run_id, trace, is_new=is_new)
             logger.info("Prefetch queued for run_id=%s steps=%d", run_id, len(trace))
         except Exception:

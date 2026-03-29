@@ -5,7 +5,6 @@ from pathlib import Path
 from sovara.common.constants import INFERENCE_SERVER_LOG
 
 LOGGER_NAME = "sovara_agent"
-DEFAULT_STANDALONE_LOG = "agent.log"
 _FORMATTER = logging.Formatter(
     "%(asctime)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
@@ -26,6 +25,25 @@ def format_log_tags(scope: str, **fields) -> str:
             continue
         parts.append(f"{key}={text.replace(' ', '_')}")
     return "[" + " ".join(parts) + "]"
+
+
+def format_log_event_banner(
+    event: str,
+    detail: str | None = None,
+    *,
+    marker: str = "=",
+    min_width: int = 60,
+) -> str:
+    clean_event = " ".join(str(event).split()).strip().upper()
+    clean_detail = " ".join(str(detail).split()).strip() if detail else ""
+    label = clean_event if not clean_detail else f"{clean_event}: {clean_detail}"
+    fill = (marker or "=")[0]
+    core = f" {label} "
+    side_width = max(4, (min_width - len(core)) // 2)
+    banner = f"{fill * side_width}{core}{fill * side_width}"
+    if len(banner) < min_width:
+        banner += fill * (min_width - len(banner))
+    return banner
 
 
 def configure_logger(log_file: str, *, level: int = logging.INFO) -> logging.Logger:
@@ -52,9 +70,12 @@ def configure_logger(log_file: str, *, level: int = logging.INFO) -> logging.Log
 
 def ensure_standalone_logger() -> logging.Logger:
     logger = get_logger()
-    if logger.handlers:
-        return logger
-    return configure_logger(DEFAULT_STANDALONE_LOG, level=logging.INFO)
+    target = str(Path(INFERENCE_SERVER_LOG).expanduser().resolve())
+    for handler in logger.handlers:
+        base_filename = getattr(handler, "baseFilename", None)
+        if base_filename and str(Path(base_filename).resolve()) == target:
+            return logger
+    return configure_logger(INFERENCE_SERVER_LOG, level=logging.INFO)
 
 
 def configure_inference_process_logging() -> logging.Logger:

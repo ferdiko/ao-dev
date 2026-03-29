@@ -69,9 +69,9 @@ User asks a question about the trace. The agent picks tools based on specificity
 
 User asks to change a system prompt. The agent follows a section-based workflow:
 
-1. **`get_step_overview(step_id)`** — shows the cached 3-sentence step summary plus flattened input paths. Every visible content unit gets a `content_id`; longer content is summarized.
-2. **`get_content(path, content_id)`** — retrieves the full text behind one visible content unit. `get_content(path)` still retrieves a full path, and paragraph refs remain available for compatibility.
-3. **`edit_content(path, content_id, instruction)`** — rewrites one visible content unit. The agent describes *what* to change; the edit LLM handles faithful rewriting.
+1. **`get_step_overview(step_id)`** — shows the cached step summary plus step-global `content_id` handles for every visible input and output content unit; longer content is summarized.
+2. **`get_content(content_id)`** — retrieves the full text behind one visible content unit. `path` is optional for validation, and paragraph refs remain available for compatibility.
+3. **`edit_content(content_id, instruction)`** — rewrites one visible input content unit. `path` is optional for validation, and the edit LLM handles faithful rewriting.
 4. **`insert_content_paragraph`**, **`delete_content_paragraph`**, **`move_content_paragraph`** — structural paragraph changes.
 5. **`undo`** — reverts the last edit. Can be called repeatedly.
 
@@ -81,7 +81,7 @@ If `prompt_id` is omitted and the trace has exactly one prompt, it's used automa
 
 ### Path-level content view with expandable summaries
 
-Editable input text is flattened into path-keyed sections. Every visible content unit receives a `content_id`. Short single-paragraph content is shown inline under that `content_id`. Longer content is summarized into 4-5 word labels, and multi-paragraph content is summarized one paragraph at a time. The same `content_id` can be used for drill-down and editing.
+Editable input text and visible output content are exposed as step-global content units. Every visible content unit receives a `content_id`. Short content is shown inline under that `content_id`; longer content is summarized into 4-5 word labels. The same `content_id` can be used for drill-down, and input content IDs can also be used for editing.
 
 The flattened section view is cached on the `Trace` object (`prompt_sections_cache`) and created lazily on first access to any prompt-aware tool.
 

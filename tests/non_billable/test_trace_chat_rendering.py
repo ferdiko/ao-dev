@@ -108,6 +108,51 @@ def test_trace_chat_overview_and_step_rendering_omit_kind_metadata():
     assert "Kind:" not in step
 
 
+def test_get_step_full_returns_raw_multiline_prompt_text():
+    trace = Trace.from_records([
+        build_trace_record_from_to_show(
+            {
+                "body": {
+                    "system": "Line 1\n\nLine 2\n\n## Heading\n\nBody text",
+                    "messages": [{"role": "user", "content": "Alpha\n\nBeta"}],
+                }
+            },
+            {"output": "Result line 1\n\nResult line 2"},
+            index=0,
+            name="demo",
+        )
+    ])
+
+    result = get_step(trace, step_id=1, view="full")
+
+    assert "Paragraph 1:" not in result
+    assert "Summary:" not in result
+    assert "Line 1\n\nLine 2\n\n## Heading\n\nBody text" in result
+    assert "Alpha\n\nBeta" in result
+    assert "Result line 1\n\nResult line 2" in result
+
+
+def test_get_step_diff_and_output_preserve_raw_text():
+    trace = Trace.from_records([
+        build_trace_record_from_to_show(
+            {"messages": [{"role": "user", "content": "First line\n\nSecond line"}]},
+            {"output": "Output line 1\n\nOutput line 2"},
+            index=0,
+            name="demo",
+        )
+    ])
+
+    diff_result = get_step(trace, step_id=1, view="diff")
+    output_result = get_step(trace, step_id=1, view="output")
+
+    assert "Paragraph 1:" not in diff_result
+    assert "Summary:" not in diff_result
+    assert "First line\n\nSecond line" in diff_result
+    assert "Paragraph 1:" not in output_result
+    assert "Summary:" not in output_result
+    assert "Output line 1\n\nOutput line 2" in output_result
+
+
 def test_parse_record_ignores_unknown_extra_keys():
     parsed = parse_record(
         {
@@ -619,6 +664,49 @@ def test_summarize_trace_keeps_internal_three_sentence_step_summaries(monkeypatc
     assert any(
         system == summarize_module.SYNTHESIZE_SYSTEM and "Sentence one. Sentence two. Sentence three." in user
         for system, user in calls
+    )
+
+
+def test_generate_summary_logs_prefetch_tagged_progress(monkeypatch):
+    trace = Trace.from_string(
+        "\n".join([
+            """{"system_prompt":"You are concise.","input":[{"role":"user","content":"Hello"}],"output":"ok","name":"demo"}""",
+            """{"system_prompt":"You are concise.","input":[{"role":"user","content":"Hello again"}],"output":"done","name":"demo"}""",
+        ])
+    )
+    trace.run_id = "run-1"
+    summarize_module = importlib.import_module("sovara.server.graph_analysis.trace_chat.tools.summarize_trace")
+    logs: list[tuple[str, tuple[object, ...]]] = []
+
+    class FakeLogger:
+        def info(self, message, *args):
+            logs.append((message, args))
+
+        def exception(self, message, *args):
+            logs.append((message, args))
+
+    monkeypatch.setattr(summarize_module, "get_trace_overview", lambda trace: "overview")
+    monkeypatch.setattr(
+        summarize_module,
+        "get_or_compute_step_semantic_summary",
+        lambda trace, step_id: f"semantic summary {step_id}",
+    )
+    monkeypatch.setattr(summarize_module, "infer_text", lambda messages, **kwargs: "Trace summary")
+    monkeypatch.setattr(summarize_module, "logger", FakeLogger())
+
+    result = summarize_module._generate_summary(trace)
+
+    assert result == "Trace summary"
+    assert logs[0] == ("%s start steps=%d", ("[prefetch run_id=run-1]", 2))
+    assert any(
+        message == "%s semantic summary ready in %.1fs chars=%d"
+        and args[0].startswith("[prefetch run_id=run-1 phase=step")
+        for message, args in logs
+    )
+    assert any(
+        message == "%s done summary_chars=%d per_step=%.1fs synthesis=%.1fs total=%.1fs"
+        and args[0] == "[prefetch run_id=run-1]"
+        for message, args in logs
     )
 
 

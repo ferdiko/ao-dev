@@ -1,8 +1,8 @@
 """Helpers for persisting trace chat edits back to the main server DB.
 
-Calls the main server's /ui/edit-input endpoint so that DB write,
-in-memory graph update, and WebSocket broadcast to the UI all happen
-through the existing code path.
+Calls the main server's /ui/edit-input or /ui/edit-output endpoints so
+that DB write, in-memory graph update, and WebSocket broadcast to the UI
+all happen through the existing code path.
 """
 
 import json
@@ -33,6 +33,16 @@ def _read_to_show(run_id: str, node_uuid: str) -> dict | None:
     return inp.get("to_show")
 
 
+def _read_output_to_show(run_id: str, node_uuid: str) -> dict | None:
+    """Return the current output to_show dict for a node, or None if unavailable."""
+    from sovara.server.database_manager import DB
+    row = DB.query_one_llm_call_output(run_id, node_uuid)
+    if not row:
+        return None
+    out = json.loads(dict(row)["output"] or "{}")
+    return out.get("to_show")
+
+
 def _post_edit_input(run_id: str, node_uuid: str, to_show: dict) -> bool:
     """Call POST /ui/edit-input on the main server. Returns True on success."""
     from sovara.common.constants import HOST, PORT
@@ -45,6 +55,21 @@ def _post_edit_input(run_id: str, node_uuid: str, to_show: dict) -> bool:
         return resp.is_success
     except Exception:
         return False
+
+
+def _post_edit_output(run_id: str, node_uuid: str, to_show: dict) -> bool:
+    """Call POST /ui/edit-output on the main server. Returns True on success."""
+    from sovara.common.constants import HOST, PORT
+    try:
+        resp = httpx.post(
+            f"http://{HOST}:{PORT}/ui/edit-output",
+            json={"run_id": run_id, "node_uuid": node_uuid, "value": json.dumps(to_show)},
+            timeout=10.0,
+        )
+        return resp.is_success
+    except Exception:
+        return False
+
 
 def write_prompt_edit(trace: Trace, prompt_id: str, path: str, codec: str, new_text: str) -> PersistOutcome:
     """Persist a shared prompt edit to every step using the same prompt key."""
@@ -77,34 +102,58 @@ def write_prompt_edit(trace: Trace, prompt_id: str, path: str, codec: str, new_t
     return PersistOutcome(ok=True, message=RERUN_MSG)
 
 
-def write_input_sections_edit(trace: Trace, turn_index: int, ps: PromptSections) -> PersistOutcome:
-    """Persist edited step-local input text blocks to DB for the given turn."""
+def _write_sections_edit(trace: Trace, turn_index: int, ps: PromptSections, *, branch: str) -> PersistOutcome:
+    """Persist edited step-local sections to DB for the given turn and branch."""
     if not trace.run_id:
         return PersistOutcome(ok=True)
 
     record = trace.records[turn_index]
     if not record.node_uuid:
-        return PersistOutcome(ok=False, message="\n\nError: step has no DB node reference.")
+        return PersistOutcome(
+            ok=False,
+            message=f"\n\nError: step has no DB node reference for {branch} edit.",
+        )
 
-    to_show = _read_to_show(trace.run_id, record.node_uuid)
+    if branch == "output":
+        to_show = _read_output_to_show(trace.run_id, record.node_uuid)
+        post_edit = _post_edit_output
+    else:
+        to_show = _read_to_show(trace.run_id, record.node_uuid)
+        post_edit = _post_edit_input
     if to_show is None:
-        return PersistOutcome(ok=False, message="\n\nError: could not read original input from database.")
+        return PersistOutcome(
+            ok=False,
+            message=f"\n\nError: could not read original {branch} from database.",
+        )
 
     changed = False
     attempted_paths: list[str] = []
     for section in ps.sections:
-        if section.shared_prompt:
+        if section.branch != branch or section.shared_prompt:
             continue
         attempted_paths.append(section.path)
         if set_text_value(to_show, section.path, section.codec, section.text):
             changed = True
 
+    if not attempted_paths:
+        return PersistOutcome(ok=True)
+
     if not changed:
         joined_paths = ", ".join(f"`{path or '<root>'}`" for path in attempted_paths) or "(none)"
         return PersistOutcome(
             ok=False,
-            message=f"\n\nError: could not apply edit to input paths: {joined_paths}.",
+            message=f"\n\nError: could not apply edit to {branch} paths: {joined_paths}.",
         )
-    if not _post_edit_input(trace.run_id, record.node_uuid, to_show):
-        return PersistOutcome(ok=False, message="\n\nError: failed to write to database.")
+    if not post_edit(trace.run_id, record.node_uuid, to_show):
+        return PersistOutcome(ok=False, message=f"\n\nError: failed to write {branch} to database.")
     return PersistOutcome(ok=True, message=RERUN_MSG)
+
+
+def write_input_sections_edit(trace: Trace, turn_index: int, ps: PromptSections) -> PersistOutcome:
+    """Persist edited step-local input sections to DB for the given turn."""
+    return _write_sections_edit(trace, turn_index, ps, branch="input")
+
+
+def write_output_sections_edit(trace: Trace, turn_index: int, ps: PromptSections) -> PersistOutcome:
+    """Persist edited step-local output sections to DB for the given turn."""
+    return _write_sections_edit(trace, turn_index, ps, branch="output")

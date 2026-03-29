@@ -24,12 +24,12 @@ SYNTHESIZE_SYSTEM = (
 logger = get_logger()
 
 
-def _summary_tag(trace: Trace, **fields) -> str:
-    return format_log_tags("trace_summary", run_id=trace.run_id or "-", **fields)
+def _prefetch_tag(trace: Trace, **fields) -> str:
+    return format_log_tags("prefetch", run_id=trace.run_id or "-", **fields)
 
 
 def _summarize_step_semantically(trace: Trace, step_id: int) -> str:
-    step_tag = _summary_tag(trace, phase="step", step=step_id)
+    step_tag = _prefetch_tag(trace, phase="step", step=step_id)
     t0 = time.monotonic()
     semantic_summary = get_or_compute_step_semantic_summary(trace, step_id)
     logger.info(
@@ -44,14 +44,14 @@ def _summarize_step_semantically(trace: Trace, step_id: int) -> str:
 def _generate_summary(trace: Trace) -> str:
     """Do the actual work: overview + per-step summaries + synthesis."""
     t0 = time.monotonic()
-    base_tag = _summary_tag(trace)
+    base_tag = _prefetch_tag(trace)
     logger.info("%s start steps=%d", base_tag, len(trace))
 
     try:
         overview = get_trace_overview(trace)
         logger.info(
             "%s overview ready chars=%d elapsed=%.1fs",
-            _summary_tag(trace, phase="overview"),
+            _prefetch_tag(trace, phase="overview"),
             len(overview),
             time.monotonic() - t0,
         )
@@ -67,7 +67,7 @@ def _generate_summary(trace: Trace) -> str:
                 summaries_by_step[step_id] = future.result()
                 logger.info(
                     "%s completed=%d/%d latest_step=%d elapsed=%.1fs",
-                    _summary_tag(trace, phase="steps_progress"),
+                    _prefetch_tag(trace, phase="steps_progress"),
                     completed,
                     len(trace),
                     step_id,
@@ -80,7 +80,7 @@ def _generate_summary(trace: Trace) -> str:
         combined += "\n".join(summaries)
         logger.info(
             "%s combined context chars=%d",
-            _summary_tag(trace, phase="synthesis_input"),
+            _prefetch_tag(trace, phase="synthesis_input"),
             len(combined),
         )
 

@@ -17,6 +17,7 @@ from sovara.common.logger import logger, create_file_logger
 
 from sovara.common.constants import (
     MAIN_SERVER_LOG,
+    INFERENCE_SERVER_LOG,
     HOST,
     PORT,
     SHUTDOWN_WAIT,
@@ -61,9 +62,15 @@ def launch_daemon_server() -> None:
         )
 
 
+def _clear_log_file(path: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w"):
+        pass
+
+
 def server_command_parser():
     parser = ArgumentParser(
-        usage="so-server {start, stop, restart, clear, logs, clear-logs}",
+        usage="so-server {start, stop, restart, clear, logs, infer-logs, clear-logs}",
         description="Server utilities.",
         allow_abbrev=False,
     )
@@ -128,7 +135,6 @@ def execute_server_command(args):
         return
 
     elif args.command == "infer-logs":
-        from sovara.common.constants import INFERENCE_SERVER_LOG
         try:
             with open(INFERENCE_SERVER_LOG, "r") as log_file:
                 print(log_file.read(), end="")
@@ -140,12 +146,14 @@ def execute_server_command(args):
 
     elif args.command == "clear-logs":
         try:
-            os.makedirs(os.path.dirname(MAIN_SERVER_LOG), exist_ok=True)
-            with open(MAIN_SERVER_LOG, "w"):
-                pass
+            _clear_log_file(MAIN_SERVER_LOG)
         except Exception as e:
             logger.error(f"Error clearing log file {MAIN_SERVER_LOG}: {e}")
-        logger.info("Server log file cleared.")
+        try:
+            _clear_log_file(INFERENCE_SERVER_LOG)
+        except Exception as e:
+            logger.error(f"Error clearing log file {INFERENCE_SERVER_LOG}: {e}")
+        logger.info("Server log files cleared.")
         return
 
     elif args.command == "_serve":

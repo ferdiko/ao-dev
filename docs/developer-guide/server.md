@@ -37,7 +37,8 @@ All server logs are written to files (not visible in any terminal). Use these co
 
 ```bash
 so-server logs        # Main server logs
-so-server clear-logs  # Clear the log file before a fresh restart
+so-server infer-logs  # Inference server logs
+so-server clear-logs  # Clear both log files before a fresh restart
 ```
 
 ## Debugging the Server
