@@ -1,19 +1,19 @@
 """Shared utilities for parsing and processing agent execution traces.
 
-Trace schema (JSONL, one record per line):
-    system_prompt : str       – The system prompt used for this step
-    input         : list[dict] – Messages sent to the model (role/content pairs)
-    output        : str       – The model's response text
-    correct       : bool|None – Whether the output is correct (null = unevaluated)
-    label         : str|None  – Classification label (null = unlabeled)
-    summary       : str|None  – Human-readable summary (null = unsummarized)
-    model/tool    : str|None  – Model ID or tool name that produced the output
+Trace chat now treats `to_show` as the source of truth and renders it into a
+generic, path-based markdown view. Best-effort semantic hints such as
+system-prompt and message detection are derived only to improve prompt
+construction and diffing; they are not authoritative parsing.
 """
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
+
+_HEADING_RE = re.compile(r"^#{1,6}\s+\S")
+_PROMPT_KEYS = {"system", "instructions", "prompt"}
 
 
 # ---------------------------------------------------------------------------
@@ -32,18 +32,19 @@ def extract_text_content(content) -> str:
         parts = []
         for block in content:
             if isinstance(block, dict) and block.get("type") == "text":
-                parts.append(block["text"])
+                parts.append(str(block.get("text", "")))
             elif isinstance(block, dict):
                 parts.append(f"[{block.get('type', 'unknown')} block]")
+            else:
+                parts.append(str(block))
         return "\n".join(parts)
+    if content is None:
+        return ""
     return str(content)
 
 
 def format_messages(messages: list, system_prompt: str = "") -> str:
-    """Render a message list into readable text.
-
-    Combines system_prompt (if given) and each message into labeled sections.
-    """
+    """Backward-compatible message renderer used by legacy callers."""
     parts = []
     if system_prompt:
         parts.append(f"[system]\n{system_prompt}")
@@ -58,8 +59,10 @@ def format_messages(messages: list, system_prompt: str = "") -> str:
 
 
 def stringify_field(value) -> str:
-    """Convert a trace field to string. Passes through strings, JSON-dumps everything else."""
-    return value if isinstance(value, str) else json.dumps(value)
+    """Convert a trace field to string. Pass strings through, JSON-dump the rest."""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def extract_tag(raw: str, tag: str, default: str = "") -> str:
@@ -71,22 +74,118 @@ def extract_tag(raw: str, tag: str, default: str = "") -> str:
     return default
 
 
+def _prompt_hash(text: str) -> str:
+    """Short content hash for a detected shared prompt."""
+    return hashlib.sha256(text.encode()).hexdigest()[:12]
+
+
+def _path_join(prefix: str, part: str | int) -> str:
+    part_str = str(part)
+    return f"{prefix}.{part_str}" if prefix else part_str
+
+
+def _is_small_json_blob(value: Any) -> bool:
+    if not isinstance(value, (dict, list)):
+        return False
+    try:
+        return len(json.dumps(value, ensure_ascii=False, sort_keys=True)) <= 160
+    except TypeError:
+        return False
+
+
+def _is_text_block_list(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(block, dict) for block in value)
+        and any(block.get("type") == "text" for block in value)
+    )
+
+
+def _merge_heading_only_paragraphs(chunks: List[str]) -> List[str]:
+    merged: List[str] = []
+    i = 0
+    while i < len(chunks):
+        lines = chunks[i].splitlines()
+        is_heading_only = len(lines) == 1 and bool(_HEADING_RE.match(lines[0]))
+        if is_heading_only and i + 1 < len(chunks):
+            next_lines = chunks[i + 1].splitlines()
+            next_is_heading = len(next_lines) == 1 and bool(_HEADING_RE.match(next_lines[0]))
+            if not next_is_heading:
+                merged.append(chunks[i] + "\n\n" + chunks[i + 1])
+                i += 2
+                continue
+        merged.append(chunks[i])
+        i += 1
+    return merged
+
+
+def split_prompt(text: str) -> List[str]:
+    """Split text on blank lines, merging orphan markdown headings into the next paragraph."""
+    chunks = [chunk.strip() for chunk in text.split("\n\n") if chunk.strip()]
+    if not chunks:
+        return [""]
+    return _merge_heading_only_paragraphs(chunks)
+
+
+def _summarize_paragraph(paragraph: str) -> str:
+    stripped = " ".join(paragraph.split())
+    if len(stripped) <= 80:
+        return ""
+    sentence = stripped.split(". ")[0].strip()
+    if not sentence:
+        sentence = stripped
+    if len(sentence) > 120:
+        sentence = sentence[:117].rstrip() + "..."
+    return sentence
+
+
 # ---------------------------------------------------------------------------
-# Data classes
+# Render models
 # ---------------------------------------------------------------------------
 
 @dataclass
+class RenderBlock:
+    branch: str
+    path: str
+    kind: str
+    raw_value: Any
+    codec: str
+    editable: bool = False
+    paragraphs: List[str] = field(default_factory=list)
+    paragraph_summaries: List[str] = field(default_factory=list)
+    role: str = ""
+    message_position: Optional[int] = None
+    is_prompt: bool = False
+
+    @property
+    def text(self) -> str:
+        if self.paragraphs:
+            return "\n\n".join(self.paragraphs)
+        return extract_text_content(self.raw_value)
+
+
+@dataclass
 class TraceRecord:
-    """A single record in a trace file."""
+    """A single record in a trace."""
+
     system_prompt: str = ""
     input: list = field(default_factory=list)
-    output: object = ""  # str or dict (tool call results)
+    output: object = ""
     correct: Optional[bool] = None
     label: Optional[str] = None
     summary: Optional[str] = None
-    model_or_tool: Optional[str] = None
+    name: Optional[str] = None
     index: int = 0
-    node_uuid: Optional[str] = None  # DB node UUID for write-back (set when built from DB)
+    node_uuid: Optional[str] = None
+    input_to_show: dict = field(default_factory=dict)
+    output_to_show: dict = field(default_factory=dict)
+    input_blocks: List[RenderBlock] = field(default_factory=list)
+    output_blocks: List[RenderBlock] = field(default_factory=list)
+    prompt_path: Optional[str] = None
+    prompt_codec: Optional[str] = None
+    message_list_path: Optional[str] = None
+    prompt_key: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -96,19 +195,14 @@ class TraceRecord:
             "correct": self.correct,
             "label": self.label,
             "summary": self.summary,
-            "model/tool": self.model_or_tool,
+            "name": self.name,
         }
 
 
 @dataclass
 class DiffedRecord:
-    """A trace record showing only what changed relative to prior records.
+    """A trace record showing only what changed relative to prior records."""
 
-    For records that continue an existing conversation (same system prompt),
-    new_messages contains only the messages appended since the last record
-    in that conversation. For the first record in a conversation (or standalone
-    records with no system prompt), new_messages equals the full input.
-    """
     index: int = 0
     prompt_id: Optional[str] = None
     prompt_is_new: bool = True
@@ -118,50 +212,330 @@ class DiffedRecord:
     correct: Optional[bool] = None
     label: Optional[str] = None
     summary: Optional[str] = None
-    model_or_tool: Optional[str] = None
+    name: Optional[str] = None
+    new_input_blocks: List[RenderBlock] = field(default_factory=list)
+
+
+@dataclass
+class _SemanticHints:
+    system_prompt: str = ""
+    prompt_path: Optional[str] = None
+    prompt_codec: Optional[str] = None
+    message_list_path: Optional[str] = None
+    input_messages: list = field(default_factory=list)
+    message_positions: Dict[str, Tuple[int, str]] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
-# Parsing
+# Best-effort semantic hints for prompt construction
 # ---------------------------------------------------------------------------
 
-def _prompt_hash(text: str) -> str:
-    """Short content hash for a system prompt."""
-    return hashlib.sha256(text.encode()).hexdigest()[:12]
+def _collect_text_candidates(value: Any, path: str = "") -> list[tuple[str, Any, str]]:
+    candidates: list[tuple[str, Any, str]] = []
+    if isinstance(value, str):
+        candidates.append((path, value, "plain_text"))
+        return candidates
+    if _is_text_block_list(value):
+        candidates.append((path, value, "text_block_list"))
+        return candidates
+    if isinstance(value, dict):
+        for key, child in value.items():
+            candidates.extend(_collect_text_candidates(child, _path_join(path, key)))
+    elif isinstance(value, list):
+        for idx, child in enumerate(value):
+            candidates.extend(_collect_text_candidates(child, _path_join(path, idx)))
+    return candidates
 
 
-def _messages_equal(a: dict, b: dict) -> bool:
-    """Compare two message dicts by serialized form."""
-    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+def _find_message_list(value: Any, path: str = "") -> Optional[tuple[str, list]]:
+    # Heuristic only for prompt construction and convenience rendering.
+    # Do not use this as authoritative parsing or exact persistence logic.
+    if isinstance(value, list) and value and all(isinstance(item, dict) for item in value):
+        if all("role" in item and "content" in item for item in value):
+            return path, value
+    if isinstance(value, dict):
+        for key, child in value.items():
+            found = _find_message_list(child, _path_join(path, key))
+            if found:
+                return found
+    elif isinstance(value, list):
+        for idx, child in enumerate(value):
+            found = _find_message_list(child, _path_join(path, idx))
+            if found:
+                return found
+    return None
 
 
-def _compute_new_messages(prev_input: list, cur_input: list) -> Tuple[int, list]:
-    """Find the longest shared prefix between two message lists.
+def _build_semantic_hints(to_show: dict) -> _SemanticHints:
+    # Heuristic only for prompt construction and diff readability.
+    # Write-back always uses stored paths/codecs, never these guesses.
+    hints = _SemanticHints()
 
-    Returns (shared_count, new_messages).
-    """
-    shared = 0
-    for i in range(min(len(prev_input), len(cur_input))):
-        if _messages_equal(prev_input[i], cur_input[i]):
-            shared += 1
-        else:
-            break
-    return shared, cur_input[shared:]
+    message_candidate = _find_message_list(to_show)
+    raw_messages: list[dict] = []
+    if message_candidate:
+        message_list_path, raw_messages = message_candidate
+        hints.message_list_path = message_list_path
+
+    prompt_candidates = []
+    for candidate_path, raw_value, codec in _collect_text_candidates(to_show):
+        terminal = candidate_path.rsplit(".", 1)[-1]
+        if terminal not in _PROMPT_KEYS:
+            continue
+        if hints.message_list_path and candidate_path.startswith(f"{hints.message_list_path}."):
+            continue
+        prompt_candidates.append((candidate_path, raw_value, codec))
+
+    if prompt_candidates:
+        prompt_path, raw_prompt, prompt_codec = prompt_candidates[0]
+        hints.system_prompt = extract_text_content(raw_prompt)
+        hints.prompt_path = prompt_path
+        hints.prompt_codec = prompt_codec
+
+    filtered_messages = []
+    semantic_index = 0
+    for raw_index, message in enumerate(raw_messages):
+        role = str(message.get("role", "unknown"))
+        content = message.get("content", "")
+        content_path = _path_join(_path_join(hints.message_list_path or "", raw_index), "content")
+        content_codec = "text_block_list" if _is_text_block_list(content) else "plain_text"
+        if not hints.system_prompt and role == "system":
+            hints.system_prompt = extract_text_content(content)
+            hints.prompt_path = content_path
+            hints.prompt_codec = content_codec
+            continue
+
+        filtered_messages.append(message)
+        item_prefix = _path_join(hints.message_list_path or "", raw_index)
+        hints.message_positions[item_prefix] = (semantic_index, role)
+        semantic_index += 1
+
+    hints.input_messages = filtered_messages
+    return hints
+
+
+# ---------------------------------------------------------------------------
+# Rendering and parsing
+# ---------------------------------------------------------------------------
+
+def _find_message_meta(path: str, semantic_hints: _SemanticHints) -> tuple[Optional[int], str]:
+    for prefix, (position, role) in semantic_hints.message_positions.items():
+        if path == prefix or path.startswith(f"{prefix}."):
+            return position, role
+    return None, ""
+
+
+def _should_expand_container(path: str, semantic_hints: _SemanticHints) -> bool:
+    if not path:
+        return True
+
+    important_paths = [semantic_hints.prompt_path, semantic_hints.message_list_path]
+    important_paths.extend(semantic_hints.message_positions.keys())
+    return any(
+        important and (important == path or important.startswith(f"{path}."))
+        for important in important_paths
+    )
+
+
+def _render_blocks(
+    value: Any,
+    branch: str,
+    *,
+    path: str = "",
+    semantic_hints: Optional[_SemanticHints] = None,
+) -> List[RenderBlock]:
+    semantic_hints = semantic_hints or _SemanticHints()
+    message_position, role = _find_message_meta(path, semantic_hints)
+
+    if isinstance(value, str):
+        paragraphs = split_prompt(value)
+        summaries = [_summarize_paragraph(paragraph) for paragraph in paragraphs]
+        terminal = path.rsplit(".", 1)[-1] if path else ""
+        return [RenderBlock(
+            branch=branch,
+            path=path,
+            kind="text",
+            raw_value=value,
+            codec="plain_text",
+            editable=(branch == "input" and terminal not in {"role", "type"}),
+            paragraphs=paragraphs,
+            paragraph_summaries=summaries,
+            role=role,
+            message_position=message_position,
+            is_prompt=(path == semantic_hints.prompt_path),
+        )]
+
+    if _is_text_block_list(value):
+        text = extract_text_content(value)
+        paragraphs = split_prompt(text)
+        summaries = [_summarize_paragraph(paragraph) for paragraph in paragraphs]
+        return [RenderBlock(
+            branch=branch,
+            path=path,
+            kind="text",
+            raw_value=value,
+            codec="text_block_list",
+            editable=(branch == "input"),
+            paragraphs=paragraphs,
+            paragraph_summaries=summaries,
+            role=role,
+            message_position=message_position,
+            is_prompt=(path == semantic_hints.prompt_path),
+        )]
+
+    if isinstance(value, (int, float, bool)) or value is None:
+        return [RenderBlock(
+            branch=branch,
+            path=path,
+            kind="scalar",
+            raw_value=value,
+            codec="scalar",
+            role=role,
+            message_position=message_position,
+            is_prompt=(path == semantic_hints.prompt_path),
+        )]
+
+    if (
+        path
+        and isinstance(value, (dict, list))
+        and path != semantic_hints.message_list_path
+        and message_position is None
+        and not _should_expand_container(path, semantic_hints)
+        and _is_small_json_blob(value)
+    ):
+        return [RenderBlock(
+            branch=branch,
+            path=path,
+            kind="json_blob",
+            raw_value=value,
+            codec="json_value",
+            role=role,
+            message_position=message_position,
+            is_prompt=(path == semantic_hints.prompt_path),
+        )]
+
+    blocks: List[RenderBlock] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            blocks.extend(_render_blocks(
+                child,
+                branch,
+                path=_path_join(path, key),
+                semantic_hints=semantic_hints,
+            ))
+    elif isinstance(value, list):
+        for idx, child in enumerate(value):
+            blocks.extend(_render_blocks(
+                child,
+                branch,
+                path=_path_join(path, idx),
+                semantic_hints=semantic_hints,
+            ))
+    else:
+        blocks.append(RenderBlock(
+            branch=branch,
+            path=path,
+            kind="scalar",
+            raw_value=str(value),
+            codec="scalar",
+            role=role,
+            message_position=message_position,
+            is_prompt=(path == semantic_hints.prompt_path),
+        ))
+    return blocks
+
+
+def _choose_output_value(output_to_show: dict, output_blocks: List[RenderBlock]) -> object:
+    text_blocks = [block for block in output_blocks if block.kind == "text"]
+    if len(text_blocks) == 1 and text_blocks[0].path:
+        return text_blocks[0].text
+    return output_to_show
+
+
+def build_trace_record_from_to_show(
+    input_to_show: dict,
+    output_to_show: dict,
+    *,
+    index: int = 0,
+    correct: Optional[bool] = None,
+    label: Optional[str] = None,
+    summary: Optional[str] = None,
+    name: Optional[str] = None,
+    node_uuid: Optional[str] = None,
+) -> TraceRecord:
+    semantic_hints = _build_semantic_hints(input_to_show)
+    input_blocks = _render_blocks(input_to_show, "input", semantic_hints=semantic_hints)
+    output_blocks = _render_blocks(output_to_show, "output")
+
+    prompt_key = _prompt_hash(semantic_hints.system_prompt) if semantic_hints.system_prompt else None
+
+    return TraceRecord(
+        system_prompt=semantic_hints.system_prompt,
+        input=semantic_hints.input_messages,
+        output=_choose_output_value(output_to_show, output_blocks),
+        correct=correct,
+        label=label,
+        summary=summary,
+        name=name or "",
+        index=index,
+        node_uuid=node_uuid,
+        input_to_show=input_to_show or {},
+        output_to_show=output_to_show or {},
+        input_blocks=input_blocks,
+        output_blocks=output_blocks,
+        prompt_path=semantic_hints.prompt_path,
+        prompt_codec=semantic_hints.prompt_codec,
+        message_list_path=semantic_hints.message_list_path,
+        prompt_key=prompt_key,
+    )
 
 
 def parse_record(raw: dict, index: int = 0) -> TraceRecord:
     """Parse a single JSON dict into a TraceRecord."""
-    return TraceRecord(
-        system_prompt=raw.get("system_prompt") or "",
-        input=raw.get("input", []),
-        output=raw.get("output", ""),
+    if "input_to_show" in raw or "output_to_show" in raw:
+        return build_trace_record_from_to_show(
+            raw.get("input_to_show") or {},
+            raw.get("output_to_show") or {},
+            index=index,
+            correct=raw.get("correct"),
+            label=raw.get("label"),
+            summary=raw.get("summary"),
+            name=raw.get("name") or "",
+            node_uuid=raw.get("node_uuid"),
+        )
+
+    input_to_show = {}
+    system_prompt = raw.get("system_prompt") or ""
+    input_messages = raw.get("input", [])
+    if system_prompt:
+        input_to_show["system_prompt"] = system_prompt
+    if input_messages:
+        input_to_show["messages"] = input_messages
+    output_to_show = {"output": raw.get("output", "")}
+
+    record = build_trace_record_from_to_show(
+        input_to_show,
+        output_to_show,
+        index=index,
         correct=raw.get("correct"),
         label=raw.get("label"),
         summary=raw.get("summary"),
-        model_or_tool=raw.get("model/tool"),
-        index=index,
+        name=raw.get("name") or "",
         node_uuid=raw.get("node_uuid"),
     )
+    if system_prompt:
+        record.system_prompt = system_prompt
+        record.prompt_path = "system_prompt"
+        record.prompt_codec = "plain_text"
+        record.prompt_key = _prompt_hash(system_prompt)
+        for block in record.input_blocks:
+            if block.path == "system_prompt":
+                block.is_prompt = True
+    if input_messages:
+        record.input = input_messages if isinstance(input_messages, list) else [input_messages]
+        record.message_list_path = "messages"
+    record.output = raw.get("output", "")
+    return record
 
 
 def parse_trace(text: str) -> List[TraceRecord]:
@@ -174,57 +548,157 @@ def parse_trace(text: str) -> List[TraceRecord]:
     return records
 
 
+def _messages_equal(a: dict, b: dict) -> bool:
+    """Compare two messages structurally."""
+    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
+def _compute_new_messages(prev_input: list, cur_input: list) -> Tuple[int, list]:
+    """Find the longest shared prefix between two message lists."""
+    shared = 0
+    for i in range(min(len(prev_input), len(cur_input))):
+        if _messages_equal(prev_input[i], cur_input[i]):
+            shared += 1
+        else:
+            break
+    return shared, cur_input[shared:]
+
+
 def diff_trace(records: List[TraceRecord]) -> Tuple[Dict[str, str], List[DiffedRecord]]:
-    """Produce a diffed view of a trace.
-
-    Returns:
-        prompt_registry: {prompt_id: full_system_prompt_text}
-        diffed_records:  One DiffedRecord per input record with only new messages.
-
-    Conversations are tracked by system_prompt identity. Records with an empty
-    system_prompt are treated as standalone.
-    """
+    """Produce a diffed view of a trace."""
     prompt_registry: Dict[str, str] = {}
     last_input_by_prompt: Dict[str, list] = {}
     seen_prompt_ids: set = set()
     diffed: List[DiffedRecord] = []
 
     for rec in records:
-        sp = rec.system_prompt
-
-        if sp:
-            pid = _prompt_hash(sp)
-            if pid not in prompt_registry:
-                prompt_registry[pid] = sp
+        pid = rec.prompt_key
+        if pid:
+            prompt_registry.setdefault(pid, rec.system_prompt)
             is_new = pid not in seen_prompt_ids
             seen_prompt_ids.add(pid)
         else:
-            pid = None
             is_new = False
 
-        inp = rec.input if isinstance(rec.input, list) else [rec.input]
-        if pid is not None and pid in last_input_by_prompt:
-            _shared, new_msgs = _compute_new_messages(last_input_by_prompt[pid], inp)
+        semantic_messages = rec.input if isinstance(rec.input, list) else []
+        if pid and semantic_messages and pid in last_input_by_prompt:
+            shared, new_messages = _compute_new_messages(last_input_by_prompt[pid], semantic_messages)
         else:
-            new_msgs = inp
+            shared, new_messages = 0, semantic_messages
 
-        if pid is not None:
-            last_input_by_prompt[pid] = inp
+        if pid and semantic_messages:
+            last_input_by_prompt[pid] = semantic_messages
+
+        new_input_blocks = []
+        for block in rec.input_blocks:
+            if block.is_prompt:
+                if is_new:
+                    new_input_blocks.append(block)
+                continue
+            if block.message_position is not None:
+                if block.message_position >= shared:
+                    new_input_blocks.append(block)
+                continue
+            new_input_blocks.append(block)
 
         diffed.append(DiffedRecord(
             index=rec.index,
             prompt_id=pid,
             prompt_is_new=is_new,
-            new_messages=new_msgs,
-            total_messages=len(inp),
+            new_messages=new_messages,
+            total_messages=len(semantic_messages),
             output=rec.output,
             correct=rec.correct,
             label=rec.label,
             summary=rec.summary,
-            model_or_tool=rec.model_or_tool,
+            name=rec.name,
+            new_input_blocks=new_input_blocks,
         ))
 
     return prompt_registry, diffed
+
+
+# ---------------------------------------------------------------------------
+# Markdown rendering
+# ---------------------------------------------------------------------------
+
+def _render_text_block(block: RenderBlock) -> List[str]:
+    display_path = block.path or "<root>"
+    lines: List[str] = [f"### `{display_path}`"]
+    if block.role and not display_path.endswith(".role"):
+        lines.append(f"Role: `{block.role}`")
+
+    text = block.text
+    if len(text) <= 160 and len(block.paragraphs) == 1:
+        lines.append(text or "(empty)")
+        return lines
+
+    for idx, paragraph in enumerate(block.paragraphs, start=1):
+        lines.append(f"Paragraph {idx}:")
+        lines.append(paragraph or "(empty)")
+        summary = block.paragraph_summaries[idx - 1] if idx - 1 < len(block.paragraph_summaries) else ""
+        if summary:
+            lines.append("Summary:")
+            lines.append(summary)
+    return lines
+
+
+def render_blocks_markdown(blocks: List[RenderBlock]) -> str:
+    rendered: List[str] = []
+    for block in blocks:
+        if block.kind == "text":
+            rendered.extend(_render_text_block(block))
+        elif block.kind == "scalar":
+            rendered.append(f"### `{block.path or '<root>'}`")
+            rendered.append(f"`{json.dumps(block.raw_value, ensure_ascii=False)}`")
+        else:
+            rendered.append(f"### `{block.path or '<root>'}`")
+            rendered.append("```json")
+            rendered.append(stringify_field(block.raw_value))
+            rendered.append("```")
+        rendered.append("")
+    return "\n".join(rendered).strip()
+
+
+def render_record_markdown(record: TraceRecord, diffed: Optional[DiffedRecord] = None, *, view: str = "full") -> str:
+    lines = [f"# Step {record.index + 1}"]
+    if record.name:
+        lines.append(f"Name: {record.name}")
+
+    if view == "output":
+        output_blocks = record.output_blocks
+        if output_blocks:
+            lines.extend(["", "## Output", "", render_blocks_markdown(output_blocks)])
+        else:
+            lines.extend(["", "## Output", "", "(empty)"])
+        return "\n".join(lines).strip()
+
+    if view == "diff" and diffed is not None:
+        lines.append("")
+        lines.append("## Input")
+        if diffed.prompt_id and not diffed.prompt_is_new:
+            lines.append("")
+            lines.append(f"Prompt `{diffed.prompt_id}` is reused from an earlier step.")
+        lines.append("")
+        if diffed.new_input_blocks:
+            lines.append(render_blocks_markdown(diffed.new_input_blocks))
+        else:
+            lines.append("(no new input content detected)")
+    else:
+        lines.append("")
+        lines.append("## Input")
+        lines.append("")
+        if record.input_blocks:
+            lines.append(render_blocks_markdown(record.input_blocks))
+        else:
+            lines.append("(empty)")
+
+    lines.extend(["", "## Output", ""])
+    if record.output_blocks:
+        lines.append(render_blocks_markdown(record.output_blocks))
+    else:
+        lines.append("(empty)")
+    return "\n".join(lines).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -234,27 +708,27 @@ def diff_trace(records: List[TraceRecord]) -> Tuple[Dict[str, str], List[DiffedR
 @dataclass
 class Trace:
     """Parsed trace with precomputed diff views and per-trace caches."""
+
     raw: str
     records: List[TraceRecord]
     prompt_registry: Dict[str, str] = field(default_factory=dict)
     diffed: List[DiffedRecord] = field(default_factory=list)
-    # Caches scoped to this trace instance
     summary_cache: Dict[int, str] = field(default_factory=dict, repr=False)
     verdict_cache: Dict[int, tuple] = field(default_factory=dict, repr=False)
     prompt_sections_cache: Dict[str, Any] = field(default_factory=dict, repr=False)
-    prefetched_summaries: Dict[str, str] = field(default_factory=dict, repr=False)
-    run_id: Optional[str] = None  # Set when built from DB; needed for write-back
+    prefetched_summary: str = field(default="", repr=False)
+    run_id: Optional[str] = None
 
     @classmethod
     def from_string(cls, raw: str) -> "Trace":
         records = parse_trace(raw)
         prompt_registry, diffed = diff_trace(records)
-        return cls(
-            raw=raw,
-            records=records,
-            prompt_registry=prompt_registry,
-            diffed=diffed,
-        )
+        return cls(raw=raw, records=records, prompt_registry=prompt_registry, diffed=diffed)
+
+    @classmethod
+    def from_records(cls, records: List[TraceRecord], raw: str = "") -> "Trace":
+        prompt_registry, diffed = diff_trace(records)
+        return cls(raw=raw, records=records, prompt_registry=prompt_registry, diffed=diffed)
 
     def __len__(self) -> int:
         return len(self.records)
@@ -269,8 +743,33 @@ class Trace:
             raise IndexError(f"Step {index + 1} out of range (1–{len(self.diffed)})")
         return self.diffed[index]
 
+    def refresh_after_edit(
+        self,
+        affected_indices: set[int],
+        *,
+        keep_prompt_sections_for: Optional[int] = None,
+    ) -> None:
+        """Invalidate derived analysis and recompute structural views after an edit."""
+        for idx in affected_indices:
+            if 0 <= idx < len(self.records):
+                self.records[idx].summary = None
+                self.records[idx].correct = None
+
+        self.summary_cache.clear()
+        self.verdict_cache.clear()
+        self.prefetched_summary = ""
+
+        self.prompt_registry, self.diffed = diff_trace(self.records)
+
+        if keep_prompt_sections_for is None:
+            self.prompt_sections_cache = {}
+            return
+
+        cache_key = f"step:{keep_prompt_sections_for}"
+        kept = self.prompt_sections_cache.get(cache_key)
+        self.prompt_sections_cache = {cache_key: kept} if kept is not None else {}
+
     def prompt_turns(self) -> Dict[str, List[int]]:
-        """Map each prompt_id to the list of turn indices that use it."""
         groups: Dict[str, List[int]] = {}
         for dr in self.diffed:
             if dr.prompt_id is not None:

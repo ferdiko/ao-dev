@@ -25,13 +25,13 @@ SYNTHESIZE_SYSTEM = (
 logger = logging.getLogger("sovara_agent")
 
 
-def _generate_summary(trace: Trace, model: str) -> str:
+def _generate_summary(trace: Trace) -> str:
     """Do the actual work: overview + per-step summaries + synthesis."""
     t0 = time.monotonic()
     overview = get_overview(trace)
 
     def _get_one(tid):
-        return get_summary(trace, step_id=tid + 1, model=model)
+        return get_summary(trace, step_id=tid + 1)
 
     with ThreadPoolExecutor() as pool:
         summaries = list(pool.map(_get_one, range(len(trace))))
@@ -43,7 +43,6 @@ def _generate_summary(trace: Trace, model: str) -> str:
     result = infer_text(
         [{"role": "system", "content": SYNTHESIZE_SYSTEM},
          {"role": "user", "content": combined}],
-        model=model,
         max_tokens=512,
     )
     t_synth = time.monotonic()
@@ -53,12 +52,10 @@ def _generate_summary(trace: Trace, model: str) -> str:
     return result
 
 
-def summarize_trace(trace: Trace, **params) -> str:
-    model = params.get("model", "anthropic/claude-sonnet-4-6")
-    cached = trace.prefetched_summaries.get(model)
-    if cached:
-        return cached
+def summarize_trace(trace: Trace) -> str:
+    if trace.prefetched_summary:
+        return trace.prefetched_summary
 
-    result = _generate_summary(trace, model)
-    trace.prefetched_summaries[model] = result
+    result = _generate_summary(trace)
+    trace.prefetched_summary = result
     return result

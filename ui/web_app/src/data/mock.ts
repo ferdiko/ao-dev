@@ -2070,7 +2070,7 @@ export interface GraphNode {
   input: Record<string, unknown>;
   output: Record<string, unknown>;
   latency: number;
-  model?: string;
+  name?: string;
   toolName?: string;
   border_color?: string;
 }
@@ -2108,7 +2108,7 @@ export const mockGraphs: Record<string, GraphData> = {
         description: "Identify relevant tables and columns for the query",
         nodeType: "llm",
         input: {
-          model: "gpt-4o",
+          name: "gpt-4o",
           messages: [
             { role: "system", content: "You are a database schema assistant. Given a natural language question, identify which tables and columns from the database schema are relevant." },
             {
@@ -2133,7 +2133,7 @@ export const mockGraphs: Record<string, GraphData> = {
           usage: { prompt_tokens: 245, completion_tokens: 89, total_tokens: 334 },
         },
         latency: 1240,
-        model: "gpt-4o",
+        name: "gpt-4o",
       },
       {
         id: "b7e42f90",
@@ -2141,7 +2141,7 @@ export const mockGraphs: Record<string, GraphData> = {
         description: "Generate SQL query from schema context",
         nodeType: "llm",
         input: {
-          model: "gpt-4o",
+          name: "gpt-4o",
           messages: [
             { role: "system", content: "You are an expert SQL developer. Generate a correct SQL query from the provided schema context and user question. Output ONLY the SQL query." },
             { role: "user", content: "Schema context:\n- products (product_id, product_name, category_id)\n- order_items (order_id, product_id, quantity, returned)\n- categories (category_id, category_name)\n\nQuestion: Find the top 10 products by return rate with category breakdown" },
@@ -2160,7 +2160,7 @@ export const mockGraphs: Record<string, GraphData> = {
           usage: { prompt_tokens: 312, completion_tokens: 142, total_tokens: 454 },
         },
         latency: 2180,
-        model: "gpt-4o",
+        name: "gpt-4o",
       },
       {
         id: "c4d19e5a",
@@ -2201,7 +2201,7 @@ export const mockGraphs: Record<string, GraphData> = {
         description: "Validate SQL syntax and correctness",
         nodeType: "llm",
         input: {
-          model: "gpt-4o-mini",
+          name: "gpt-4o-mini",
           messages: [
             { role: "system", content: "You are a SQL validation assistant. Check if the given SQL query is syntactically correct and will produce the expected results for the question. Reply with {\"valid\": true/false, \"issues\": [...]}." },
             { role: "user", content: "Question: Find the top 10 products by return rate with category breakdown\n\nSQL:\nSELECT p.product_name, c.category_name, COUNT(oi.order_id) AS total_orders, SUM(CASE WHEN oi.returned = true THEN 1 ELSE 0 END) AS returns, ROUND(SUM(CASE WHEN oi.returned = true THEN 1 ELSE 0 END)::numeric / COUNT(oi.order_id) * 100, 1) AS return_rate FROM order_items oi JOIN products p ON p.product_id = oi.product_id JOIN categories c ON c.category_id = p.category_id GROUP BY p.product_name, c.category_name ORDER BY return_rate DESC LIMIT 10;" },
@@ -2220,7 +2220,7 @@ export const mockGraphs: Record<string, GraphData> = {
           usage: { prompt_tokens: 198, completion_tokens: 56, total_tokens: 254 },
         },
         latency: 680,
-        model: "gpt-4o-mini",
+        name: "gpt-4o-mini",
       },
       {
         id: "e2f07d4e",
@@ -2228,7 +2228,7 @@ export const mockGraphs: Record<string, GraphData> = {
         description: "Summarize query results in natural language",
         nodeType: "llm",
         input: {
-          model: "gpt-4o",
+          name: "gpt-4o",
           messages: [
             { role: "system", content: "You are a helpful data analyst. Given the SQL query results, synthesize a clear natural language answer for the user." },
             { role: "user", content: "Original question: Find the top 10 products by return rate with category breakdown\n\nSQL executed successfully. Results:\n| product_name | category_name | total_orders | returns | return_rate |\n|---|---|---|---|---|\n| Widget Pro X | Electronics | 342 | 89 | 26.0 |\n| ComfortFit Sole | Footwear | 567 | 130 | 22.9 |\n| AquaPure Filter | Home & Garden | 234 | 49 | 20.9 |\n| TechGrip Case | Electronics | 891 | 178 | 20.0 |\n| SilkTouch Pillow | Home & Garden | 445 | 82 | 18.4 |" },
@@ -2262,7 +2262,7 @@ export const mockGraphs: Record<string, GraphData> = {
           usage: { prompt_tokens: 287, completion_tokens: 163, total_tokens: 450 },
         },
         latency: 1890,
-        model: "gpt-4o",
+        name: "gpt-4o",
       },
     ],
     edges: [

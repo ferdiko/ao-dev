@@ -609,7 +609,7 @@ export interface BackendGraphNode {
   label: string;
   border_color?: string;
   stack_trace?: string;
-  model?: string;
+  name?: string;
   attachments?: unknown[];
 }
 

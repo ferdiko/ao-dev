@@ -7,6 +7,7 @@ export interface GraphNode {
     label: string;
     position?: { x: number; y: number };
     border_color?: string;
+    name?: string;
     model?: string;
     node_kind?: 'llm' | 'mcp' | 'tool' | string;
     prior_status?: string | null;

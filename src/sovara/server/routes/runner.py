@@ -48,6 +48,7 @@ class IncomingNodeRequest(BaseModel):
     label: str
     border_color: str
     stack_trace: Optional[str] = None
+    name: Optional[str] = None
     model: Optional[str] = None
     node_kind: Optional[str] = None
     prior_status: Optional[str] = None

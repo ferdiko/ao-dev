@@ -6,12 +6,21 @@ through the existing code path.
 """
 
 import json
+from dataclasses import dataclass
 
 import httpx
 
-from .trace import Trace, _prompt_hash
+from .prompt_sections import PromptSections
+from .trace import Trace
+from .text_paths import set_text_value
 
 RERUN_MSG = "\n\nEdit applied and saved."
+
+
+@dataclass
+class PersistOutcome:
+    ok: bool
+    message: str = ""
 
 
 def _read_to_show(run_id: str, node_uuid: str) -> dict | None:
@@ -37,94 +46,59 @@ def _post_edit_input(run_id: str, node_uuid: str, to_show: dict) -> bool:
     except Exception:
         return False
 
-
-def write_prompt_edit(trace: Trace, prompt_id: str) -> str:
-    """Persist the edited system prompt to DB for all turns sharing this prompt.
-
-    Finds every record with the matching prompt_id, reads its current to_show,
-    replaces the system prompt field, and calls /ui/edit-input for each.
-    Handles both Anthropic format (body.system) and OpenAI format (role=system
-    message in body.messages).
-    """
+def write_prompt_edit(trace: Trace, prompt_id: str, path: str, codec: str, new_text: str) -> PersistOutcome:
+    """Persist a shared prompt edit to every step using the same prompt key."""
     if not trace.run_id:
-        return ""  # Not built from DB; skip silently (e.g. CLI usage)
+        return PersistOutcome(ok=True)
 
-    new_prompt = trace.prompt_registry[prompt_id]
-    affected = [r for r in trace.records
-                if r.node_uuid and r.system_prompt and _prompt_hash(r.system_prompt) == prompt_id]
+    affected = [
+        record for record in trace.records
+        if record.node_uuid and record.prompt_key == prompt_id and record.prompt_path
+    ]
     if not affected:
-        return ""  # No DB nodes found; not an error (e.g. trace loaded from file)
+        return PersistOutcome(ok=True)
 
     failed = []
-    for r in affected:
-        to_show = _read_to_show(trace.run_id, r.node_uuid)
+    for record in affected:
+        to_show = _read_to_show(trace.run_id, record.node_uuid)
         if to_show is None:
-            failed.append(str(r.index))
+            failed.append(str(record.index + 1))
             continue
-        if "body.system" in to_show:
-            to_show["body.system"] = new_prompt
-        else:
-            for m in to_show.get("body.messages", []):
-                if m.get("role") == "system":
-                    m["content"] = new_prompt
-                    break
-        if not _post_edit_input(trace.run_id, r.node_uuid, to_show):
-            failed.append(str(r.index))
+        prompt_path = record.prompt_path or path
+        prompt_codec = record.prompt_codec or codec
+        if not set_text_value(to_show, prompt_path, prompt_codec, new_text):
+            failed.append(str(record.index + 1))
+            continue
+        if not _post_edit_input(trace.run_id, record.node_uuid, to_show):
+            failed.append(str(record.index + 1))
 
     if failed:
-        return f"\n\nFailed to write steps: {', '.join(failed)}."
-    return RERUN_MSG
+        return PersistOutcome(ok=False, message=f"\n\nFailed to write steps: {', '.join(failed)}.")
+    return PersistOutcome(ok=True, message=RERUN_MSG)
 
 
-def _replace_content(msg: dict, new_text: str) -> None:
-    """Replace a message's text content, preserving format (string vs Anthropic blocks)."""
-    content = msg["content"]
-    if isinstance(content, list):
-        non_text = [b for b in content if not (isinstance(b, dict) and b.get("type") == "text")]
-        msg["content"] = non_text + [{"type": "text", "text": new_text}]
-    else:
-        msg["content"] = new_text
-
-
-def write_input_sections_edit(trace: Trace, turn_index: int) -> str:
-    """Persist edited input message sections to DB for the given turn.
-
-    Groups sections by msg_index, reassembles each message's content,
-    and splices edited messages back into to_show["body.messages"].
-    """
+def write_input_sections_edit(trace: Trace, turn_index: int, ps: PromptSections) -> PersistOutcome:
+    """Persist edited step-local input text blocks to DB for the given turn."""
     if not trace.run_id:
-        return ""
-
-    from collections import defaultdict
-
-    ps = trace.prompt_sections_cache[f"step:{turn_index}"]
-    original_msgs = trace.diffed[turn_index].new_messages
-
-    # Group message sections (msg_index >= 0) by their source message
-    groups: dict[int, list] = defaultdict(list)
-    for s in ps.sections:
-        if s.msg_index >= 0:
-            groups[s.msg_index].append(s)
-
-    edited_msgs = []
-    for i, msg in enumerate(original_msgs):
-        new_msg = dict(msg)
-        if i in groups:
-            _replace_content(new_msg, "\n\n".join(s.text for s in groups[i]))
-        edited_msgs.append(new_msg)
+        return PersistOutcome(ok=True)
 
     record = trace.records[turn_index]
     if not record.node_uuid:
-        return "\n\nError: step has no DB node reference."
+        return PersistOutcome(ok=False, message="\n\nError: step has no DB node reference.")
 
     to_show = _read_to_show(trace.run_id, record.node_uuid)
     if to_show is None:
-        return "\n\nError: could not read original input from database."
+        return PersistOutcome(ok=False, message="\n\nError: could not read original input from database.")
 
-    # New messages are always the tail of body.messages
-    messages = to_show["body.messages"]
-    messages[-len(original_msgs):] = edited_msgs
+    changed = False
+    for section in ps.sections:
+        if section.shared_prompt:
+            continue
+        if set_text_value(to_show, section.path, section.codec, section.text):
+            changed = True
 
+    if not changed:
+        return PersistOutcome(ok=True)
     if not _post_edit_input(trace.run_id, record.node_uuid, to_show):
-        return "\n\nError: failed to write to database."
-    return RERUN_MSG
+        return PersistOutcome(ok=False, message="\n\nError: failed to write to database.")
+    return PersistOutcome(ok=True, message=RERUN_MSG)

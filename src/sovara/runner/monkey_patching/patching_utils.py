@@ -156,9 +156,9 @@ def _sanitize_for_display(name: str) -> str:
     return name
 
 
-def get_raw_model_name(input_dict: Dict[str, Any], api_type: str) -> str:
+def get_node_name(input_dict: Dict[str, Any], api_type: str) -> str:
     """
-    Extract raw model/tool name from request (for caching).
+    Extract raw node name from request (for caching).
 
     Tries body/params first, then URL fallback.
     Returns NO_LABEL if extraction fails.
@@ -171,7 +171,7 @@ def get_raw_model_name(input_dict: Dict[str, Any], api_type: str) -> str:
 
 def get_node_label(input_dict: Dict[str, Any], api_type: str) -> str:
     """
-    Extract and sanitize model/tool name for display as node label.
+    Extract and sanitize node name for display as node label.
 
     1. Extract from body/params
     2. Clean HuggingFace-style names (org/model -> model)
@@ -378,7 +378,8 @@ def send_graph_node_and_edges(
     output_full_str = api_obj_to_json_str(output_obj, api_type)
     input_string = json.dumps(json.loads(input_full_str)["to_show"])
     output_string = json.dumps(json.loads(output_full_str)["to_show"])
-    model = get_raw_model_name(input_dict, api_type)
+    name = get_node_name(input_dict, api_type)
+    model = name
     label = get_node_label(input_dict, api_type)
     node_kind = get_node_kind(input_dict, api_type)
     run_id = get_run_id()
@@ -422,6 +423,8 @@ def send_graph_node_and_edges(
             "node_kind": node_kind,
             "prior_status": prior_status,
             "prior_count": prior_count,
+            "name": name,
+            "name": name,
             "attachments": attachments,
         },
         "incoming_edges": source_node_ids,

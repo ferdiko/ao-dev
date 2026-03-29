@@ -13,7 +13,12 @@ from sovara.server.routes.ui import PrepareEditRerunRequest, prepare_run_edit_re
 from sovara.server.state import ServerState
 
 
-def _seed_run(run_id: str | None = None, node_uuids: list[str] | None = None) -> tuple[str, list[str]]:
+def _seed_run(
+    run_id: str | None = None,
+    node_uuids: list[str] | None = None,
+    input_to_show: dict | None = None,
+    output_to_show: dict | None = None,
+) -> tuple[str, list[str]]:
     run_id = run_id or str(uuid.uuid4())
     node_uuids = node_uuids or [str(uuid.uuid4())]
     environment = {"PATH": os.environ.get("PATH", "")}
@@ -29,13 +34,13 @@ def _seed_run(run_id: str | None = None, node_uuids: list[str] | None = None) ->
         user_id=TEST_USER_ID,
     )
 
-    input_to_show = {
+    input_to_show = input_to_show or {
         "body": {
             "messages": [{"content": "old prompt"}],
             "max_tokens": 50,
         }
     }
-    output_to_show = {"content": "old output"}
+    output_to_show = output_to_show or {"content": "old output"}
 
     graph_nodes = []
     for index, node_uuid in enumerate(node_uuids, start=1):
@@ -125,6 +130,38 @@ def test_probe_run_prefers_input_overwrite():
 
         assert response["has_input_overwrite"] is True
         assert response["input"]["body.messages.0.content"] == "edited prompt"
+    finally:
+        DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
+
+
+def test_set_input_overwrite_detects_empty_container_shape_changes():
+    run_id, node_uuids = _seed_run(input_to_show={
+        "body": {
+            "messages": [{"content": "old prompt"}],
+            "metadata": {},
+        }
+    })
+    node_uuid = node_uuids[0]
+
+    try:
+        overwrite = DB.set_input_overwrite(
+            run_id,
+            node_uuid,
+            json.dumps({
+                "body": {
+                    "messages": [{"content": "old prompt"}],
+                }
+            }),
+        )
+
+        row = DB.get_llm_call_full(run_id, node_uuid)
+
+        assert overwrite is not None
+        assert json.loads(row["input_overwrite"])["to_show"] == {
+            "body": {
+                "messages": [{"content": "old prompt"}],
+            }
+        }
     finally:
         DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
 

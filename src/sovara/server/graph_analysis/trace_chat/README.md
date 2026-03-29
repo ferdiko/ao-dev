@@ -36,7 +36,7 @@ All tools share the signature `f(trace: Trace, **params) -> str` and are registe
 
 ### Trace model (`utils/trace.py`)
 
-A trace is JSONL — one record per LLM call or tool invocation. Each record has a system prompt, input messages, output, and optional metadata (correct, label, summary, model/tool).
+A trace is JSONL — one record per LLM call or tool invocation. Each record has a system prompt, input messages, output, and optional metadata (correct, label, summary).
 
 `Trace.from_string()` parses records and computes a **diff view**: records sharing a system prompt form a conversation, and `DiffedRecord.new_messages` contains only messages appended since the previous turn in that conversation. This avoids loading the full growing message history for later turns. Conversation identity is tracked via `prompt_id` (SHA-256 hash of the system prompt text).
 
@@ -49,7 +49,7 @@ A trace is JSONL — one record per LLM call or tool invocation. Each record has
 User asks a question about the trace. The agent picks tools based on specificity:
 
 - Broad questions ("what happened?") — the **prefetched trace summary** (injected into the system prompt) may suffice with zero tool calls.
-- Structural questions ("how many turns?") — `get_overview` returns turn count, conversation grouping, per-turn metadata. No LLM cost.
+- Structural questions ("how many turns?") — `get_overview` returns turn count, conversation grouping, and per-turn size/name metadata. No LLM cost.
 - Targeted questions ("what did turn 3 do?") — `ask_turn` sends the turn's content to an LLM and returns just the answer. More context-efficient than `get_turn` + reasoning.
 - Content search ("which turn mentions retry?") — `search` does case-insensitive substring matching across all prompts, inputs, and outputs.
 - Verification ("is turn 5 correct?") — `verify` uses an LLM judge. Can verify a single turn or all turns in parallel.
@@ -61,9 +61,8 @@ User asks to change a system prompt. The agent follows a section-based workflow:
 1. **`list_sections`** — shows numbered index + 4-5 word labels for each section of the prompt.
 2. **`get_section(index)`** — retrieves full text of one section for inspection.
 3. **`edit_section(index, instruction)`** — an LLM rewrites the section based on the natural-language instruction. The agent describes *what* to change; the edit LLM handles faithful rewriting.
-4. **`bulk_edit(instruction)`** — applies the same instruction to every section in parallel. For style/tone changes.
-5. **`insert_section`**, **`delete_section`**, **`move_section`** — structural changes.
-6. **`undo`** — reverts the last edit. Can be called repeatedly.
+4. **`insert_section`**, **`delete_section`**, **`move_section`** — structural changes.
+5. **`undo`** — reverts the last edit. Can be called repeatedly.
 
 If `prompt_id` is omitted and the trace has exactly one prompt, it's used automatically.
 
@@ -81,7 +80,7 @@ The `prompt_registry` stores each unique prompt once. Edits modify the canonical
 
 ### Undo via snapshots
 
-Every mutating tool (`edit_section`, `bulk_edit`, `insert_section`, `delete_section`, `move_section`) deep-copies the sections list before modifying. `undo` pops the last snapshot. Cheap because sections are small strings.
+Every mutating tool (`edit_section`, `insert_section`, `delete_section`, `move_section`) deep-copies the sections list before modifying. `undo` pops the last snapshot. Cheap because sections are small strings.
 
 ### Prefetched trace summary
 

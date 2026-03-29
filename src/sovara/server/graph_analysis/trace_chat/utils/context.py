@@ -29,10 +29,9 @@ def _is_compacted(msg: dict) -> bool:
     return COMPACTED_MARKER in msg.get("content", "")
 
 
-def _summarize_tool_result(text: str, model: str) -> str:
+def _summarize_tool_result(text: str) -> str:
     return infer_text(
         [{"role": "user", "content": text}],
-        model=model,
         tier="cheap",
         system=COMPACT_SYSTEM,
         max_tokens=128,
@@ -41,7 +40,6 @@ def _summarize_tool_result(text: str, model: str) -> str:
 
 def compact_tool_results(
     messages: list,
-    model: str,
     max_chars: int = MAX_TOOL_RESULT_CHARS,
 ) -> None:
     """Replace old tool results with summaries when the total exceeds max_chars.
@@ -72,7 +70,7 @@ def compact_tool_results(
             continue
 
         old_len = len(content)
-        summary = _summarize_tool_result(content, model)
+        summary = _summarize_tool_result(content)
         msg["content"] = f"{COMPACTED_MARKER} {summary}"
         total -= old_len - len(msg["content"])
 

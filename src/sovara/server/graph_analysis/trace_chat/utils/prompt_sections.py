@@ -1,134 +1,142 @@
-"""Prompt sectioning, labeling, and undo support for editing."""
+"""Editable path/paragraph views for trace-chat prompt editing."""
 
 import copy
-import re
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Dict, List, TYPE_CHECKING
 
-from ....llm_backend import infer_text
-from .trace import extract_text_content
+from .trace import split_prompt
 
 if TYPE_CHECKING:
     from .trace import Trace
 
-LABEL_SYSTEM = (
-    "Label this text section in exactly 4-5 words. "
-    "Return only the label, nothing else."
-)
 
-_HEADING_RE = re.compile(r"^#{1,6}\s+\S")
+def format_path(path: str) -> str:
+    return path or "<root>"
+
+
+def format_paragraph_ref(path: str, paragraph: int) -> str:
+    return f"{format_path(path)}::p{paragraph}"
 
 
 @dataclass
 class Section:
-    """A single section of a prompt or message."""
-    text: str
-    label: str = ""
-    msg_index: int = -1  # -1 = system prompt, 0+ = index in new_messages
-    role: str = ""        # "system", "user", "assistant", etc.
+    """Editable text content for one flattened input path."""
 
+    path: str
+    paragraphs: List[str]
+    codec: str
+    role: str = ""
+    prompt_id: str = ""
+    shared_prompt: bool = False
 
-def split_prompt(text: str) -> List[Section]:
-    """Split a prompt into sections on double newlines, merging orphan headings."""
-    chunks = [c.strip() for c in text.split("\n\n") if c.strip()]
-    if not chunks:
-        return [Section(text="")]
+    @property
+    def display_path(self) -> str:
+        return format_path(self.path)
 
-    merged: List[Section] = []
-    i = 0
-    while i < len(chunks):
-        lines = chunks[i].splitlines()
-        is_heading_only = len(lines) == 1 and bool(_HEADING_RE.match(lines[0]))
-        if is_heading_only and i + 1 < len(chunks):
-            # Don't merge if the next chunk is also a heading-only line —
-            # keep this heading standalone and let the next iteration handle it.
-            next_lines = chunks[i + 1].splitlines()
-            next_is_heading = len(next_lines) == 1 and bool(_HEADING_RE.match(next_lines[0]))
-            if not next_is_heading:
-                merged.append(Section(text=chunks[i] + "\n\n" + chunks[i + 1]))
-                i += 2
-                continue
-        merged.append(Section(text=chunks[i]))
-        i += 1
+    @property
+    def text(self) -> str:
+        return "\n\n".join(self.paragraphs)
 
-    return merged
+    @text.setter
+    def text(self, new_text: str) -> None:
+        self.paragraphs = split_prompt(new_text.strip()) if new_text.strip() else [""]
 
+    def preview(self, max_len: int = 80) -> str:
+        first = self.paragraphs[0] if self.paragraphs else ""
+        first = " ".join(first.split())
+        if len(first) <= max_len:
+            return first
+        return first[: max_len - 3] + "..."
 
-def label_sections(sections: List[Section], model: str) -> None:
-    """Generate 4-5 word labels for each section via parallel LLM calls."""
-    def _label_one(section: Section) -> None:
-        text = section.text[:2000]
-        result = infer_text(
-            [{"role": "user", "content": text}],
-            model=model,
-            system=LABEL_SYSTEM,
-            tier="cheap",
-            max_tokens=32,
-        )
-        section.label = result.strip() or "(unlabeled)"
+    def paragraph_ref(self, paragraph: int) -> str:
+        return format_paragraph_ref(self.path, paragraph)
 
-    with ThreadPoolExecutor() as pool:
-        list(pool.map(_label_one, sections))
+    def paragraph_refs_summary(self) -> str:
+        if not self.paragraphs:
+            return ""
+        if len(self.paragraphs) == 1:
+            return self.paragraph_ref(0)
+        return f"{self.paragraph_ref(0)}..{self.paragraph_ref(len(self.paragraphs) - 1)}"
 
 
 @dataclass
 class PromptSections:
-    """Manages sectioned view of a prompt with undo support."""
+    """Editable blocks for one trace step with undo support."""
+
     prompt_id: str
     sections: List[Section]
-    labeled: bool = False
     undo_stack: List[List[Section]] = field(default_factory=list)
 
     def push_undo(self) -> None:
-        """Snapshot current sections before a mutation."""
         self.undo_stack.append(copy.deepcopy(self.sections))
 
     def pop_undo(self) -> bool:
-        """Revert to the previous snapshot. Returns False if nothing to undo."""
         if not self.undo_stack:
             return False
         self.sections = self.undo_stack.pop()
         return True
 
-    def reassemble(self, registry: Dict[str, str]) -> None:
-        """Write the current sections back to the prompt registry."""
-        registry[self.prompt_id] = "\n\n".join(s.text for s in self.sections)
+    def by_path(self) -> Dict[str, Section]:
+        return {section.path: section for section in self.sections}
 
     def to_table(self) -> str:
-        """Format sections as an index + label + preview table."""
-        lines = [f"Step [{self.prompt_id}] — {len(self.sections)} sections:"]
-        for i, s in enumerate(self.sections):
-            first_line = s.text.split("\n")[0]
-            preview = first_line[:60] + ("..." if len(first_line) > 60 else "")
-            role_tag = f"[{s.role}]  " if s.role else ""
-            lines.append(f"  {i:>2}  {role_tag}{s.label:<28s}  \"{preview}\"")
+        lines = [f"Step [{self.prompt_id}] — {len(self.sections)} editable path(s):"]
+        for section in self.sections:
+            tags = []
+            if section.role:
+                tags.append(section.role)
+            if section.shared_prompt:
+                tags.append("shared prompt")
+            tag_str = f" [{' | '.join(tags)}]" if tags else ""
+            lines.append(
+                f"  `{section.display_path}`{tag_str}  "
+                f"{len(section.paragraphs)} paragraph(s)  "
+                f"refs: `{section.paragraph_refs_summary()}`  "
+                f"\"{section.preview()}\""
+            )
         return "\n".join(lines)
 
 
-def flatten_turn(trace: "Trace", turn_index: int, model: str) -> List[Section]:
-    """Flatten a turn's new content (system prompt + new messages) into sections."""
+def flatten_turn(trace: "Trace", turn_index: int) -> List[Section]:
+    """Expose editable text blocks for a step.
+
+    If semantic diffing worked, this returns the step's newly introduced text
+    blocks plus a newly introduced shared prompt. If not, it falls back to all
+    editable input text blocks for the step.
+    """
     diff = trace.diffed[turn_index]
-    record = trace.records[turn_index]
+    blocks = [block for block in diff.new_input_blocks if block.editable]
+
+    seen_paths = set()
     sections: List[Section] = []
-
-    # System prompt sections (only if first introduced in this turn)
-    if diff.prompt_is_new and record.system_prompt:
-        for s in split_prompt(record.system_prompt):
-            s.msg_index = -1
-            s.role = "system"
-            sections.append(s)
-
-    # New message sections
-    for i, msg in enumerate(diff.new_messages):
-        text = extract_text_content(msg.get("content", ""))
-        role = msg.get("role", "unknown")
-        if not text.strip():
+    for block in blocks:
+        if block.path in seen_paths:
             continue
-        for s in split_prompt(text):
-            s.msg_index = i
-            s.role = role
-            sections.append(s)
+        seen_paths.add(block.path)
+        sections.append(Section(
+            path=block.path,
+            paragraphs=list(block.paragraphs) or [block.text],
+            codec=block.codec,
+            role=block.role,
+            prompt_id=diff.prompt_id or "",
+            shared_prompt=bool(block.is_prompt and diff.prompt_id),
+        ))
 
-    label_sections(sections, model)
-    return sections
+    if sections:
+        return sections
+
+    record = trace.records[turn_index]
+    fallback_sections: List[Section] = []
+    for block in record.input_blocks:
+        if not block.editable or block.path in seen_paths:
+            continue
+        seen_paths.add(block.path)
+        fallback_sections.append(Section(
+            path=block.path,
+            paragraphs=list(block.paragraphs) or [block.text],
+            codec=block.codec,
+            role=block.role,
+            prompt_id=record.prompt_key or "",
+            shared_prompt=bool(block.is_prompt and record.prompt_key),
+        ))
+    return fallback_sections

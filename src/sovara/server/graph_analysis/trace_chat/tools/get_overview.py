@@ -5,7 +5,7 @@ import json
 from ..utils.trace import Trace
 
 
-def get_overview(trace: Trace, **_params) -> str:
+def get_overview(trace: Trace) -> str:
     records = trace.records
     diffed = trace.diffed
     registry = trace.prompt_registry
@@ -15,7 +15,9 @@ def get_overview(trace: Trace, **_params) -> str:
     num_conversations = len(prompt_turns)
     num_standalone = sum(1 for d in diffed if d.prompt_id is None)
 
-    lines = [f"Trace: {num_steps} steps, {num_conversations} conversation(s), {num_standalone} standalone"]
+    lines = [
+        f"Trace: {num_steps} steps, {num_conversations} conversation(s), {num_standalone} standalone",
+    ]
 
     # System prompt registry
     if registry:
@@ -32,9 +34,7 @@ def get_overview(trace: Trace, **_params) -> str:
     lines.append("")
     for dr in diffed:
         parts = [f"Step {dr.index + 1}:"]
-
-        # Model/tool
-        parts.append(dr.model_or_tool or "unspecified")
+        parts.append(dr.name or "unspecified")
 
         # Prompt info
         if dr.prompt_id:

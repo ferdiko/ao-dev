@@ -36,42 +36,6 @@ def health():
 
 
 # ============================================================
-# Graph → Trace extraction helpers
-# ============================================================
-
-def _to_show_to_trace_fields(to_show_in: dict, to_show_out: dict) -> tuple[str, list, str]:
-    """Extract (system_prompt, input_messages, output_text) from to_show dicts.
-
-    to_show uses dot-flattened keys: "body.messages", "body.system",
-    "content.choices", "content.content", etc.
-    """
-    from sovara.server.graph_analysis.trace_chat.utils.trace import extract_text_content
-
-    messages = to_show_in.get("body.messages", [])
-
-    # System prompt: Anthropic uses "body.system"; OpenAI uses role=system message
-    system_prompt = extract_text_content(to_show_in.get("body.system") or "")
-    input_messages = []
-    for m in messages:
-        if m.get("role") == "system" and not system_prompt:
-            system_prompt = extract_text_content(m.get("content", ""))
-        else:
-            input_messages.append(m)
-
-    # Output: OpenAI content.choices[0].message.content, Anthropic content.content
-    choices = to_show_out.get("content.choices", [])
-    if choices:
-        raw_content = choices[0].get("message.content", "")
-        output_text = extract_text_content(raw_content) if raw_content else ""
-    elif "content.content" in to_show_out:
-        output_text = extract_text_content(to_show_out["content.content"])
-    else:
-        output_text = json.dumps(to_show_out) if to_show_out else ""
-
-    return system_prompt, input_messages, output_text
-
-
-# ============================================================
 # Trace cache and background prefetch pool
 # ============================================================
 
@@ -79,7 +43,7 @@ def _to_show_to_trace_fields(to_show_in: dict, to_show_out: dict) -> tuple[str, 
 # The fingerprint hashes graph node content (input/output) so the cache
 # is invalidated on edits and reruns (which rebuild the graph).
 _trace_cache: dict = {}
-_prefetch_futures: dict[tuple[str, str], Future] = {}
+_prefetch_futures: dict[str, Future] = {}
 _pool = ThreadPoolExecutor(max_workers=4)
 
 
@@ -91,7 +55,7 @@ def _graph_fingerprint(graph_data: dict) -> str:
         return str(node.get("uuid") or node.get("id") or "")
 
     content = "\n".join(
-        f"{_node_identity(n)}|{n.get('input', '')}|{n.get('output', '')}"
+        f"{_node_identity(n)}|{n.get('input', '')}|{n.get('output', '')}|{n.get('name', '')}"
         for n in graph_data.get("nodes", [])
     )
     return hashlib.md5(content.encode()).hexdigest()
@@ -103,14 +67,17 @@ def _build_trace_from_graph(graph_data: dict):
     The graph is the single source of truth: it is cleared on rerun and
     updated on edit, so it always reflects the current trace state.
     """
-    from sovara.server.graph_analysis.trace_chat.utils.trace import Trace
+    from sovara.server.graph_analysis.trace_chat.utils.trace import (
+        Trace,
+        build_trace_record_from_to_show,
+    )
 
     graph = RunGraph.from_dict(graph_data)
     nodes = sorted(graph.nodes, key=lambda node: (node.step_id, node.uuid))
     if not nodes:
         return None
 
-    lines = []
+    records = []
     for node in nodes:
         try:
             to_show_in = json.loads(node.input or "{}")
@@ -118,20 +85,17 @@ def _build_trace_from_graph(graph_data: dict):
         except (json.JSONDecodeError, TypeError):
             continue
 
-        system_prompt, input_messages, output_text = _to_show_to_trace_fields(
-            to_show_in, to_show_out,
-        )
-        lines.append(json.dumps({
-            "node_uuid": node.uuid,
-            "system_prompt": system_prompt,
-            "input": input_messages,
-            "output": output_text,
-            "model/tool": node.model or "",
-        }))
+        records.append(build_trace_record_from_to_show(
+            to_show_in,
+            to_show_out,
+            index=len(records),
+            name=node.name or "",
+            node_uuid=node.uuid,
+        ))
 
-    if not lines:
+    if not records:
         return None
-    return Trace.from_string("\n".join(lines))
+    return Trace.from_records(records)
 
 
 def _get_trace_for_run(run_id: str):
@@ -160,18 +124,11 @@ def _get_trace_for_run(run_id: str):
     return trace, True
 
 
-def _invalidate_prefetch_futures(run_id: str) -> None:
-    stale_keys = [key for key in _prefetch_futures if key[0] == run_id]
-    for key in stale_keys:
-        _prefetch_futures.pop(key, None)
-
-
-def _ensure_prefetch_future(run_id: str, trace, model: str, *, is_new: bool) -> Future:
+def _ensure_prefetch_future(run_id: str, trace, *, is_new: bool) -> Future:
     if is_new:
-        _invalidate_prefetch_futures(run_id)
+        _prefetch_futures.pop(run_id, None)
 
-    key = (run_id, model)
-    future = _prefetch_futures.get(key)
+    future = _prefetch_futures.get(run_id)
     if future is not None:
         if future.cancelled():
             future = None
@@ -185,8 +142,8 @@ def _ensure_prefetch_future(run_id: str, trace, model: str, *, is_new: bool) -> 
     if future is None:
         from sovara.server.graph_analysis.trace_chat.tools.summarize_trace import _generate_summary
 
-        future = _pool.submit(_generate_summary, trace, model)
-        _prefetch_futures[key] = future
+        future = _pool.submit(_generate_summary, trace)
+        _prefetch_futures[run_id] = future
 
     return future
 
@@ -198,17 +155,16 @@ def _ensure_prefetch_future(run_id: str, trace, model: str, *, is_new: bool) -> 
 class ChatRequest(BaseModel):
     message: str
     history: list = []
-    model: str = "anthropic/claude-sonnet-4-6"
 
 
 @app.post("/prefetch/{run_id}", status_code=202)
-def prefetch(run_id: str, model: str = "anthropic/claude-sonnet-4-6"):
+def prefetch(run_id: str):
     """Fire-and-forget: build trace + start summary prefetch. Returns immediately."""
     def _do():
         trace, is_new = _get_trace_for_run(run_id)
         if trace is None:
             return
-        _ensure_prefetch_future(run_id, trace, model, is_new=is_new)
+        _ensure_prefetch_future(run_id, trace, is_new=is_new)
     _pool.submit(_do)
     return {"status": "prefetching"}
 
@@ -220,11 +176,11 @@ async def chat(run_id: str, req: ChatRequest):
         raise HTTPException(400, "No LLM calls found for this run")
 
     # (Re-)prefetch summary on first request or when the trace changed after a rerun/edit
-    prefetch_future = _ensure_prefetch_future(run_id, trace, req.model, is_new=is_new)
+    prefetch_future = _ensure_prefetch_future(run_id, trace, is_new=is_new)
 
     from sovara.server.graph_analysis.trace_chat.main import handle_question
     result = await asyncio.to_thread(
-        handle_question, req.message, trace, req.history, req.model,
+        handle_question, req.message, trace, req.history,
         prefetch_future,
     )
     return result

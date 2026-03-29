@@ -3,7 +3,8 @@
 from concurrent.futures import ThreadPoolExecutor
 
 from ....llm_backend import infer
-from ..utils.trace import Trace, extract_tag, format_messages, stringify_field
+from ..utils.step_ids import resolve_step_index
+from ..utils.trace import Trace, extract_tag, render_record_markdown
 
 VERIFY_STEP_SYSTEM = """\
 You verify whether a single step's output is correct given its instructions and input.
@@ -33,19 +34,16 @@ def _parse_verdict(raw: str) -> tuple:
     return verdict, summary
 
 
-def _verify_one(trace: Trace, index: int, record, model: str):
+def _verify_one(trace: Trace, index: int, record):
     """Verify a single step via LLM. Returns (index, verdict, justification)."""
     if index in trace.verdict_cache:
         return (index, *trace.verdict_cache[index])
 
-    content = format_messages(record.input, system_prompt=record.system_prompt)
-    output = record.output if isinstance(record.output, str) else stringify_field(record.output)
-    user_msg = f"{content}\n\n## Output\n{output}"
+    user_msg = render_record_markdown(record, trace.get_diffed(index), view="full")
 
     response = infer(
         [{"role": "system", "content": VERIFY_STEP_SYSTEM},
          {"role": "user", "content": user_msg}],
-        model=model,
         tier="cheap",
         max_tokens=256,
     )
@@ -67,26 +65,20 @@ def _resolve_cached(trace: Trace, record, idx: int):
     return None
 
 
-def verify(trace: Trace, **params) -> str:
-    step_id = params.get("step_id")
-    model = params.get("model", "anthropic/claude-sonnet-4-6")
+def verify(trace: Trace, step_id=None) -> str:
 
     # Single-step mode
     if step_id is not None:
-        try:
-            step_id = int(step_id)
-        except (TypeError, ValueError):
-            return f"Error: 'step_id' must be an integer, got '{step_id}'."
-        if step_id < 1 or step_id > len(trace):
-            return f"Error: step_id {step_id} out of range (1–{len(trace)})."
-
-        index = step_id - 1  # Convert to 0-based internal index
+        index, err = resolve_step_index(trace, step_id)
+        if err:
+            return err
+        step_id = index + 1
         record = trace.get(index)
         cached = _resolve_cached(trace, record, index)
         if cached:
             verdict, justification = cached
         else:
-            _, verdict, justification = _verify_one(trace, index, record, model)
+            _, verdict, justification = _verify_one(trace, index, record)
 
         return f"Step {step_id}: {verdict}\n  {justification}"
 
@@ -105,7 +97,7 @@ def verify(trace: Trace, **params) -> str:
     if to_verify:
         with ThreadPoolExecutor() as pool:
             results.extend(pool.map(
-                lambda args: _verify_one(trace, args[0], args[1], model),
+                lambda args: _verify_one(trace, args[0], args[1]),
                 to_verify,
             ))
 
