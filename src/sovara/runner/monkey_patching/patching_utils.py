@@ -6,6 +6,7 @@ import threading
 import traceback
 from collections import defaultdict
 from typing import Optional, Dict, Any
+from urllib.parse import unquote
 from sovara.runner.context_manager import get_run_id
 from sovara.common.constants import (
     CERTAINTY_UNKNOWN,
@@ -89,11 +90,11 @@ def _extract_name_from_url(input_dict: Dict[str, Any], api_type: str) -> Optiona
         # Try regex pattern for /models/xxx:<path> or models/xxx:<path>
         match = re.search(r"/?models/([^/:]+)", path)
         if match:
-            return match.group(1)
+            return unquote(match.group(1))
 
         match = re.search(r"/model/([^/]+)/(?:converse|converse-stream|invoke|invoke-with-response-stream)", path)
         if match:
-            return match.group(1)
+            return unquote(match.group(1))
 
         # Try known URL patterns (tools like Serper, Brave, etc.)
         for pattern, name in COMPILED_URL_PATTERN_TO_NODE_NAME:
