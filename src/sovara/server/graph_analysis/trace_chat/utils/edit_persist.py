@@ -91,14 +91,20 @@ def write_input_sections_edit(trace: Trace, turn_index: int, ps: PromptSections)
         return PersistOutcome(ok=False, message="\n\nError: could not read original input from database.")
 
     changed = False
+    attempted_paths: list[str] = []
     for section in ps.sections:
         if section.shared_prompt:
             continue
+        attempted_paths.append(section.path)
         if set_text_value(to_show, section.path, section.codec, section.text):
             changed = True
 
     if not changed:
-        return PersistOutcome(ok=True)
+        joined_paths = ", ".join(f"`{path or '<root>'}`" for path in attempted_paths) or "(none)"
+        return PersistOutcome(
+            ok=False,
+            message=f"\n\nError: could not apply edit to input paths: {joined_paths}.",
+        )
     if not _post_edit_input(trace.run_id, record.node_uuid, to_show):
         return PersistOutcome(ok=False, message="\n\nError: failed to write to database.")
     return PersistOutcome(ok=True, message=RERUN_MSG)

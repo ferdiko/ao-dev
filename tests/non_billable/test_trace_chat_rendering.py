@@ -128,6 +128,35 @@ def test_prompt_sections_use_flattened_paths_and_paragraph_operations():
     assert single.endswith("Second paragraph.")
 
 
+def test_prompt_sections_edit_graph_style_flattened_input_paths():
+    trace = Trace.from_records([
+        build_trace_record_from_to_show(
+            {
+                "body.max_tokens": 100,
+                "body.messages": [{"role": "user", "content": "First paragraph."}],
+                "body.model": "claude-sonnet-4-6",
+            },
+            {"content.content": [{"text": "done"}]},
+            index=0,
+            name="demo",
+        )
+    ])
+
+    table = list_sections(trace, step_id=1)
+    result = insert_section(
+        trace,
+        step_id=1,
+        path="body.messages.0.content::p0",
+        content="Second paragraph.",
+    )
+    updated = get_section(trace, step_id=1, path="body.messages.0.content")
+
+    assert "`body.messages.0.content`" in table
+    assert "Inserted paragraph" in result
+    assert "`body.messages.0.content::p1`" in updated
+    assert updated.endswith("Second paragraph.")
+
+
 def test_step_edit_invalidates_cached_analysis():
     trace = Trace.from_string(
         """{"system_prompt":"You are concise.","input":[{"role":"user","content":"Hello"}],"output":"ok","name":"demo"}"""

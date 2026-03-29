@@ -5,6 +5,8 @@ Provides both:
 - execute_tool(): dispatch by name to Python functions
 """
 
+from sovara.common.logger import logger as server_logger
+
 from .get_overview import get_overview
 from .get_step import get_step
 from .verify import verify
@@ -352,4 +354,5 @@ def execute_tool(tool_name: str, trace, params: dict = None) -> str:
     try:
         return func(trace, **params)
     except Exception as e:
+        server_logger.exception("Trace chat tool failed: %s params=%s", tool_name, params)
         return f"Tool '{tool_name}' failed: {e}"

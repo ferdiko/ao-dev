@@ -11,7 +11,7 @@ interface ChatMessage {
   editsApplied?: boolean;
 }
 
-const STEP_LABEL_RE = /\b(steps?\s+\d{1,3}(?:(?:\s*[–-]\s*|\s+to\s+|\s+and\s+)\d{1,3}|(?:\s*,\s*\d{1,3})+)?)\b/gi;
+const STEP_LABEL_RE = /\b(steps?\s+\d{1,3}(?:(?:\s*[–-]\s*|\s+to\s+|\s+and\s+|\s*&\s*)\d{1,3}|(?:\s*,\s*\d{1,3})+)?)\b/gi;
 
 function getPrimaryStepNodeId(label: string): string | null {
   const firstStepNumber = label.match(/\d{1,3}/);

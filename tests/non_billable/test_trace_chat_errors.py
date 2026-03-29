@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from sovara.server.graph_analysis.inference_server import _ensure_prefetch_future, _graph_fingerprint
 from sovara.server.graph_analysis.trace_chat.main import handle_question
+from sovara.server.graph_analysis.trace_chat.tools import execute_tool
 from sovara.server.graph_analysis.trace_chat.utils.trace import Trace
 from sovara.server.routes.ui import ChatMessageRequest, chat
 
@@ -148,3 +149,22 @@ def test_chat_rejects_invalid_json_success_payload(monkeypatch):
     except HTTPException as exc:
         assert exc.status_code == 502
         assert exc.detail == "Invalid response from inference server"
+
+
+def test_execute_tool_logs_exceptions(monkeypatch):
+    calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def boom(trace, **params):
+        raise KeyError("body")
+
+    class FakeLogger:
+        def exception(self, message, *args):
+            calls.append((message, args))
+
+    monkeypatch.setitem(sys.modules["sovara.server.graph_analysis.trace_chat.tools"].TOOL_FUNCTIONS, "boom", boom)
+    monkeypatch.setattr("sovara.server.graph_analysis.trace_chat.tools.server_logger", FakeLogger())
+
+    result = execute_tool("boom", Trace(raw="", records=[]), {"path": "body.messages.0.content"})
+
+    assert result == "Tool 'boom' failed: 'body'"
+    assert calls == [("Trace chat tool failed: %s params=%s", ("boom", {"path": "body.messages.0.content"}))]
