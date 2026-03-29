@@ -17,6 +17,8 @@ from sovara.common.logger import logger, create_file_logger
 
 from sovara.common.constants import (
     MAIN_SERVER_LOG,
+    PRIORS_SERVER_LOG,
+    INFERENCE_SERVER_LOG,
     HOST,
     PORT,
     SHUTDOWN_WAIT,
@@ -24,6 +26,17 @@ from sovara.common.constants import (
 
 # Create file logger for server startup timing (only used in _serve command)
 _server_logger = create_file_logger(MAIN_SERVER_LOG)
+
+
+def _truncate_log_file(path: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w"):
+        pass
+
+
+def _clear_server_logs() -> None:
+    for log_path in (MAIN_SERVER_LOG, PRIORS_SERVER_LOG, INFERENCE_SERVER_LOG):
+        _truncate_log_file(log_path)
 
 
 def _server_http_request(method: str, path: str, timeout: float = 2.0) -> bool:
@@ -76,6 +89,7 @@ def server_command_parser():
             "restart",
             "clear",
             "logs",
+            "priors-logs",
             "infer-logs",
             "clear-logs",
             "_serve",
@@ -102,12 +116,10 @@ def execute_server_command(args):
     elif args.command == "restart":
         _server_http_request("POST", "/ui/shutdown")
         time.sleep(SHUTDOWN_WAIT)
-        # Clear log file before starting fresh
         try:
-            with open(MAIN_SERVER_LOG, "w"):
-                pass
-        except Exception:
-            pass
+            _clear_server_logs()
+        except Exception as e:
+            logger.error(f"Error clearing server logs: {e}")
         launch_daemon_server()
         logger.info("Main server restarted.")
 
@@ -128,7 +140,6 @@ def execute_server_command(args):
         return
 
     elif args.command == "infer-logs":
-        from sovara.common.constants import INFERENCE_SERVER_LOG
         try:
             with open(INFERENCE_SERVER_LOG, "r") as log_file:
                 print(log_file.read(), end="")
@@ -138,14 +149,22 @@ def execute_server_command(args):
             logger.error(f"Error reading log file: {e}")
         return
 
+    elif args.command == "priors-logs":
+        try:
+            with open(PRIORS_SERVER_LOG, "r") as log_file:
+                print(log_file.read(), end="")
+        except FileNotFoundError:
+            logger.error(f"Log file not found at {PRIORS_SERVER_LOG}")
+        except Exception as e:
+            logger.error(f"Error reading log file: {e}")
+        return
+
     elif args.command == "clear-logs":
         try:
-            os.makedirs(os.path.dirname(MAIN_SERVER_LOG), exist_ok=True)
-            with open(MAIN_SERVER_LOG, "w"):
-                pass
+            _clear_server_logs()
         except Exception as e:
-            logger.error(f"Error clearing log file {MAIN_SERVER_LOG}: {e}")
-        logger.info("Server log file cleared.")
+            logger.error(f"Error clearing server logs: {e}")
+        logger.info("Server log files cleared.")
         return
 
     elif args.command == "_serve":

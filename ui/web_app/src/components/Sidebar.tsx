@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Settings,
   HelpCircle,
@@ -8,6 +8,7 @@ import {
   Play,
   UserPlus,
   PanelLeft,
+  Database,
 } from "lucide-react";
 import { fetchProjects, type Project, type User } from "../api";
 import { subscribe } from "../serverEvents";
@@ -21,6 +22,10 @@ interface NavItem {
 
 const observabilityItems: NavItem[] = [
   { label: "Runs", icon: <Play size={16} />, id: "runs" },
+];
+
+const optimizationItems: NavItem[] = [
+  { label: "SovaraDB", icon: <Database size={16} />, id: "priors" },
 ];
 
 const settingsItems: NavItem[] = [
@@ -45,6 +50,7 @@ export function Sidebar({ projectId, style, children, user, collapsed, onToggleC
   onSupport?: () => void;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [projects, setProjects] = useState<Project[]>([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -79,6 +85,7 @@ export function Sidebar({ projectId, style, children, user, collapsed, onToggleC
 
   const navRoutes: Record<string, string> = {
     runs: `/project/${projectId}`,
+    priors: `/project/${projectId}/priors`,
   };
 
   const callbackItems: Record<string, (() => void) | undefined> = {
@@ -89,10 +96,11 @@ export function Sidebar({ projectId, style, children, user, collapsed, onToggleC
   function renderNavItem(item: NavItem) {
     const callback = callbackItems[item.id];
     const route = navRoutes[item.id];
+    const isActive = !!route && location.pathname === route;
     return (
       <button
         key={item.id}
-        className={`sidebar-item${collapsed ? " sidebar-item-collapsed" : ""}`}
+        className={`sidebar-item${isActive ? " active" : ""}${collapsed ? " sidebar-item-collapsed" : ""}`}
         onClick={callback ?? (route ? () => navigate(route) : undefined)}
         title={collapsed ? item.label : undefined}
       >
@@ -157,6 +165,8 @@ export function Sidebar({ projectId, style, children, user, collapsed, onToggleC
           <>
             {!collapsed && <div className="sidebar-section">Observability</div>}
             {observabilityItems.map(renderNavItem)}
+            {!collapsed && <div className="sidebar-section">Optimization</div>}
+            {optimizationItems.map(renderNavItem)}
           </>
         ) : (
           <>

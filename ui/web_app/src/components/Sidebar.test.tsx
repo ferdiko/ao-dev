@@ -35,15 +35,15 @@ describe("Sidebar", () => {
     ]);
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/project/project-1"]}>
         <Sidebar projectId="project-1" />
       </MemoryRouter>,
     );
 
     await waitFor(() => expect(screen.getByText("Runs")).toBeInTheDocument());
 
-    expect(screen.queryByText("SovaraDB")).not.toBeInTheDocument();
-    expect(screen.queryByText("Optimization")).not.toBeInTheDocument();
+    expect(screen.getByText("SovaraDB")).toBeInTheDocument();
+    expect(screen.getByText("Optimization")).toBeInTheDocument();
     expect(screen.queryByText("Manage Priors")).not.toBeInTheDocument();
     expect(screen.queryByText("Collaboration")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sovara" })).not.toBeInTheDocument();
@@ -66,7 +66,7 @@ describe("Sidebar", () => {
     const onSupport = vi.fn();
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/project/project-1"]}>
         <Sidebar projectId="project-1" onSupport={onSupport} />
       </MemoryRouter>,
     );

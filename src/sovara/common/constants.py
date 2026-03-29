@@ -116,6 +116,7 @@ SOVARA_LOG_DIR = os.path.expandvars(
 )
 os.makedirs(SOVARA_LOG_DIR, exist_ok=True)
 MAIN_SERVER_LOG = os.path.join(SOVARA_LOG_DIR, "main_server.log")
+PRIORS_SERVER_LOG = os.path.join(SOVARA_LOG_DIR, "priors_server.log")
 INFERENCE_SERVER_LOG = os.path.join(SOVARA_LOG_DIR, "inference_server.log")
 
 # Inference sub-server port (5959=main, 5960=priors, 5961=inference)

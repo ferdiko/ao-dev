@@ -48,36 +48,110 @@ export interface Run {
 // ============================================================
 
 async function get<T>(path: string): Promise<T> {
-  const resp = await fetch(path);
+  const resp = await fetchWithBackendRetry(path);
   if (!resp.ok) {
-    throw new Error(`GET ${path} failed: ${resp.status}`);
+    throw new Error(await readErrorMessage(resp, `GET ${path} failed: ${resp.status}`));
   }
   return resp.json();
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const resp = await fetch(path, {
+  const resp = await fetchWithBackendRetry(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!resp.ok) {
-    const data = await resp.json().catch(() => null);
-    throw new Error(data?.error ?? `POST ${path} failed: ${resp.status}`);
+    throw new Error(await readErrorMessage(resp, `POST ${path} failed: ${resp.status}`));
+  }
+  return resp.json();
+}
+
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const resp = await fetchWithBackendRetry(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    throw new Error(await readErrorMessage(resp, `PUT ${path} failed: ${resp.status}`));
+  }
+  return resp.json();
+}
+
+async function del<T>(path: string): Promise<T> {
+  const resp = await fetchWithBackendRetry(path, {
+    method: "DELETE",
+  });
+  if (!resp.ok) {
+    throw new Error(await readErrorMessage(resp, `DELETE ${path} failed: ${resp.status}`));
   }
   return resp.json();
 }
 
 export { post };
 
-async function ensureBackendRunning(): Promise<void> {
+function shouldRetryBackend(resp: Response): boolean {
+  return resp.status >= 500;
+}
+
+async function readErrorMessage(resp: Response, fallback: string): Promise<string> {
   try {
-    const resp = await fetch("/_sovara/health");
-    if (resp.ok) {
-      return;
+    const cloned = resp.clone();
+    const data = await cloned.json();
+    if (data && typeof data === "object") {
+      const error = "error" in data ? data.error : null;
+      if (typeof error === "string" && error.trim()) {
+        return error;
+      }
+      const detail = "detail" in data ? data.detail : null;
+      if (typeof detail === "string" && detail.trim()) {
+        return detail;
+      }
     }
   } catch {
-    // Fall through to the dev-server startup hook.
+    // Fall through to text parsing below.
+  }
+
+  try {
+    const text = await resp.text();
+    if (text.trim()) {
+      return text.trim();
+    }
+  } catch {
+    // Fall back to the generic status message below.
+  }
+
+  return fallback;
+}
+
+async function fetchWithBackendRetry(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    const resp = await fetch(path, init);
+    if (!shouldRetryBackend(resp)) {
+      return resp;
+    }
+  } catch {
+    // Fall through to the startup hook below.
+  }
+
+  await ensureBackendRunning();
+  return fetch(path, init);
+}
+
+function withQuery(path: string, params: Record<string, string | number | boolean | null | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") continue;
+    search.set(key, String(value));
+  }
+  const query = search.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+async function ensureBackendRunning(): Promise<void> {
+  if (await isBackendHealthy()) {
+    return;
   }
 
   const resp = await fetch("/_sovara/start-server", {
@@ -87,6 +161,38 @@ async function ensureBackendRunning(): Promise<void> {
   });
   if (!resp.ok) {
     throw new Error(`POST /_sovara/start-server failed: ${resp.status}`);
+  }
+
+  const started = await waitForBackendHealthy();
+  if (!started) {
+    throw new Error("Timed out waiting for local so-server to start");
+  }
+}
+
+async function isBackendHealthy(): Promise<boolean> {
+  try {
+    const resp = await fetch("/_sovara/health");
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForBackendHealthy(timeoutMs = 5000, intervalMs = 150): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await isBackendHealthy()) {
+      return true;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+  }
+  return false;
+}
+
+export async function keepBackendAlive(): Promise<void> {
+  const resp = await fetchWithBackendRetry("/health", { cache: "no-store" });
+  if (!resp.ok) {
+    throw new Error(`GET /health failed: ${resp.status}`);
   }
 }
 
@@ -215,6 +321,165 @@ export async function fetchProject(
   projectId: string
 ): Promise<{ project_id: string; name: string; description: string }> {
   return get(`/ui/projects/${projectId}`);
+}
+
+// ============================================================
+// Priors endpoints
+// ============================================================
+
+export interface PriorRecord {
+  id: string;
+  name: string;
+  summary: string;
+  content?: string;
+  path?: string;
+  prior_status: "draft" | "active";
+  validationSeverity?: "info" | "warning" | "error";
+}
+
+export interface PriorValidationDetail {
+  feedback: string;
+  severity: "info" | "warning" | "error";
+  conflicting_prior_ids: string[];
+}
+
+export interface PriorMutationResponse extends PriorRecord {
+  status: "created" | "updated" | "deleted" | "submitted" | "rejected";
+  reason?: string;
+  hint?: string;
+  conflicting_prior_ids?: string[];
+  validation?: PriorValidationDetail;
+}
+
+export interface FolderLsResponse {
+  folders: Array<{ path: string; prior_count: number }>;
+  priors: PriorRecord[];
+  prior_count: number;
+}
+
+export interface FolderMutationResponse {
+  status: "created" | "updated" | "deleted";
+  path: string;
+  new_path?: string;
+}
+
+export interface PriorItemRef {
+  kind: "prior" | "folder";
+  id?: string;
+  path?: string;
+}
+
+export interface PriorBatchMutationResponse {
+  status: "copied" | "moved" | "deleted";
+  items?: Array<{
+    kind: "prior" | "folder";
+    id?: string;
+    path?: string;
+    name?: string;
+  }>;
+  count: number;
+}
+
+export interface PriorRunsResponse {
+  type: string;
+  prior_id: string;
+  records: Array<{ runId: string; nodeUuid?: string; name: string }>;
+}
+
+export async function fetchPriorsFolder(projectId: string, path = ""): Promise<FolderLsResponse> {
+  return post(withQuery("/ui/priors/folders/ls", { project_id: projectId }), { path });
+}
+
+export async function createPriorFolder(projectId: string, path: string): Promise<FolderMutationResponse> {
+  return post(withQuery("/ui/priors/folders", { project_id: projectId }), { path });
+}
+
+export async function movePriorFolder(
+  projectId: string,
+  path: string,
+  newPath: string,
+): Promise<FolderMutationResponse> {
+  return put(withQuery("/ui/priors/folders", { project_id: projectId }), { path, new_path: newPath });
+}
+
+export async function deletePriorFolder(projectId: string, path: string): Promise<FolderMutationResponse> {
+  return post(withQuery("/ui/priors/folders/delete", { project_id: projectId }), { path });
+}
+
+export async function copyPriorItems(
+  projectId: string,
+  items: PriorItemRef[],
+  destinationPath: string,
+  asDraft = false,
+): Promise<PriorBatchMutationResponse> {
+  return post(withQuery("/ui/priors/items/copy", { project_id: projectId }), {
+    items,
+    destination_path: destinationPath,
+    as_draft: asDraft,
+  });
+}
+
+export async function movePriorItems(
+  projectId: string,
+  items: PriorItemRef[],
+  destinationPath: string,
+): Promise<PriorBatchMutationResponse> {
+  return post(withQuery("/ui/priors/items/move", { project_id: projectId }), {
+    items,
+    destination_path: destinationPath,
+  });
+}
+
+export async function deletePriorItems(
+  projectId: string,
+  items: PriorItemRef[],
+): Promise<PriorBatchMutationResponse> {
+  return post(withQuery("/ui/priors/items/delete", { project_id: projectId }), { items });
+}
+
+export async function fetchPrior(projectId: string, priorId: string): Promise<PriorRecord> {
+  return get(withQuery(`/ui/priors/${priorId}`, { project_id: projectId }));
+}
+
+export async function createPrior(
+  projectId: string,
+  body: { name: string; summary?: string; content: string; path?: string },
+  force = false,
+): Promise<PriorMutationResponse> {
+  return post(withQuery("/ui/priors", { project_id: projectId, force }), body);
+}
+
+export async function createDraftPrior(
+  projectId: string,
+  body: { name: string; content: string; path?: string },
+): Promise<PriorMutationResponse> {
+  return post(withQuery("/ui/priors/drafts", { project_id: projectId }), body);
+}
+
+export async function updatePrior(
+  projectId: string,
+  priorId: string,
+  body: Partial<{ name: string; summary: string; content: string; path?: string }>,
+  force = false,
+): Promise<PriorMutationResponse> {
+  return put(withQuery(`/ui/priors/${priorId}`, { project_id: projectId, force }), body);
+}
+
+export async function submitPrior(
+  projectId: string,
+  priorId: string,
+  body: Partial<{ name: string; content: string; path?: string }>,
+  force = false,
+): Promise<PriorMutationResponse> {
+  return post(withQuery(`/ui/priors/${priorId}/submit`, { project_id: projectId, force }), body);
+}
+
+export async function deletePrior(projectId: string, priorId: string): Promise<{ status: string; id: string }> {
+  return del(withQuery(`/ui/priors/${priorId}`, { project_id: projectId }));
+}
+
+export async function fetchRunsForPrior(priorId: string): Promise<PriorRunsResponse> {
+  return get(`/ui/runs-for-prior/${priorId}`);
 }
 
 // ============================================================

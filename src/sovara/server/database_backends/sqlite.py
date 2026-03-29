@@ -163,6 +163,8 @@ def _init_db(conn):
             color TEXT,
             label TEXT,
             api_type TEXT,
+            node_kind TEXT CHECK (node_kind IN ('llm', 'mcp', 'tool')),
+            input_delta_json TEXT NOT NULL DEFAULT '[]',
             stack_trace TEXT,
             timestamp TIMESTAMP DEFAULT (datetime('now')),
             PRIMARY KEY (run_id, node_uuid),
@@ -267,6 +269,8 @@ def _ensure_run_schema(conn):
         conn.execute("ALTER TABLE runs ADD COLUMN runtime_seconds REAL")
     if "active_runtime_seconds" not in columns:
         conn.execute("ALTER TABLE runs ADD COLUMN active_runtime_seconds REAL")
+    _ensure_llm_calls_schema(conn)
+    _ensure_prior_schema(conn)
 
     conn.execute(
         """
@@ -317,6 +321,48 @@ def _ensure_run_schema(conn):
         """
         CREATE INDEX IF NOT EXISTS run_tags_tag_idx ON run_tags(tag_id)
     """
+    )
+    conn.commit()
+
+
+def _ensure_llm_calls_schema(conn):
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(llm_calls)").fetchall()}
+    if "node_kind" not in columns:
+        conn.execute(
+            "ALTER TABLE llm_calls ADD COLUMN node_kind TEXT CHECK (node_kind IN ('llm', 'mcp', 'tool'))"
+        )
+    if "input_delta_json" not in columns:
+        conn.execute("ALTER TABLE llm_calls ADD COLUMN input_delta_json TEXT NOT NULL DEFAULT '[]'")
+
+
+def _ensure_prior_schema(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prior_retrievals (
+            run_id TEXT NOT NULL,
+            node_uuid TEXT NOT NULL,
+            status TEXT NOT NULL,
+            retrieval_context TEXT NOT NULL DEFAULT '',
+            inherited_prior_ids_json TEXT NOT NULL DEFAULT '[]',
+            applied_priors_json TEXT NOT NULL DEFAULT '[]',
+            rendered_priors_block TEXT NOT NULL DEFAULT '',
+            injection_anchor_json TEXT,
+            model TEXT,
+            timeout_ms INTEGER,
+            latency_ms INTEGER,
+            warning_message TEXT,
+            error_message TEXT,
+            created_at TIMESTAMP DEFAULT (datetime('now')),
+            updated_at TIMESTAMP DEFAULT (datetime('now')),
+            PRIMARY KEY (run_id, node_uuid),
+            FOREIGN KEY (run_id, node_uuid) REFERENCES llm_calls (run_id, node_uuid)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS prior_retrievals_run_idx ON prior_retrievals(run_id)
+        """
     )
     conn.commit()
 
@@ -432,6 +478,7 @@ def set_output_overwrite_query(output_overwrite, run_id, node_uuid):
 
 def delete_llm_calls_query(run_id):
     """Execute SQLite-specific DELETE for llm_calls"""
+    execute("DELETE FROM prior_retrievals WHERE run_id=?", (run_id,))
     execute("DELETE FROM llm_calls WHERE run_id=?", (run_id,))
 
 
@@ -723,17 +770,41 @@ def get_llm_call_by_run_and_hash_query(run_id, input_hash, offset=0):
 
 
 def insert_llm_call_with_output_query(
-    run_id, input_pickle, input_hash, node_uuid, api_type, output_pickle, stack_trace=None
+    run_id,
+    input_pickle,
+    input_hash,
+    node_uuid,
+    api_type,
+    output_pickle,
+    stack_trace=None,
+    node_kind=None,
+    input_delta_json="[]",
 ):
     """Insert new LLM call record with output in a single operation (upsert)."""
     execute(
         """
-        INSERT INTO llm_calls (run_id, input, input_hash, node_uuid, api_type, output, stack_trace)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO llm_calls (
+            run_id, input, input_hash, node_uuid, api_type, output, stack_trace, node_kind, input_delta_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (run_id, node_uuid)
-        DO UPDATE SET output = excluded.output, stack_trace = excluded.stack_trace
+        DO UPDATE SET
+            output = excluded.output,
+            stack_trace = excluded.stack_trace,
+            node_kind = COALESCE(excluded.node_kind, llm_calls.node_kind),
+            input_delta_json = excluded.input_delta_json
         """,
-        (run_id, input_pickle, input_hash, node_uuid, api_type, output_pickle, stack_trace),
+        (
+            run_id,
+            input_pickle,
+            input_hash,
+            node_uuid,
+            api_type,
+            output_pickle,
+            stack_trace,
+            node_kind,
+            input_delta_json,
+        ),
     )
 
 
@@ -978,9 +1049,31 @@ def copy_llm_calls_query(old_run_id, new_run_id):
     """Copy all llm_calls from one run to another with a new run_id."""
     execute(
         """
-        INSERT INTO llm_calls (run_id, node_uuid, input, input_hash, input_overwrite, output, color, label, api_type, stack_trace, timestamp)
-        SELECT ?, node_uuid, input, input_hash, input_overwrite, output, color, label, api_type, stack_trace, timestamp
+        INSERT INTO llm_calls (
+            run_id, node_uuid, input, input_hash, input_overwrite, output, color, label, api_type,
+            node_kind, input_delta_json, stack_trace, timestamp
+        )
+        SELECT ?, node_uuid, input, input_hash, input_overwrite, output, color, label, api_type,
+               node_kind, input_delta_json, stack_trace, timestamp
         FROM llm_calls WHERE run_id=?
+        """,
+        (new_run_id, old_run_id),
+    )
+
+
+def copy_prior_retrievals_query(old_run_id, new_run_id):
+    """Copy all prior retrieval sidecars from one run to another with a new run_id."""
+    execute(
+        """
+        INSERT INTO prior_retrievals (
+            run_id, node_uuid, status, retrieval_context, inherited_prior_ids_json,
+            applied_priors_json, rendered_priors_block, injection_anchor_json, model,
+            timeout_ms, latency_ms, warning_message, error_message, created_at, updated_at
+        )
+        SELECT ?, node_uuid, status, retrieval_context, inherited_prior_ids_json,
+               applied_priors_json, rendered_priors_block, injection_anchor_json, model,
+               timeout_ms, latency_ms, warning_message, error_message, created_at, updated_at
+        FROM prior_retrievals WHERE run_id=?
         """,
         (new_run_id, old_run_id),
     )
@@ -990,21 +1083,24 @@ def copy_llm_calls_query(old_run_id, new_run_id):
 def delete_all_runs_query():
     """Delete all records from runs table."""
     execute("DELETE FROM run_tags")
+    execute("DELETE FROM prior_retrievals")
     execute("DELETE FROM runs")
 
 
 def delete_all_llm_calls_query():
     """Delete all records from llm_calls table."""
+    execute("DELETE FROM prior_retrievals")
     execute("DELETE FROM llm_calls")
 
 
 def _delete_runs_data(run_ids):
-    """Delete llm_calls, priors_applied, and runs for the given run IDs."""
+    """Delete llm_calls, prior_retrievals, priors_applied, and runs for the given run IDs."""
     if not run_ids:
         return
     placeholders = ",".join("?" * len(run_ids))
     ids = tuple(run_ids)
     execute(f"DELETE FROM run_tags WHERE run_id IN ({placeholders})", ids)
+    execute(f"DELETE FROM prior_retrievals WHERE run_id IN ({placeholders})", ids)
     execute(f"DELETE FROM llm_calls WHERE run_id IN ({placeholders})", ids)
     execute(f"DELETE FROM priors_applied WHERE run_id IN ({placeholders})", ids)
     execute(f"DELETE FROM runs WHERE run_id IN ({placeholders})", ids)
@@ -1050,7 +1146,7 @@ def delete_runs_by_ids_query(run_ids, user_id=None):
 
 
 def delete_project_query(project_id):
-    """Delete a project and all associated runs, llm_calls, priors_applied, and locations."""
+    """Delete a project and all associated runs, llm_calls, prior_retrievals, priors_applied, and locations."""
     runs = query_all("SELECT run_id FROM runs WHERE project_id=?", (project_id,))
     _delete_runs_data([run["run_id"] for run in runs])
     execute("DELETE FROM project_tags WHERE project_id=?", (project_id,))
@@ -1059,7 +1155,7 @@ def delete_project_query(project_id):
 
 
 def delete_user_query(user_id):
-    """Delete a user and all associated runs, llm_calls, priors_applied, and locations."""
+    """Delete a user and all associated runs, llm_calls, prior_retrievals, priors_applied, and locations."""
     # 1. Get projects associated to this user
     project_ids = [
         r["project_id"]
@@ -1169,7 +1265,7 @@ def get_run_metadata_query(run_id):
 def get_llm_calls_for_run_query(run_id):
     """Get all LLM calls for a run, ordered by insertion time."""
     return query_all(
-        """SELECT node_uuid, input, input_overwrite, output, api_type, label, timestamp
+        """SELECT node_uuid, input, input_overwrite, output, api_type, node_kind, input_delta_json, label, timestamp
            FROM llm_calls WHERE run_id=? ORDER BY rowid""",
         (run_id,),
     )
@@ -1178,13 +1274,102 @@ def get_llm_calls_for_run_query(run_id):
 def get_llm_call_full_query(run_id, node_uuid):
     """Get full LLM call data including input, output, overwrites, and stack_trace."""
     return query_one(
-        """SELECT node_uuid, input, input_hash, input_overwrite, output, api_type, label, timestamp, stack_trace
+        """SELECT node_uuid, input, input_hash, input_overwrite, output, api_type, node_kind,
+                  input_delta_json, label, timestamp, stack_trace
            FROM llm_calls WHERE run_id=? AND node_uuid=?""",
         (run_id, node_uuid),
     )
 # ============================================================
 # Priors queries
 # ============================================================
+
+
+def get_prior_retrieval_query(run_id, node_uuid):
+    """Get prior retrieval metadata for a single node."""
+    return query_one(
+        """
+        SELECT run_id, node_uuid, status, retrieval_context, inherited_prior_ids_json,
+               applied_priors_json, rendered_priors_block, injection_anchor_json,
+               model, timeout_ms, latency_ms, warning_message, error_message,
+               created_at, updated_at
+        FROM prior_retrievals
+        WHERE run_id=? AND node_uuid=?
+        """,
+        (run_id, node_uuid),
+    )
+
+
+def get_prior_retrievals_for_run_query(run_id):
+    """Get all prior retrieval metadata rows for a run."""
+    return query_all(
+        """
+        SELECT run_id, node_uuid, status, retrieval_context, inherited_prior_ids_json,
+               applied_priors_json, rendered_priors_block, injection_anchor_json,
+               model, timeout_ms, latency_ms, warning_message, error_message,
+               created_at, updated_at
+        FROM prior_retrievals
+        WHERE run_id=?
+        ORDER BY created_at ASC, node_uuid ASC
+        """,
+        (run_id,),
+    )
+
+
+def upsert_prior_retrieval_query(
+    run_id,
+    node_uuid,
+    status,
+    retrieval_context,
+    inherited_prior_ids_json,
+    applied_priors_json,
+    rendered_priors_block,
+    injection_anchor_json,
+    model,
+    timeout_ms,
+    latency_ms,
+    warning_message,
+    error_message,
+):
+    """Insert or update prior retrieval metadata for a node."""
+    execute(
+        """
+        INSERT INTO prior_retrievals (
+            run_id, node_uuid, status, retrieval_context, inherited_prior_ids_json,
+            applied_priors_json, rendered_priors_block, injection_anchor_json, model,
+            timeout_ms, latency_ms, warning_message, error_message
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (run_id, node_uuid)
+        DO UPDATE SET
+            status = excluded.status,
+            retrieval_context = excluded.retrieval_context,
+            inherited_prior_ids_json = excluded.inherited_prior_ids_json,
+            applied_priors_json = excluded.applied_priors_json,
+            rendered_priors_block = excluded.rendered_priors_block,
+            injection_anchor_json = excluded.injection_anchor_json,
+            model = excluded.model,
+            timeout_ms = excluded.timeout_ms,
+            latency_ms = excluded.latency_ms,
+            warning_message = excluded.warning_message,
+            error_message = excluded.error_message,
+            updated_at = datetime('now')
+        """,
+        (
+            run_id,
+            node_uuid,
+            status,
+            retrieval_context,
+            inherited_prior_ids_json,
+            applied_priors_json,
+            rendered_priors_block,
+            injection_anchor_json,
+            model,
+            timeout_ms,
+            latency_ms,
+            warning_message,
+            error_message,
+        ),
+    )
 
 
 # ============================================================

@@ -203,6 +203,49 @@ def get_node_name_for_url(url: str) -> Optional[str]:
     return None
 
 
+def _extract_request_url_and_path(input_dict: Dict[str, Any], api_type: str) -> tuple[str | None, str | None]:
+    """Extract request URL/path for API types that expose transport-level metadata."""
+    try:
+        if api_type == "requests.Session.send":
+            request = input_dict["request"]
+            return str(request.url), request.path_url
+        if api_type in ["httpx.Client.send", "httpx.AsyncClient.send"]:
+            request = input_dict["request"]
+            return str(request.url), request.url.path
+        if api_type == "genai.BaseApiClient.async_request":
+            path = input_dict.get("path", "")
+            return path, path
+    except (AttributeError, KeyError, TypeError):
+        return None, None
+
+    return None, None
+
+
+def _is_embedding_path(path: str | None) -> bool:
+    """Embeddings are tracked as tool nodes because priors should never target them."""
+    if not path:
+        return False
+    return "/embed" in path or "/embeddings" in path
+
+
+def get_node_kind(input_dict: Dict[str, Any], api_type: str) -> str:
+    """Classify a captured node as llm, mcp, or tool."""
+    if api_type == "MCP.ClientSession.send_request":
+        return "mcp"
+
+    if api_type == "claude_agent_sdk.parse_message":
+        return "tool" if input_dict.get("tool_name") else "llm"
+
+    url, path = _extract_request_url_and_path(input_dict, api_type)
+    if _is_embedding_path(path):
+        return "tool"
+
+    if url and get_node_name_for_url(url):
+        return "tool"
+
+    return "llm"
+
+
 # ===========================================================
 # Generic wrappers for caching and server notification
 # ===========================================================
@@ -311,7 +354,15 @@ def get_input_dict(func, *args, **kwargs):
 
 
 def send_graph_node_and_edges(
-    node_id, input_dict, output_obj, source_node_ids, api_type, stack_trace=None
+    node_id,
+    input_dict,
+    output_obj,
+    source_node_ids,
+    api_type,
+    stack_trace=None,
+    display_input_dict=None,
+    prior_status=None,
+    prior_count=None,
 ):
     """Send graph node and edge updates to the server."""
     # Use provided stack_trace or capture a new one
@@ -322,18 +373,20 @@ def send_graph_node_and_edges(
     from sovara.runner.monkey_patching.api_parser import func_kwargs_to_json_str, api_obj_to_json_str
 
     # Build display strings: only send to_show portion to the UI (not raw)
-    input_full_str, attachments = func_kwargs_to_json_str(input_dict, api_type)
+    display_input_dict = display_input_dict or input_dict
+    input_full_str, attachments = func_kwargs_to_json_str(display_input_dict, api_type)
     output_full_str = api_obj_to_json_str(output_obj, api_type)
     input_string = json.dumps(json.loads(input_full_str)["to_show"])
     output_string = json.dumps(json.loads(output_full_str)["to_show"])
     model = get_raw_model_name(input_dict, api_type)
     label = get_node_label(input_dict, api_type)
+    node_kind = get_node_kind(input_dict, api_type)
     run_id = get_run_id()
 
     # Store input for this node (needed for containment checks)
     from sovara.runner.string_matching import store_input_strings, output_contained_in_input
 
-    store_input_strings(run_id, node_id, input_dict, api_type)
+    store_input_strings(run_id, node_id, display_input_dict, api_type)
 
     # Update reachability and filter redundant edges under lock
     with _graph_lock:
@@ -366,6 +419,9 @@ def send_graph_node_and_edges(
             "label": label,
             "stack_trace": stack_trace,
             "model": model,
+            "node_kind": node_kind,
+            "prior_status": prior_status,
+            "prior_count": prior_count,
             "attachments": attachments,
         },
         "incoming_edges": source_node_ids,

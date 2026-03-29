@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { GraphTabProvider } from './GraphTabProvider';
 import { PythonServerClient } from './PythonServerClient';
-import { SovaraDBClient } from './SovaraDBClient';
 import { configManager } from './ConfigManager';
 export class SidebarProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'sovara.graphView';
@@ -78,10 +77,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        if (config.priors_url) {
-            this._pythonClient?.setPriorsUrl(config.priors_url);
-            SovaraDBClient.init(config.priors_url);
-        }
     }
 
 
@@ -333,8 +328,6 @@ _context: vscode.WebviewViewResolveContext,
             this._windowStateListener.dispose();
             this._windowStateListener = undefined;
         }
-        // Clean up SovaraDBClient
-        SovaraDBClient.getInstance()?.dispose();
         // Clean up is handled by ConfigManager
     }
 }

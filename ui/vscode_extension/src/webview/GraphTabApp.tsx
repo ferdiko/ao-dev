@@ -30,6 +30,9 @@ function normalizeGraphPayload(payload: any): GraphData {
         label: node.label ?? String(node.uuid ?? node.id ?? ''),
         border_color: node.border_color,
         model: node.model,
+        node_kind: node.node_kind,
+        prior_status: node.prior_status,
+        prior_count: typeof node.prior_count === 'number' ? node.prior_count : undefined,
         attachments: node.attachments,
       }))
     : [];

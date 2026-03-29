@@ -430,7 +430,7 @@ Recommended persisted retrieval cache columns:
 - `scope_project_id`
 - `priors_revision`
 - `cache_key_hash`
-- `context_diff`
+- `retrieval_context`
 - `ignore_prior_ids_json`
 - `model`
 - `algorithm_version`
@@ -482,15 +482,20 @@ They only matter when retrieval actually runs. On every LLM node:
 
 1. strip any existing priors block
 2. parse inherited prior IDs from the stripped manifest if present
-3. compute retrieval diff from cleaned flattened `to_show`
-4. call retrieval with:
-   - context diff
+3. compute `input_delta_json` from cleaned flattened `to_show`
+4. render `retrieval_context` from `input_delta_json`
+5. select a provider-approved injection anchor in flattened `to_show`
+6. if no supported anchor exists:
+   - persist `prior_retrievals.status = 'uninjectable'`
+   - continue without priors
+7. call retrieval with:
+   - `retrieval_context`
    - current priors scope
    - `ignore_prior_ids`
    - timeout
-5. persist the result in `prior_retrievals`
-6. inject the returned block at the top of the executed input
-7. perform the normal LLM-call cache lookup using the executed input
+8. persist the result in `prior_retrievals`
+9. inject the returned block at the top of the executed input
+10. perform the normal LLM-call cache lookup using the executed input
 
 ### Why This Matches the User Journey
 
@@ -515,6 +520,8 @@ Putting caching behind the retrieval endpoint achieves exactly that:
 Add:
 
 - `node_kind TEXT NOT NULL CHECK (node_kind IN ('llm', 'mcp', 'tool'))`
+- `input_delta_json TEXT NOT NULL DEFAULT '[]'`
+- optionally `input_delta_count INTEGER NOT NULL DEFAULT 0`
 
 `llm_calls.input` remains the clean, stripped input.
 
@@ -540,6 +547,7 @@ CREATE TABLE prior_retrievals (
             'empty_context',
             'timeout',
             'unavailable',
+            'uninjectable',
             'error'
         )
     ),
@@ -550,7 +558,8 @@ CREATE TABLE prior_retrievals (
     applied_prior_count INTEGER NOT NULL DEFAULT 0,
     applied_priors_json TEXT NOT NULL DEFAULT '[]',
     rendered_priors_block TEXT NOT NULL DEFAULT '',
-    context_diff TEXT NOT NULL DEFAULT '',
+    retrieval_context TEXT NOT NULL DEFAULT '',
+    injection_anchor_json TEXT,
     warning_message TEXT,
     error_message TEXT,
     created_at TIMESTAMP DEFAULT (datetime('now')),
@@ -676,9 +685,21 @@ The retrieval endpoint should also be able to return the scope revision it used 
 
 `sovara-db` therefore does not read user LLM config directly. Instead it asks `so-server` to perform the actual model call.
 
+The current `sovara-db` LLM consumers are not uniform:
+
+- retriever already expects strict JSON-schema output
+- validator already expects strict JSON-schema output
+- restructurer currently uses `responses.parse(...)` with a Pydantic model
+
+For v1, the bridge should standardize these flows on one contract:
+
+- `so-server` exposes a structured JSON inference endpoint backed by [llm_backend.py](/Users/jub/ao-dev/src/sovara/server/llm_backend.py)
+- retriever and validator keep using JSON-schema structured output
+- restructurer is migrated from `responses.parse(...)` to the same JSON-schema contract
+
 Recommended generic internal endpoint:
 
-- `POST /internal/llm/chat`
+- `POST /internal/llm/infer`
 
 Body:
 
@@ -691,6 +712,27 @@ Body:
   "timeout_ms": 30000
 }
 ```
+
+Response:
+
+```json
+{
+  "raw_text": "...",
+  "parsed": {...},
+  "structured_mode": "native",
+  "model_used": "openai/gpt-5.4-mini"
+}
+```
+
+Behavior:
+
+- `llm_backend.py` remains the single LLM execution surface
+- the internal endpoint accepts an explicit JSON schema and always aims to return schema-valid parsed JSON
+- native structured output is preferred when the backend supports it
+- if the backend does not support native structured output, `so-server` must fall back to local JSON parsing plus schema validation before responding
+- local parse is a first-class compatibility path for backends such as vLLM-served models
+- validator and restructurer should fail closed if schema validation fails after bounded retries
+- retriever may retry with repair prompting, but it must also return schema-valid JSON before the result is accepted
 
 Initial policy:
 
@@ -725,17 +767,20 @@ If `node_kind != 'llm'`:
 6. if diff empty:
    - write `prior_retrievals.status = 'empty_context'`
    - do not inject priors
-7. otherwise call retrieval with:
-   - context diff
+7. otherwise resolve a provider-approved injection anchor key
+8. if no anchor exists:
+   - write `prior_retrievals.status = 'uninjectable'`
+   - do not call retrieval
+9. otherwise call retrieval with:
+   - retrieval context rendered from `input_delta_json`
    - `ignore_prior_ids`
    - timeout = `30000`
-8. persist `prior_retrievals`
-9. render the managed block
-10. select a provider-approved injection anchor key in the flattened clean `to_show`
-11. prepend the rendered block into that anchor value
-12. merge the modified flattened `to_show` back into `raw`
-11. compute the LLM cache key from the executed request
-12. if the LLM cache hits:
+10. persist `prior_retrievals`
+11. render the managed block
+12. prepend the rendered block into the approved anchor value
+13. merge the modified flattened `to_show` back into `raw`
+14. compute the LLM cache key from the executed request
+15. if the LLM cache hits:
    - reuse cached output
 13. otherwise:
    - execute the LLM call
@@ -875,7 +920,7 @@ V1 deliberately optimizes for semantic correctness and implementation tractabili
 - make `so-server` the only front door
 - classify node kind at the monkey-patch layer
 - cache retrieval behind the retrieval endpoint
-- always run retrieval first for LLM nodes
+- run retrieval before LLM cache for injectable `llm` nodes
 - ignore inherited prior IDs only during retrieval
 - store exact historical prior snapshots per node
 - keep normal IO clean and show priors in a dedicated UI box

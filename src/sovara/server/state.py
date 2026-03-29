@@ -89,6 +89,8 @@ class ServerState:
 
     def check_inactivity(self) -> bool:
         """Return True if server should shut down due to inactivity."""
+        if self.ui_websockets:
+            return False
         return (time.time() - self._last_activity_time) >= SERVER_INACTIVITY_TIMEOUT
 
     def request_shutdown(self) -> None:

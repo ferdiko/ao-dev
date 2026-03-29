@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { NodeEditorView } from '@sovara/shared-components/components/editor/NodeEditorView';
 import { DocumentPreviewModal } from '@sovara/shared-components/components/common/DocumentPreviewModal';
+import { PriorRetrievalRecord } from '@sovara/shared-components/types';
 import { useIsVsCodeDarkTheme } from '@sovara/shared-components/utils/themeUtils';
 import { parse, stringify } from 'lossless-json';
 import {
@@ -22,6 +23,9 @@ declare global {
       label: string;
       inputValue: string;
       outputValue: string;
+      nodeKind?: string | null;
+      priorStatus?: string | null;
+      priorCount?: number | null;
     };
   }
 }
@@ -79,6 +83,7 @@ export const NodeEditorTabApp: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'input' | 'output'>(() => window.nodeEditorContext?.field || 'input');
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<DetectedDocument | null>(null);
+  const [priorRetrieval, setPriorRetrieval] = useState<PriorRetrievalRecord | null>(null);
 
   // Listen for messages from extension
   useEffect(() => {
@@ -102,12 +107,16 @@ export const NodeEditorTabApp: React.FC = () => {
             setInitialInputData(parse(safeStringify(input)));
             setInitialOutputData(parse(safeStringify(output)));
             setHasUnsavedChanges(false);
+            setPriorRetrieval(null);
           }
           break;
 
         case 'saved':
           // Server confirmed save
           setHasUnsavedChanges(false);
+          break;
+        case 'prior_retrieval':
+          setPriorRetrieval(message.record || null);
           break;
       }
     };
@@ -235,6 +244,14 @@ export const NodeEditorTabApp: React.FC = () => {
         hasUnsavedChanges={hasUnsavedChanges}
         isDarkTheme={isDarkTheme}
         nodeLabel={context.label}
+        nodeKind={context.nodeKind || undefined}
+        priorStatus={priorRetrieval?.status || context.priorStatus || undefined}
+        priorCount={
+          typeof priorRetrieval?.applied_priors?.length === 'number'
+            ? priorRetrieval.applied_priors.length
+            : (typeof context.priorCount === 'number' ? context.priorCount : undefined)
+        }
+        priorRetrieval={priorRetrieval}
         onTabChange={setActiveTab}
         onInputChange={setInputData}
         onOutputChange={setOutputData}

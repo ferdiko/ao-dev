@@ -71,6 +71,9 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
           label: data.label || "Node",
           inputValue: data.input,
           outputValue: data.output,
+          nodeKind: data.node_kind,
+          priorStatus: data.prior_status,
+          priorCount: data.prior_count,
         });
         break;
       case "editOutput":
@@ -82,6 +85,9 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
           label: data.label || "Node",
           inputValue: data.input,
           outputValue: data.output,
+          nodeKind: data.node_kind,
+          priorStatus: data.prior_status,
+          priorCount: data.prior_count,
         });
         break;
       case "changeLabel":
@@ -102,6 +108,31 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
   };  
 
   const isDarkTheme = data.isDarkTheme ?? false;
+  const priorCount = typeof data.prior_count === 'number' ? data.prior_count : 0;
+  const priorStatus = data.prior_status || null;
+  const showPriorHeader = priorCount > 0 || ['timeout', 'unavailable', 'uninjectable', 'error'].includes(priorStatus || '');
+  const priorHeaderLabel = priorCount > 0
+    ? `${priorCount} prior${priorCount === 1 ? '' : 's'}`
+    : priorStatus === 'timeout'
+      ? 'Priors timeout'
+      : priorStatus === 'unavailable'
+        ? 'Priors unavailable'
+        : priorStatus === 'uninjectable'
+          ? 'Priors skipped'
+          : priorStatus === 'error'
+            ? 'Priors error'
+            : '';
+  const priorHeaderStyle: React.CSSProperties = priorCount > 0
+    ? {
+        background: isDarkTheme ? 'rgba(56, 139, 253, 0.18)' : 'rgba(9, 105, 218, 0.14)',
+        color: isDarkTheme ? '#9ecbff' : '#0550ae',
+        borderBottom: isDarkTheme ? '1px solid rgba(88, 166, 255, 0.28)' : '1px solid rgba(9, 105, 218, 0.22)',
+      }
+    : {
+        background: isDarkTheme ? 'rgba(187, 128, 9, 0.18)' : 'rgba(191, 135, 0, 0.14)',
+        color: isDarkTheme ? '#f2cc60' : '#9a6700',
+        borderBottom: isDarkTheme ? '1px solid rgba(242, 204, 96, 0.22)' : '1px solid rgba(191, 135, 0, 0.2)',
+      };
   // const isHighlighted = data.isHighlighted ?? false;
 
   const nodeRef = useRef<HTMLDivElement>(null);
@@ -163,7 +194,7 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
         <div
           style={{
             position: "absolute",
-            top: 8,
+            top: showPriorHeader ? 28 : 8,
             right: 10,
             fontSize: "10px",
             fontWeight: 700,
@@ -174,6 +205,30 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
           title={`Step ${data.step_id}`}
         >
           {`Step ${data.step_id}`}
+        </div>
+      )}
+      {showPriorHeader && priorHeaderLabel && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 20,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderTopLeftRadius: 6,
+            borderTopRightRadius: 6,
+            fontSize: '10px',
+            fontWeight: 700,
+            letterSpacing: '0.02em',
+            textTransform: 'uppercase',
+            ...priorHeaderStyle,
+          }}
+          title={priorHeaderLabel}
+        >
+          {priorHeaderLabel}
         </div>
       )}
       {showPopover && !isEditingLabel && popoverCoords && (
@@ -278,7 +333,9 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
           opacity: isEditingLabel ? 0 : 1,
           color: "var(--vscode-foreground)",
           textAlign: "center",
-          padding: typeof data.step_id === "number" ? "0 54px 0 8px" : "0 8px",
+          padding: typeof data.step_id === "number"
+            ? (showPriorHeader ? "18px 54px 0 8px" : "0 54px 0 8px")
+            : (showPriorHeader ? "18px 8px 0 8px" : "0 8px"),
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",

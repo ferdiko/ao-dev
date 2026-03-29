@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { AttachmentStrip } from "./AttachmentPreview";
 import { extractAttachments, type Attachment } from "../attachmentUtils";
 import { DocumentPreviewModal } from "./DocumentPreviewModal";
+import { RenderedMarkdown } from "./RenderedMarkdown";
 import { Pencil, Copy, ChevronDown, ChevronRight, Upload } from "lucide-react";
 import {
   detectDocument,
@@ -75,10 +74,6 @@ type StringClassification =
 
 type JsonPath = string[];
 type JumpTarget = { path: JsonPath; cursorOffset: number | null; selectedText: string | null };
-type MarkdownCodeProps = {
-  children?: React.ReactNode;
-  className?: string;
-};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -1305,26 +1300,7 @@ function InlineArrayItemRow({
 }
 
 function MarkdownContent({ markdown }: { markdown: string }) {
-  return (
-    <Markdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        code(props: MarkdownCodeProps) {
-          const text = String(props.children ?? "").replace(/\n$/, "");
-          const languageMatch = /language-([\w+-]+)/.exec(props.className || "");
-          const isBlock = Boolean(languageMatch) || text.includes("\n");
-
-          if (!isBlock) {
-            return <code className="io-inline-code">{props.children}</code>;
-          }
-
-          return <CodeBlock code={text} language={languageMatch?.[1] ?? inferCodeLanguage(text)} />;
-        },
-      }}
-    >
-      {markdown}
-    </Markdown>
-  );
+  return <RenderedMarkdown markdown={markdown} />;
 }
 
 function MessageBubbleBody({

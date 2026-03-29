@@ -7,7 +7,35 @@ export interface GraphNode {
     label: string;
     position?: { x: number; y: number };
     border_color?: string;
+    model?: string;
+    node_kind?: 'llm' | 'mcp' | 'tool' | string;
+    prior_status?: string | null;
+    prior_count?: number | null;
     attachments?: any[];
+}
+
+export interface PriorRetrievalRecord {
+    run_id: string;
+    node_uuid: string;
+    status: string;
+    retrieval_context: string;
+    inherited_prior_ids: string[];
+    applied_priors: Array<{
+        id: string;
+        name?: string;
+        summary?: string;
+        content?: string;
+        path?: string;
+    }>;
+    rendered_priors_block: string;
+    injection_anchor?: { key?: string } | null;
+    model?: string | null;
+    timeout_ms?: number | null;
+    latency_ms?: number | null;
+    warning_message?: string | null;
+    error_message?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
 }
 
 export interface GraphEdge {

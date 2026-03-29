@@ -3,7 +3,6 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { PythonServerClient } from './PythonServerClient';
-import { SovaraDBClient } from './SovaraDBClient';
 import { ProcessInfo } from '@sovara/shared-components/types';
 import { type DetectedDocument, getFileExtensionsForDocumentType, getMimeTypeForDocumentType } from '@sovara/shared-components/utils/documentDetection';
 
@@ -22,37 +21,22 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         return vscode.Uri.joinPath(this._extensionUri, 'dist', 'icon.png');
     }
 
-    private async _ensurePriorsClient(): Promise<SovaraDBClient | null> {
-        let client = SovaraDBClient.getInstance();
-        if (client) {
-            return client;
-        }
-
-        if (this._pythonClient) {
-            try {
-                await this._pythonClient.getUiConfig();
-            } catch {
-                // Defer to the existing error handling at the call site.
+    private _broadcastPriorsRefresh(): void {
+        for (const [panelId, panel] of this._panels.entries()) {
+            if (panelId === 'priors' || panelId === 'prior-editor') {
+                panel.webview.postMessage({ type: 'priors_refresh' });
             }
         }
-
-        const priorsUrl = this._pythonClient?.getPriorsUrl();
-        if (!priorsUrl) {
-            return null;
-        }
-
-        return SovaraDBClient.init(priorsUrl);
     }
 
     // ============================================================
-    // Priors helpers — call SovaraDBClient and post results to webview
+    // Priors helpers — call so-server proxy routes and post results to webview
     // ============================================================
 
     private async _handleFolderLs(panel: vscode.WebviewPanel, reqPath: string): Promise<void> {
-        const client = await this._ensurePriorsClient();
-        if (!client) { panel.webview.postMessage({ type: 'prior_error', error: 'Priors server not configured' }); return; }
+        if (!this._pythonClient) { panel.webview.postMessage({ type: 'prior_error', error: 'Python server not configured' }); return; }
         try {
-            const result = await client.fetchFolder(reqPath);
+            const result = await this._pythonClient.httpPost('/ui/priors/folders/ls', { path: reqPath });
             if (result.error) { panel.webview.postMessage({ type: 'prior_error', error: result.error || result.detail }); return; }
             panel.webview.postMessage({
                 type: 'folder_ls_result',
@@ -68,20 +52,18 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     }
 
     private async _handleGetPrior(panel: vscode.WebviewPanel, priorId: string): Promise<void> {
-        const client = await this._ensurePriorsClient();
-        if (!client) { panel.webview.postMessage({ type: 'prior_error', error: 'Priors server not configured' }); return; }
+        if (!this._pythonClient) { panel.webview.postMessage({ type: 'prior_error', error: 'Python server not configured' }); return; }
         try {
-            const result = await client.getPrior(priorId);
+            const result = await this._pythonClient.httpGet(`/ui/priors/${priorId}`);
             if (result.error) { panel.webview.postMessage({ type: 'prior_error', error: result.error || result.detail }); return; }
             panel.webview.postMessage({ type: 'prior_content', prior: result });
         } catch (e: any) { panel.webview.postMessage({ type: 'prior_error', error: e.message }); }
     }
 
     private async _handleGetPriors(panel: vscode.WebviewPanel): Promise<void> {
-        const client = await this._ensurePriorsClient();
-        if (!client) { panel.webview.postMessage({ type: 'priors_list', priors: [], error: 'Priors server not configured' }); return; }
+        if (!this._pythonClient) { panel.webview.postMessage({ type: 'priors_list', priors: [], error: 'Python server not configured' }); return; }
         try {
-            const result = await client.getPriorsList();
+            const result = await this._pythonClient.httpGet('/ui/priors');
             if (result.error) { panel.webview.postMessage({ type: 'priors_list', priors: [], error: result.error }); return; }
             const priors = Array.isArray(result) ? result : result.priors || [];
             panel.webview.postMessage({ type: 'priors_list', priors });
@@ -89,12 +71,12 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     }
 
     private async _handleAddPrior(panel: vscode.WebviewPanel, data: any): Promise<void> {
-        const client = await this._ensurePriorsClient();
-        if (!client) { panel.webview.postMessage({ type: 'prior_error', error: 'Priors server not configured' }); return; }
+        if (!this._pythonClient) { panel.webview.postMessage({ type: 'prior_error', error: 'Python server not configured' }); return; }
         try {
-            const result = await client.createPrior(
+            const forceQuery = data.force ? '?force=true' : '';
+            const result = await this._pythonClient.httpPost(
+                `/ui/priors${forceQuery}`,
                 { name: data.name, summary: data.summary || '', content: data.content, path: data.path || '' },
-                !!data.force,
             );
             if (result.status === 'rejected') {
                 let reason = result.reason || 'Validation failed';
@@ -111,6 +93,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         conflicting_prior_ids: result.validation.conflicting_prior_ids || [],
                     } : undefined,
                 });
+                this._broadcastPriorsRefresh();
             } else {
                 panel.webview.postMessage({ type: 'prior_error', error: 'Unexpected server response' });
             }
@@ -118,14 +101,14 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     }
 
     private async _handleUpdatePrior(panel: vscode.WebviewPanel, data: any): Promise<void> {
-        const client = await this._ensurePriorsClient();
-        if (!client) { panel.webview.postMessage({ type: 'prior_error', error: 'Priors server not configured' }); return; }
+        if (!this._pythonClient) { panel.webview.postMessage({ type: 'prior_error', error: 'Python server not configured' }); return; }
         const priorId = data.prior_id;
         if (!priorId) { panel.webview.postMessage({ type: 'prior_error', error: 'Missing prior_id' }); return; }
         const fields: any = {};
         for (const f of ['name', 'summary', 'content', 'path']) { if (data[f] !== undefined) { fields[f] = data[f]; } }
         try {
-            const result = await client.updatePrior(priorId, fields, !!data.force);
+            const forceQuery = data.force ? '?force=true' : '';
+            const result = await this._pythonClient.httpPut(`/ui/priors/${priorId}${forceQuery}`, fields);
             if (result.status === 'rejected') {
                 let reason = result.reason || 'Validation failed';
                 if (result.hint) { reason += `\n\nHint: ${result.hint}`; }
@@ -141,6 +124,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         conflicting_prior_ids: result.validation.conflicting_prior_ids || [],
                     } : undefined,
                 });
+                this._broadcastPriorsRefresh();
             } else {
                 panel.webview.postMessage({ type: 'prior_error', error: 'Unexpected server response' });
             }
@@ -148,32 +132,52 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     }
 
     private async _handleDeletePrior(panel: vscode.WebviewPanel, data: any): Promise<void> {
-        const client = await this._ensurePriorsClient();
-        if (!client) { panel.webview.postMessage({ type: 'prior_error', error: 'Priors server not configured' }); return; }
+        if (!this._pythonClient) { panel.webview.postMessage({ type: 'prior_error', error: 'Python server not configured' }); return; }
         const priorId = data.prior_id;
         if (!priorId) { panel.webview.postMessage({ type: 'prior_error', error: 'Missing prior_id' }); return; }
         try {
-            const result = await client.deletePrior(priorId);
+            const result = await this._pythonClient.httpDelete(`/ui/priors/${priorId}`);
             if (result.error) {
                 panel.webview.postMessage({ type: 'prior_error', error: result.error });
+            } else {
+                this._broadcastPriorsRefresh();
             }
-            // SSE event will trigger refresh in all panels
         } catch (e: any) { panel.webview.postMessage({ type: 'prior_error', error: e.message }); }
     }
 
-    // ============================================================
-    // Wire SovaraDBClient SSE events to a webview panel
-    // ============================================================
-
-    private _setupPriorEvents(panel: vscode.WebviewPanel): void {
-        const client = SovaraDBClient.getInstance();
-        if (!client) { return; }
-
-        const handler = () => {
-            panel.webview.postMessage({ type: 'priors_refresh' });
-        };
-        client.on('prior_event', handler);
-        panel.onDidDispose(() => { client.removeListener('prior_event', handler); });
+    private async _handleGetNodePriorRetrieval(
+        panel: vscode.WebviewPanel,
+        runId: string,
+        nodeId: string,
+    ): Promise<void> {
+        if (!this._pythonClient) {
+            panel.webview.postMessage({
+                type: 'prior_retrieval',
+                run_id: runId,
+                node_uuid: nodeId,
+                record: null,
+                error: 'Python server not configured',
+            });
+            return;
+        }
+        try {
+            const result = await this._pythonClient.httpGet(`/ui/run/${runId}/prior-retrieval/${nodeId}`);
+            panel.webview.postMessage({
+                type: 'prior_retrieval',
+                run_id: runId,
+                node_uuid: nodeId,
+                record: result?.record || null,
+                error: result?.error,
+            });
+        } catch (e: any) {
+            panel.webview.postMessage({
+                type: 'prior_retrieval',
+                run_id: runId,
+                node_uuid: nodeId,
+                record: null,
+                error: e.message,
+            });
+        }
     }
 
     // ============================================================
@@ -356,7 +360,10 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         data.field,
                         data.label,
                         data.inputValue,
-                        data.outputValue
+                        data.outputValue,
+                        data.nodeKind,
+                        data.priorStatus,
+                        data.priorCount,
                     );
                     break;
                 case 'switchRun':
@@ -400,7 +407,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     }
 
     // ============================================================
-    // Priors Tab (uses SovaraDBClient directly)
+    // Priors Tab
     // ============================================================
 
     public async createOrShowPriorsTab(): Promise<void> {
@@ -496,10 +503,6 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
             }
         });
 
-        // Wire SovaraDBClient SSE events for real-time sync
-        await this._ensurePriorsClient();
-        this._setupPriorEvents(panel);
-
         // Send theme info
         this._sendThemeToPanel(panel);
         vscode.window.onDidChangeActiveColorTheme(() => {
@@ -517,7 +520,10 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         field: 'input' | 'output',
         label: string,
         inputValue: any,
-        outputValue: any
+        outputValue: any,
+        nodeKind?: string,
+        priorStatus?: string,
+        priorCount?: number,
     ): Promise<void> {
         // Single reusable tab for all node editors (not per-node)
         const tabId = 'node-editor';
@@ -542,10 +548,14 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         field,
                         label,
                         inputValue,
-                        outputValue
+                        outputValue,
+                        nodeKind,
+                        priorStatus,
+                        priorCount,
                     }
                 });
                 panel.title = `Edit: ${label || nodeId.substring(0, 8)}`;
+                void this._handleGetNodePriorRetrieval(panel, runId, nodeId);
                 // Reveal in its current column (don't move it)
                 panel.reveal();
                 return;
@@ -579,7 +589,10 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
             field,
             label,
             inputValue,
-            outputValue
+            outputValue,
+            nodeKind,
+            priorStatus,
+            priorCount,
         );
 
         // Store panel reference
@@ -603,9 +616,13 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                             field,
                             label,
                             inputValue,
-                            outputValue
+                            outputValue,
+                            nodeKind,
+                            priorStatus,
+                            priorCount,
                         }
                     });
+                    void this._handleGetNodePriorRetrieval(panel, runId, nodeId);
                     break;
                 case 'edit_input':
                     this._pythonClient?.httpPost('/ui/edit-input', {
@@ -646,7 +663,10 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         field: string,
         label: string,
         inputValue: any,
-        outputValue: any
+        outputValue: any,
+        nodeKind?: string,
+        priorStatus?: string,
+        priorCount?: number,
     ): string {
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview.js'));
         const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'dist', 'codicons', 'codicon.css'));
@@ -708,7 +728,10 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
             field: '${field}',
             label: '${escapedLabel}',
             inputValue: '${escapedInputValue}',
-            outputValue: '${escapedOutputValue}'
+            outputValue: '${escapedOutputValue}',
+            nodeKind: ${JSON.stringify(nodeKind || null)},
+            priorStatus: ${JSON.stringify(priorStatus || null)},
+            priorCount: ${typeof priorCount === 'number' ? priorCount : 'null'}
         };
     </script>
     <script src="${scriptUri}"></script>
@@ -976,7 +999,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     }
 
     // ============================================================
-    // Prior Editor Tab (uses SovaraDBClient directly)
+    // Prior Editor Tab
     // ============================================================
 
     public closePriorEditorTab(): void {
@@ -1065,10 +1088,6 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                     break;
             }
         });
-
-        // Wire SovaraDBClient SSE events for real-time sync
-        await this._ensurePriorsClient();
-        this._setupPriorEvents(panel);
 
         // Send theme info
         this._sendThemeToPanel(panel);
