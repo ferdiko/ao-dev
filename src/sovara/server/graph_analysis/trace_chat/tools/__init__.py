@@ -11,12 +11,12 @@ from .verify import verify
 from .ask_step import ask_step
 from .search import search
 from .prompt_edit import (
-    list_sections, get_section, edit_section, bulk_edit,
+    list_sections, get_section, edit_section,
     insert_section, delete_section, move_section, undo,
 )
 
 # Maps tool name -> Python function
-# function signature: f(trace: Trace, **params) -> str
+# function signature: f(trace: Trace, ...) -> str
 TOOL_FUNCTIONS = {
     "get_overview": get_overview,
     "get_step": get_step,
@@ -26,7 +26,6 @@ TOOL_FUNCTIONS = {
     "list_sections": list_sections,
     "get_section": get_section,
     "edit_section": edit_section,
-    "bulk_edit": bulk_edit,
     "insert_section": insert_section,
     "delete_section": delete_section,
     "move_section": move_section,
@@ -43,7 +42,7 @@ TOOLS_SCHEMA = [
             "description": (
                 "Returns a high-level overview: step count, conversation structure "
                 "(which steps share system prompts and how message history grows), "
-                "and per-step metadata (model/tool, message count, output size)."
+                "and per-step metadata (name, message count, output size)."
             ),
             "parameters": {
                 "type": "object",
@@ -128,8 +127,8 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "search",
             "description": (
-                "Searches trace content (system prompts, inputs, outputs) for a "
-                "substring. Returns matching steps with context snippets."
+                "Searches rendered trace content across input/output fields for a "
+                "substring. Returns matching steps, flattened paths, and context snippets."
             ),
             "parameters": {
                 "type": "object",
@@ -149,9 +148,10 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "list_sections",
             "description": (
-                "Lists editable sections for a step's new content — system prompt "
-                "(if first introduced in this step) and new messages. Each section "
-                "shows its role ([system], [user], [assistant]), label, and preview."
+                "Lists editable input text paths for a step's newly introduced "
+                "content. Shared prompts appear only on the step where they are "
+                "first introduced. Each entry shows a flattened path, paragraph refs "
+                "like body.system::p2, detected role, and preview."
             ),
             "parameters": {
                 "type": "object",
@@ -172,7 +172,10 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_section",
-            "description": "Returns the full text of one section by index.",
+            "description": (
+                "Returns one editable path, or one paragraph inside that path. "
+                "Use path plus paragraph, or a paragraph ref like body.system::p2."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -180,12 +183,16 @@ TOOLS_SCHEMA = [
                         "type": "integer",
                         "description": "1-based step ID.",
                     },
-                    "index": {
+                    "path": {
+                        "type": "string",
+                        "description": "Flattened JSON path from list_sections, optionally with a ::pN paragraph suffix.",
+                    },
+                    "paragraph": {
                         "type": "integer",
-                        "description": "0-based section index (from list_sections).",
+                        "description": "Optional 0-based paragraph index within the selected path. Omit when path already includes ::pN.",
                     },
                 },
-                "required": ["index"],
+                "required": ["path"],
             },
         },
     },
@@ -194,8 +201,9 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "edit_section",
             "description": (
-                "Rewrites one section based on a natural-language instruction. "
-                "Works on any section — system prompt, user input, or assistant output."
+                "Rewrites one editable input path, or one paragraph inside that path, "
+                "based on a natural-language instruction. Use path plus paragraph, "
+                "or a paragraph ref like body.system::p2."
             ),
             "parameters": {
                 "type": "object",
@@ -204,40 +212,20 @@ TOOLS_SCHEMA = [
                         "type": "integer",
                         "description": "1-based step ID.",
                     },
-                    "index": {
+                    "path": {
+                        "type": "string",
+                        "description": "Flattened JSON path from list_sections, optionally with a ::pN paragraph suffix.",
+                    },
+                    "paragraph": {
                         "type": "integer",
-                        "description": "0-based section index to edit.",
+                        "description": "Optional 0-based paragraph index within the selected path. Omit when path already includes ::pN.",
                     },
                     "instruction": {
                         "type": "string",
                         "description": "What to change (e.g. 'make it more concise', 'add a rule about JSON output').",
                     },
                 },
-                "required": ["index", "instruction"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "bulk_edit",
-            "description": (
-                "Applies the same editing instruction to every section in parallel. "
-                "Use for style changes or global rules."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "step_id": {
-                        "type": "integer",
-                        "description": "1-based step ID.",
-                    },
-                    "instruction": {
-                        "type": "string",
-                        "description": "What to change across all sections.",
-                    },
-                },
-                "required": ["instruction"],
+                "required": ["path", "instruction"],
             },
         },
     },
@@ -245,7 +233,11 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "insert_section",
-            "description": "Inserts a new section after the given index. Use after_index=-1 to insert at the start.",
+            "description": (
+                "Inserts a new paragraph inside one editable path. Use "
+                "after_paragraph=-1 to insert at the start. You may also use a "
+                "paragraph ref in path to insert after that paragraph."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -253,16 +245,20 @@ TOOLS_SCHEMA = [
                         "type": "integer",
                         "description": "1-based step ID.",
                     },
-                    "after_index": {
+                    "path": {
+                        "type": "string",
+                        "description": "Flattened JSON path from list_sections, optionally with a ::pN paragraph suffix.",
+                    },
+                    "after_paragraph": {
                         "type": "integer",
-                        "description": "Insert after this index. -1 = insert at start.",
+                        "description": "Insert after this paragraph. -1 = insert at start. Omit when path already includes ::pN.",
                     },
                     "content": {
                         "type": "string",
-                        "description": "The text for the new section.",
+                        "description": "The text for the new paragraph.",
                     },
                 },
-                "required": ["after_index", "content"],
+                "required": ["path", "content"],
             },
         },
     },
@@ -270,7 +266,10 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "delete_section",
-            "description": "Removes a section by index.",
+            "description": (
+                "Removes one paragraph from an editable path. Use paragraph, or a "
+                "paragraph ref like body.system::p2."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -278,12 +277,16 @@ TOOLS_SCHEMA = [
                         "type": "integer",
                         "description": "1-based step ID.",
                     },
-                    "index": {
+                    "path": {
+                        "type": "string",
+                        "description": "Flattened JSON path from list_sections, optionally with a ::pN paragraph suffix.",
+                    },
+                    "paragraph": {
                         "type": "integer",
-                        "description": "0-based section index to delete.",
+                        "description": "0-based paragraph index to delete. Omit when path already includes ::pN.",
                     },
                 },
-                "required": ["index"],
+                "required": ["path"],
             },
         },
     },
@@ -291,7 +294,10 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "move_section",
-            "description": "Moves a section from one index to another.",
+            "description": (
+                "Moves a paragraph to another position within one editable path. "
+                "Use from_paragraph, or a paragraph ref like body.system::p2."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -299,16 +305,20 @@ TOOLS_SCHEMA = [
                         "type": "integer",
                         "description": "1-based step ID.",
                     },
-                    "from_index": {
-                        "type": "integer",
-                        "description": "Current index of the section to move.",
+                    "path": {
+                        "type": "string",
+                        "description": "Flattened JSON path from list_sections, optionally with a ::pN paragraph suffix.",
                     },
-                    "to_index": {
+                    "from_paragraph": {
                         "type": "integer",
-                        "description": "Target index for the section.",
+                        "description": "Current paragraph index. Omit when path already includes ::pN.",
+                    },
+                    "to_paragraph": {
+                        "type": "integer",
+                        "description": "Target paragraph index.",
                     },
                 },
-                "required": ["from_index", "to_index"],
+                "required": ["path", "to_paragraph"],
             },
         },
     },

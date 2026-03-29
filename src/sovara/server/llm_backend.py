@@ -12,29 +12,24 @@ RETRY_BASE_DELAY = 2  # seconds, doubles each retry
 litellm.suppress_debug_info = True
 
 
-# --- Model tier settings ---
-# Maps a model to its cheap counterpart. The expensive tier always uses the
-# model as given. Add entries here to route tier="cheap" calls to smaller models.
-CHEAP_TIER = {
-    "anthropic/claude-sonnet-4-6": "anthropic/claude-haiku-4-5-20251001",
-    "openai/gpt-5.4": "openai/gpt-5.4-mini",
-    # vLLM / local models: no cheap override — uses the same model
+# --- Model settings ---
+# TODO: Get from settings in UI
+MODEL = "anthropic/claude-sonnet-4-6"
+CHEAP_MODEL = "anthropic/claude-haiku-4-5-20251001"
+
+_TIER_MODELS = {
+    "expensive": MODEL,
+    "cheap": CHEAP_MODEL,
 }
-
-
-def _resolve_model(model: str, tier: str) -> str:
-    if tier == "cheap":
-        return CHEAP_TIER.get(model, model)
-    return model
 
 
 # --- Inference ---
 
 
-def infer(messages, model, tier="expensive", **kwargs):
+def infer(messages, tier="expensive", **kwargs):
     """Sync LLM call via litellm. Returns the full response object."""
     kwargs.setdefault("temperature", 0)
-    resolved = _resolve_model(model, tier)
+    resolved = _TIER_MODELS.get(tier, MODEL)
 
     # Normalize system= kwarg into a system message for cross-provider compat
     system = kwargs.pop("system", None)
@@ -56,7 +51,7 @@ def infer(messages, model, tier="expensive", **kwargs):
             time.sleep(delay)
 
 
-def infer_text(messages, model, tier="expensive", **kwargs) -> str:
+def infer_text(messages, tier="expensive", **kwargs) -> str:
     """Sync LLM call that returns just the text content. Used by tools."""
-    response = infer(messages, model, tier=tier, **kwargs)
+    response = infer(messages, tier=tier, **kwargs)
     return response.choices[0].message.content or ""

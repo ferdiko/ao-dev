@@ -29,7 +29,7 @@ function normalizeGraphPayload(payload: any): GraphData {
         stack_trace: node.stack_trace ?? '',
         label: node.label ?? String(node.uuid ?? node.id ?? ''),
         border_color: node.border_color,
-        model: node.model,
+        name: node.name,
         attachments: node.attachments,
       }))
     : [];

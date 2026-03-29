@@ -1,7 +1,8 @@
 """get_summary tool — returns (or generates) a three-sentence summary for a step."""
 
 from ....llm_backend import infer_text
-from ..utils.trace import Trace, format_messages, stringify_field
+from ..utils.step_ids import resolve_step_index
+from ..utils.trace import Trace, render_record_markdown
 
 SUMMARIZE_STEP_SYSTEM = (
     "You summarize a single step from an AI agent trace. "
@@ -14,19 +15,10 @@ SUMMARIZE_STEP_SYSTEM = (
 )
 
 
-def get_summary(trace: Trace, **params) -> str:
-    step_id = params.get("step_id")
-    if step_id is None:
-        return "Error: 'step_id' parameter is required."
-    try:
-        step_id = int(step_id)
-    except (TypeError, ValueError):
-        return f"Error: 'step_id' must be an integer, got '{step_id}'."
-
-    if step_id < 1 or step_id > len(trace):
-        return f"Error: step_id {step_id} out of range (1–{len(trace)})."
-
-    index = step_id - 1  # Convert to 0-based internal index
+def get_summary(trace: Trace, step_id=None) -> str:
+    index, err = resolve_step_index(trace, step_id)
+    if err:
+        return err
     record = trace.get(index)
 
     # Return existing summary if present on the record
@@ -38,15 +30,11 @@ def get_summary(trace: Trace, **params) -> str:
         return f"Step {step_id} summary:\n{trace.summary_cache[index]}"
 
     # Generate via LLM
-    model = params.get("model", "anthropic/claude-sonnet-4-6")
-    snapshot = format_messages(record.input, system_prompt=record.system_prompt)
-    output = record.output if isinstance(record.output, str) else stringify_field(record.output)
-    content = f"{snapshot}\n\nOutput:\n{output}"
+    content = render_record_markdown(record, trace.get_diffed(index), view="full")
 
     summary = infer_text(
         [{"role": "system", "content": SUMMARIZE_STEP_SYSTEM},
          {"role": "user", "content": content}],
-        model=model,
         tier="cheap",
         max_tokens=256,
     )

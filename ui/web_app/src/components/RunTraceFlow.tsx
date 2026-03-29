@@ -2695,7 +2695,7 @@ function NodeHeader({ node }: { node: GraphNode }) {
         <span className="node-card-name">{node.label}</span>
       </div>
       <div className="node-card-meta-row">
-        {node.model && <span className="node-card-type llm">{node.model}</span>}
+        {node.name && <span className="node-card-type llm">{node.name}</span>}
         <span className="node-card-id" title={displayId}>
           {displayId}
           <button className="node-card-id-copy" onClick={handleCopyId} title="Copy step ID">

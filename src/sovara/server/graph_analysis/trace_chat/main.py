@@ -18,16 +18,16 @@ _file_handler = logging.FileHandler("agent.log", mode="a")
 _file_handler.setFormatter(logging.Formatter("%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
 logger.addHandler(_file_handler)
 
-DEFAULT_MODEL = "anthropic/claude-sonnet-4-6"
 MAX_REACT_ITERATIONS = 10
 
 SYSTEM_PROMPT = """\
 You analyze execution traces from AI agent pipelines and help edit prompts and inputs.
 
 A trace is a sequence of steps. Each step records one LLM call or tool invocation \
-with a system prompt, input messages, an output, and optional metadata \
-(correct, label, summary, model/tool). Traces often contain conversations: \
-multiple steps sharing a system prompt, where later steps append to the message history.
+with rendered input/output JSON fields and optional metadata \
+(correct, label, summary). When possible, trace chat also detects \
+shared prompts and appended message history, but those semantic groupings are \
+best-effort convenience views rather than exact parsing.
 
 ## Guidelines
 - For broad, high-level questions ("summarize the trace", "what happened?"), \
@@ -42,19 +42,19 @@ No emoji or filler.
 information. Just answer the question directly.
 
 ## Editing
-To edit a system prompt or input messages, use the section tools with step_id. \
-Each step shows only its new content — system prompt (if first introduced) and new \
-messages. To edit a system prompt, use the step where it first appears.
-1. Call list_sections(step_id=N) to see sections with labels and roles.
-2. Call get_section to read the relevant section.
-3. Call edit_section with an instruction. For global changes, use bulk_edit.
-4. Use insert_section, delete_section, or move_section for structural changes.
+To edit a prompt or input text field, use the section tools with step_id. \
+Sections are keyed by flattened JSON paths like `body.messages.2.content`. \
+Paragraph refs are shown as `path::pN`, for example `body.system::p2`.
+1. Call list_sections(step_id=N) to see editable paths and paragraph refs.
+2. Call get_section with `path` to inspect a field. For one paragraph, pass `paragraph` or use a `path::pN` ref.
+3. Call edit_section with `path` plus an instruction.
+4. Use insert_section, delete_section, or move_section for paragraph-level structural changes within one path.
 5. The user can ask to undo — call undo to revert.
 """
 # Never mention system prompt is there because the agent would sometimes say
 # "as stated in the provided summary" etc.
 
-EDIT_TOOLS = {"edit_section", "bulk_edit", "insert_section", "delete_section",
+EDIT_TOOLS = {"edit_section", "insert_section", "delete_section",
                "move_section", "undo", "edit_step_input"}
 
 
@@ -66,7 +66,7 @@ def _log_preview(text: str, max_len: int = 240) -> str:
     return compact[:max_len] + "..."
 
 
-def handle_question(question: str, trace: Trace, history: list, model: str,
+def handle_question(question: str, trace: Trace, history: list,
                      prefetch_future=None) -> dict:
     """ReAct loop with native tool use via litellm.
 
@@ -77,21 +77,19 @@ def handle_question(question: str, trace: Trace, history: list, model: str,
     logger.info("=" * 60)
     logger.info("NEW QUESTION: %s", question)
     logger.info(
-        "TRACE CONTEXT: run_id=%s steps=%d history_messages=%d model=%s",
+        "TRACE CONTEXT: run_id=%s steps=%d history_messages=%d",
         trace.run_id or "-",
         len(trace),
         len(history),
-        model,
     )
     logger.info("=" * 60)
 
-    # Use a prefetched summary if it is already available for this model.
-    trace_summary = trace.prefetched_summaries.get(model, "")
+    trace_summary = trace.prefetched_summary or ""
     if prefetch_future is not None and not trace_summary:
         if prefetch_future.done():
             try:
                 trace_summary = prefetch_future.result()
-                trace.prefetched_summaries[model] = trace_summary
+                trace.prefetched_summary = trace_summary
                 logger.info(
                     "Prefetched summary ready (%d chars): %s",
                     len(trace_summary),
@@ -100,7 +98,7 @@ def handle_question(question: str, trace: Trace, history: list, model: str,
             except Exception as e:
                 logger.warning("Prefetch failed: %s", e)
         else:
-            logger.info("Prefetched summary still running for model=%s; proceeding without it", model)
+            logger.info("Prefetched summary still running; proceeding without it")
 
     # Build system prompt, injecting prefetched summary as context if available
     system = SYSTEM_PROMPT
@@ -116,7 +114,6 @@ def handle_question(question: str, trace: Trace, history: list, model: str,
 
         response = infer(
             messages,
-            model=model,
             system=system,
             tools=TOOLS_SCHEMA,
             max_tokens=2048,
@@ -145,7 +142,6 @@ def handle_question(question: str, trace: Trace, history: list, model: str,
                 params = json.loads(tc.function.arguments) if tc.function.arguments else {}
             except json.JSONDecodeError:
                 params = {}
-            params.setdefault("model", model)
             logger.info("TOOL CALL [%s] params=%s", tc.function.name, params)
             parsed_calls.append((tc, params))
             if tc.function.name in EDIT_TOOLS:
@@ -172,7 +168,7 @@ def handle_question(question: str, trace: Trace, history: list, model: str,
                 "content": result,
             })
 
-        compact_tool_results(messages, model=model)
+        compact_tool_results(messages)
 
     fallback = "Reached maximum iterations without a final answer."
     logger.warning("FALLBACK after %.1fs: %s", time.monotonic() - t0, fallback)
@@ -181,21 +177,19 @@ def handle_question(question: str, trace: Trace, history: list, model: str,
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python main.py <trace_file> [model]")
-        print("  model examples: anthropic/claude-sonnet-4-6, openai/gpt-4o, hosted_vllm/Qwen/Qwen2.5-72B")
+        print("Usage: python main.py <trace_file>")
         sys.exit(1)
 
     trace_path = sys.argv[1]
-    model = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_MODEL
 
     print(f"Loading trace from {trace_path}...")
     raw = Path(trace_path).read_text()
     trace = Trace.from_string(raw)
-    print(f"Loaded {len(trace)} steps. Model: {model}")
+    print(f"Loaded {len(trace)} steps.")
 
     # Prefetch trace summary in background while user types
     pool = ThreadPoolExecutor(max_workers=1)
-    prefetch_future = pool.submit(_generate_summary, trace, model)
+    prefetch_future = pool.submit(_generate_summary, trace)
     logger.info("Prefetch started for trace summary")
 
     print("Chat started. Type 'quit' to exit.\n")
@@ -216,7 +210,7 @@ def main():
             continue
 
         try:
-            result = handle_question(user_input, trace, history, model,
+            result = handle_question(user_input, trace, history,
                                      prefetch_future=prefetch_future)
             answer = result["answer"]
             history.append({"role": "user", "content": user_input})

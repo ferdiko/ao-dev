@@ -42,7 +42,7 @@ import { sortTagsByName } from "../tags";
 function LLMNode({ data, selected }: NodeProps) {
   const d = data as {
     label: string;
-    model?: string;
+    name?: string;
     nodeId: string;
     stepId?: number;
     focused?: boolean;
@@ -60,7 +60,7 @@ function LLMNode({ data, selected }: NodeProps) {
         <div className="graph-node-label">{d.label}</div>
         {typeof d.stepId === "number" && <div className="graph-node-step">{`Step ${d.stepId}`}</div>}
       </div>
-      {d.model && <div className="graph-node-model">{d.model}</div>}
+      {d.name && <div className="graph-node-model">{d.name}</div>}
       <Handle type="source" position={Position.Bottom} id="bottom" className="graph-handle" />
       <Handle type="source" position={Position.Left} id="left" className="graph-handle graph-handle-side" />
       <Handle type="source" position={Position.Right} id="right" className="graph-handle graph-handle-side" />
@@ -422,7 +422,7 @@ function RunViewContent({
         position: { x: pos.x, y: pos.y },
         data: {
           label: node.label,
-          model: node.model,
+          name: node.name,
           nodeId: id,
           stepId: node.step_id,
           borderColor: node.border_color,

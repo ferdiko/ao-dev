@@ -1,56 +1,56 @@
-"""Section-level viewing, editing, and undo for system prompts and input messages."""
+"""Path-level viewing, editing, and undo for trace-chat input text fields."""
 
+import copy
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import re
 from typing import Optional, Tuple
 
-from ..utils.edit_persist import write_prompt_edit, write_input_sections_edit
 from ....llm_backend import infer_text
-from ..utils.prompt_sections import PromptSections, Section, label_sections, flatten_turn
-from ..utils.trace import Trace
+from ..utils.edit_persist import PersistOutcome, write_input_sections_edit, write_prompt_edit
+from ..utils.prompt_sections import (
+    PromptSections,
+    Section,
+    flatten_turn,
+    format_paragraph_ref,
+    format_path,
+)
+from ..utils.step_ids import resolve_step_index
+from ..utils.text_paths import set_text_value
+from ..utils.trace import Trace, build_trace_record_from_to_show
 
 logger = logging.getLogger("sovara_agent")
+_PARAGRAPH_REF_RE = re.compile(r"^(.*)::p(\d+)$")
+
 
 def _edit_system(instruction: str) -> str:
     return (
         "Apply the following edit to the user's text. "
-        "Make minimal changes — stay faithful to the original wording and structure. "
+        "Make minimal changes and stay faithful to the original wording and structure. "
         "Return only the rewritten text, nothing else.\n\n"
         f"Edit: {instruction}"
     )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _resolve_step_id(trace: Trace, step_id) -> Tuple[int, Optional[str]]:
-    """Resolve and validate step_id (1-based). Returns (0-based index, error_or_None).
-
-    If step_id is omitted and only one prompt exists, defaults to the
-    first step that introduced it.
-    """
+    """Resolve and validate step_id (1-based)."""
     if step_id is not None:
-        try:
-            step_id = int(step_id)
-        except (TypeError, ValueError):
-            return -1, "Invalid step_id: must be an integer."
-        if step_id < 1 or step_id > len(trace.records):
-            return -1, f"step_id {step_id} out of range (1–{len(trace.records)})."
-        return step_id - 1, None
+        index, err = resolve_step_index(trace, step_id, error_prefix="")
+        if err:
+            if err.startswith("'step_id' must be an integer"):
+                return -1, "Invalid step_id: must be an integer."
+            return -1, err
+        return index, None
 
-    # Auto-resolve: find the first step that introduced the single prompt
     registry = trace.prompt_registry
     if len(registry) == 0:
-        return -1, "No system prompts found. Specify step_id."
+        return -1, "No shared prompt found. Specify step_id."
     if len(registry) == 1:
-        # Find the first step where prompt_is_new=True
-        for d in trace.diffed:
-            if d.prompt_is_new:
-                return d.index, None
-        return 0, None  # fallback
+        for diffed in trace.diffed:
+            if diffed.prompt_is_new:
+                return diffed.index, None
+        return 0, None
 
-    lines = ["Multiple prompts found. Specify step_id for the step to edit:"]
+    lines = ["Multiple shared prompts found. Specify step_id for the prompt to edit:"]
     for pid, text in registry.items():
         steps = [str(d.index + 1) for d in trace.diffed if d.prompt_id == pid and d.prompt_is_new]
         preview = text[:80].replace("\n", " ")
@@ -58,255 +58,393 @@ def _resolve_step_id(trace: Trace, step_id) -> Tuple[int, Optional[str]]:
     return -1, "\n".join(lines)
 
 
-def _get_sections(trace: Trace, idx: int, model: str) -> PromptSections:
-    """Get or create cached PromptSections for a step."""
+def _get_sections(trace: Trace, idx: int) -> PromptSections:
     cache_key = f"step:{idx}"
     if cache_key in trace.prompt_sections_cache:
         return trace.prompt_sections_cache[cache_key]
 
-    sections = flatten_turn(trace, idx, model)
-    ps = PromptSections(prompt_id=str(idx), sections=sections, labeled=True)
+    ps = PromptSections(prompt_id=str(idx), sections=flatten_turn(trace, idx))
     trace.prompt_sections_cache[cache_key] = ps
     return ps
 
 
-def _validate_index(ps: PromptSections, index, param_name="index") -> Optional[str]:
-    """Validate a section index. Returns error string or None."""
-    if index is None:
-        return f"Missing required parameter: {param_name}"
+def _copy_sections(ps: PromptSections) -> PromptSections:
+    return PromptSections(
+        prompt_id=ps.prompt_id,
+        sections=copy.deepcopy(ps.sections),
+        undo_stack=copy.deepcopy(ps.undo_stack),
+    )
+
+
+def _parse_path_reference(path) -> tuple[Optional[str], Optional[int], Optional[str]]:
+    if path is None:
+        return None, None, "Missing required parameter: path"
+
+    normalized = str(path).strip()
+    if not normalized:
+        return None, None, "Missing required parameter: path"
+
+    match = _PARAGRAPH_REF_RE.fullmatch(normalized)
+    if match:
+        base_path = match.group(1)
+        if base_path == "<root>":
+            base_path = ""
+        return base_path, int(match.group(2)), None
+
+    if normalized == "<root>":
+        normalized = ""
+    return normalized, None, None
+
+
+def _resolve_section(ps: PromptSections, *, path) -> tuple[Optional[Section], Optional[str]]:
+    for section in ps.sections:
+        if section.path == path:
+            return section, None
+    return None, f"Path `{format_path(path)}` not found. Call list_sections first."
+
+
+def _resolve_paragraph(
+    section: Section,
+    paragraph,
+    *,
+    required: bool = False,
+    inferred: Optional[int] = None,
+    param_name: str = "paragraph",
+    min_index: int = 0,
+    ) -> tuple[Optional[int], Optional[str]]:
+    if inferred is not None and paragraph is not None:
+        try:
+            parsed = int(paragraph)
+        except (TypeError, ValueError):
+            return None, f"Invalid {param_name}: must be an integer."
+        if parsed != inferred:
+            return None, f"Conflicting {param_name} and path reference."
+        paragraph = parsed
+
+    if paragraph is None:
+        paragraph = inferred
+
+    if paragraph is None:
+        if required:
+            return None, f"Missing required parameter: {param_name}"
+        return None, None
     try:
-        index = int(index)
+        paragraph = int(paragraph)
     except (TypeError, ValueError):
-        return f"Invalid {param_name}: must be an integer."
-    if index < 0 or index >= len(ps.sections):
-        return f"Index {index} out of range (0–{len(ps.sections) - 1})."
-    return None
+        return None, f"Invalid {param_name}: must be an integer."
+    if paragraph < min_index or paragraph >= len(section.paragraphs):
+        return None, (
+            f"{param_name} {paragraph} out of range "
+            f"({min_index}–{len(section.paragraphs) - 1})."
+        )
+    return paragraph, None
 
 
-def _write_back(trace: Trace, idx: int, ps: PromptSections) -> str:
-    """Write edited sections back to DB, dispatching by section type."""
-    diff = trace.diffed[idx]
-    results = []
-
-    # System prompt sections → all steps sharing this prompt
-    sys_sections = [s for s in ps.sections if s.msg_index == -1]
-    if sys_sections and diff.prompt_id:
-        trace.prompt_registry[diff.prompt_id] = "\n\n".join(s.text for s in sys_sections)
-        results.append(write_prompt_edit(trace, diff.prompt_id))
-
-    # Message sections → this step only
-    if any(s.msg_index >= 0 for s in ps.sections):
-        results.append(write_input_sections_edit(trace, idx))
-
-    return results[-1] if results else ""
+def _rebuild_record(trace: Trace, idx: int, input_to_show: dict) -> None:
+    record = trace.records[idx]
+    trace.records[idx] = build_trace_record_from_to_show(
+        input_to_show,
+        copy.deepcopy(record.output_to_show),
+        index=record.index,
+        correct=record.correct,
+        label=record.label,
+        summary=record.summary,
+        name=record.name,
+        node_uuid=record.node_uuid,
+    )
 
 
-# ---------------------------------------------------------------------------
-# Tool functions
-# ---------------------------------------------------------------------------
+def _apply_sections_to_trace(trace: Trace, idx: int, ps: PromptSections) -> None:
+    record = trace.records[idx]
+    input_to_show = copy.deepcopy(record.input_to_show)
+    shared_prompt_sections = [section for section in ps.sections if section.shared_prompt and section.prompt_id]
+    affected_indices = {idx}
 
-def list_sections(trace: Trace, **params) -> str:
-    """List all editable sections for a step."""
-    idx, err = _resolve_step_id(trace, params.get("step_id"))
+    for section in ps.sections:
+        if section.shared_prompt:
+            continue
+        set_text_value(input_to_show, section.path, section.codec, section.text, strict=True)
+    _rebuild_record(trace, idx, input_to_show)
+
+    for section in shared_prompt_sections:
+        for rec_idx, other_record in enumerate(trace.records):
+            if other_record.prompt_key != section.prompt_id or not other_record.prompt_path:
+                continue
+            other_input_to_show = copy.deepcopy(other_record.input_to_show)
+            set_text_value(
+                other_input_to_show,
+                other_record.prompt_path,
+                other_record.prompt_codec or section.codec,
+                section.text,
+                strict=True,
+            )
+            _rebuild_record(trace, rec_idx, other_input_to_show)
+            affected_indices.add(rec_idx)
+
+    trace.refresh_after_edit(affected_indices, keep_prompt_sections_for=idx)
+    trace.prompt_sections_cache[f"step:{idx}"] = ps
+
+
+def _write_back(
+    trace: Trace,
+    idx: int,
+    ps: PromptSections,
+) -> PersistOutcome:
+    if not trace.run_id:
+        _apply_sections_to_trace(trace, idx, ps)
+        return PersistOutcome(ok=True)
+
+    results: list[PersistOutcome] = []
+    for section in ps.sections:
+        if section.shared_prompt and section.prompt_id:
+            results.append(write_prompt_edit(
+                trace,
+                section.prompt_id,
+                section.path,
+                section.codec,
+                section.text,
+            ))
+            break
+
+    if any(not section.shared_prompt for section in ps.sections):
+        results.append(write_input_sections_edit(trace, idx, ps))
+
+    message = next((result.message for result in reversed(results) if result.message), "")
+    if any(not result.ok for result in results):
+        return PersistOutcome(ok=False, message=message)
+
+    _apply_sections_to_trace(trace, idx, ps)
+    return PersistOutcome(ok=True, message=message)
+
+
+def list_sections(trace: Trace, step_id=None) -> str:
+    idx, err = _resolve_step_id(trace, step_id)
     if err:
         return err
-    model = params.get("model", "anthropic/claude-sonnet-4-6")
-    ps = _get_sections(trace, idx, model)
+    ps = _get_sections(trace, idx)
     if not ps.sections:
-        return f"Step {idx + 1} has no editable content."
+        return f"Step {idx + 1} has no editable input text fields."
     return ps.to_table()
 
 
-def get_section(trace: Trace, **params) -> str:
-    """Return the full text of one section."""
-    idx, err = _resolve_step_id(trace, params.get("step_id"))
+def get_section(trace: Trace, path, step_id=None, paragraph=None) -> str:
+    idx, err = _resolve_step_id(trace, step_id)
     if err:
         return err
-    model = params.get("model", "anthropic/claude-sonnet-4-6")
-    ps = _get_sections(trace, idx, model)
-    index = params.get("index")
-    verr = _validate_index(ps, index)
-    if verr:
-        return verr
-    index = int(index)
-    s = ps.sections[index]
-    role_tag = f" [{s.role}]" if s.role else ""
-    return f"Section {index}{role_tag} ({s.label}):\n{s.text}"
-
-
-def edit_section(trace: Trace, **params) -> str:
-    """Rewrite one section based on a natural-language instruction."""
-    idx, err = _resolve_step_id(trace, params.get("step_id"))
+    ps = _get_sections(trace, idx)
+    path, inferred_paragraph, err = _parse_path_reference(path)
     if err:
         return err
-    model = params.get("model", "anthropic/claude-sonnet-4-6")
-    ps = _get_sections(trace, idx, model)
-    index = params.get("index")
-    verr = _validate_index(ps, index)
-    if verr:
-        return verr
-    index = int(index)
-    instruction = params.get("instruction")
-    if not instruction:
-        return "Missing required parameter: instruction"
+    section, err = _resolve_section(ps, path=path)
+    if err:
+        return err
+
+    paragraph, err = _resolve_paragraph(
+        section,
+        paragraph,
+        inferred=inferred_paragraph,
+    )
+    if err:
+        return err
+
+    tags = []
+    if section.role:
+        tags.append(section.role)
+    if section.shared_prompt:
+        tags.append("shared prompt")
+    tag_str = f" [{' | '.join(tags)}]" if tags else ""
+
+    if paragraph is not None:
+        return (
+            f"`{section.paragraph_ref(paragraph)}`{tag_str}:\n"
+            f"{section.paragraphs[paragraph]}"
+        )
+
+    lines = [f"Path `{section.display_path}`{tag_str}:"]
+    for para_idx, text in enumerate(section.paragraphs):
+        lines.append(f"\n`{section.paragraph_ref(para_idx)}`:\n{text}")
+    return "\n".join(lines)
+
+
+def edit_section(trace: Trace, path, instruction, step_id=None, paragraph=None) -> str:
+    idx, err = _resolve_step_id(trace, step_id)
+    if err:
+        return err
+    ps = _copy_sections(_get_sections(trace, idx))
+    path, inferred_paragraph, err = _parse_path_reference(path)
+    if err:
+        return err
+    section, err = _resolve_section(ps, path=path)
+    if err:
+        return err
+    paragraph, err = _resolve_paragraph(
+        section,
+        paragraph,
+        inferred=inferred_paragraph,
+    )
+    if err:
+        return err
 
     ps.push_undo()
 
-    old_text = ps.sections[index].text
+    source_text = section.paragraphs[paragraph] if paragraph is not None else section.text
     new_text = infer_text(
-        [{"role": "user", "content": old_text}],
-        model=model,
+        [{"role": "user", "content": source_text}],
         system=_edit_system(instruction),
         tier="expensive",
         max_tokens=1024,
     ).strip()
-    ps.sections[index].text = new_text
 
-    label_sections([ps.sections[index]], model)
-
-    logger.info("edit_section step=%d index=%d instruction=%r", idx + 1, index, instruction)
-
-    preview = new_text[:300]
-    suffix = "..." if len(new_text) > 300 else ""
-    return f"Section {index} edited ({ps.sections[index].label}):\n{preview}{suffix}" + _write_back(trace, idx, ps)
-
-
-def bulk_edit(trace: Trace, **params) -> str:
-    """Apply the same editing instruction to every section in parallel."""
-    idx, err = _resolve_step_id(trace, params.get("step_id"))
-    if err:
-        return err
-    model = params.get("model", "anthropic/claude-sonnet-4-6")
-    ps = _get_sections(trace, idx, model)
-    instruction = params.get("instruction")
-    if not instruction:
-        return "Missing required parameter: instruction"
-
-    ps.push_undo()
-
-    system = _edit_system(instruction)
-
-    def _edit_one(section: Section) -> str:
-        return infer_text(
-            [{"role": "user", "content": section.text}],
-            model=model,
-            system=system,
-            tier="expensive",
-            max_tokens=1024,
-        ).strip()
-
-    with ThreadPoolExecutor() as pool:
-        new_texts = list(pool.map(_edit_one, ps.sections))
-
-    for section, new_text in zip(ps.sections, new_texts):
+    if paragraph is not None:
+        section.paragraphs[paragraph] = new_text
+    else:
         section.text = new_text
 
-    label_sections(ps.sections, model)
+    logger.info(
+        "edit_section step=%d path=%s paragraph=%s instruction=%r",
+        idx + 1,
+        section.path,
+        paragraph,
+        instruction,
+    )
 
-    logger.info("bulk_edit step=%d instruction=%r", idx + 1, instruction)
-    return f"Bulk edit applied to {len(ps.sections)} sections of step {idx + 1}. Use list_sections to review." + _write_back(trace, idx, ps)
+    preview = new_text[:300] + ("..." if len(new_text) > 300 else "")
+    target_ref = section.paragraph_ref(paragraph) if paragraph is not None else section.display_path
+    outcome = _write_back(trace, idx, ps)
+    if not outcome.ok:
+        return outcome.message.strip() or "Error: failed to write to database."
+    return f"Edited `{target_ref}`:\n{preview}" + outcome.message
 
 
-def insert_section(trace: Trace, **params) -> str:
-    """Insert a new section after the given index (-1 to prepend)."""
-    idx, err = _resolve_step_id(trace, params.get("step_id"))
+def insert_section(trace: Trace, path, content, step_id=None, after_paragraph=None) -> str:
+    idx, err = _resolve_step_id(trace, step_id)
     if err:
         return err
-    model = params.get("model", "anthropic/claude-sonnet-4-6")
-    ps = _get_sections(trace, idx, model)
-
-    after_index = params.get("after_index")
-    if after_index is None:
-        return "Missing required parameter: after_index"
-    try:
-        after_index = int(after_index)
-    except (TypeError, ValueError):
-        return "Invalid after_index: must be an integer."
-    if after_index < -1 or after_index >= len(ps.sections):
-        return f"after_index {after_index} out of range (-1–{len(ps.sections) - 1})."
-
-    content = params.get("content")
-    if not content:
-        return "Missing required parameter: content"
-
-    ps.push_undo()
-
-    # Inherit msg_index and role from the adjacent section
-    ref = ps.sections[max(after_index, 0)]
-    new_section = Section(text=content, msg_index=ref.msg_index, role=ref.role)
-    label_sections([new_section], model)
-    ps.sections.insert(after_index + 1, new_section)
-
-    logger.info("insert_section step=%d after=%d", idx + 1, after_index)
-    return f"Inserted new section at index {after_index + 1} ({new_section.label}). Now {len(ps.sections)} sections." + _write_back(trace, idx, ps)
-
-
-def delete_section(trace: Trace, **params) -> str:
-    """Remove a section by index."""
-    idx, err = _resolve_step_id(trace, params.get("step_id"))
+    ps = _copy_sections(_get_sections(trace, idx))
+    path, inferred_paragraph, err = _parse_path_reference(path)
     if err:
         return err
-    model = params.get("model", "anthropic/claude-sonnet-4-6")
-    ps = _get_sections(trace, idx, model)
-    index = params.get("index")
-    verr = _validate_index(ps, index)
-    if verr:
-        return verr
-    index = int(index)
-
-    if len(ps.sections) == 1:
-        return "Cannot delete the only section."
-
-    ps.push_undo()
-
-    deleted = ps.sections.pop(index)
-    logger.info("delete_section step=%d index=%d label=%r", idx + 1, index, deleted.label)
-    return f"Deleted section {index} (was: '{deleted.label}'). {len(ps.sections)} sections remain." + _write_back(trace, idx, ps)
-
-
-def move_section(trace: Trace, **params) -> str:
-    """Move a section from one index to another."""
-    idx, err = _resolve_step_id(trace, params.get("step_id"))
+    section, err = _resolve_section(ps, path=path)
     if err:
         return err
-    model = params.get("model", "anthropic/claude-sonnet-4-6")
-    ps = _get_sections(trace, idx, model)
 
-    from_index = params.get("from_index")
-    to_index = params.get("to_index")
-    verr = _validate_index(ps, from_index, "from_index")
-    if verr:
-        return verr
-    verr = _validate_index(ps, to_index, "to_index")
-    if verr:
-        return verr
-    from_index = int(from_index)
-    to_index = int(to_index)
-
-    if from_index == to_index:
-        return "No move needed — same position."
+    after_paragraph, err = _resolve_paragraph(
+        section,
+        after_paragraph,
+        required=True,
+        inferred=inferred_paragraph,
+        param_name="after_paragraph",
+        min_index=-1,
+    )
+    if err:
+        return err
 
     ps.push_undo()
+    section.paragraphs.insert(after_paragraph + 1, str(content))
+    logger.info("insert_section step=%d path=%s after=%d", idx + 1, section.path, after_paragraph)
+    inserted_ref = format_paragraph_ref(section.path, after_paragraph + 1)
+    outcome = _write_back(trace, idx, ps)
+    if not outcome.ok:
+        return outcome.message.strip() or "Error: failed to write to database."
+    return f"Inserted paragraph `{inserted_ref}`." + outcome.message
 
-    section = ps.sections.pop(from_index)
-    ps.sections.insert(to_index, section)
-    logger.info("move_section step=%d %d -> %d", idx + 1, from_index, to_index)
-    return f"Moved section '{section.label}' from index {from_index} to {to_index}." + _write_back(trace, idx, ps)
+
+def delete_section(trace: Trace, path, step_id=None, paragraph=None) -> str:
+    idx, err = _resolve_step_id(trace, step_id)
+    if err:
+        return err
+    ps = _copy_sections(_get_sections(trace, idx))
+    path, inferred_paragraph, err = _parse_path_reference(path)
+    if err:
+        return err
+    section, err = _resolve_section(ps, path=path)
+    if err:
+        return err
+    paragraph, err = _resolve_paragraph(
+        section,
+        paragraph,
+        required=True,
+        inferred=inferred_paragraph,
+    )
+    if err:
+        return err
+    if len(section.paragraphs) == 1:
+        return "Cannot delete the only paragraph. Use edit_section to clear or rewrite it."
+
+    ps.push_undo()
+    deleted = section.paragraphs.pop(paragraph)
+    logger.info("delete_section step=%d path=%s paragraph=%d", idx + 1, section.path, paragraph)
+    preview = deleted[:120] + ("..." if len(deleted) > 120 else "")
+    outcome = _write_back(trace, idx, ps)
+    if not outcome.ok:
+        return outcome.message.strip() or "Error: failed to write to database."
+    return f"Deleted `{section.paragraph_ref(paragraph)}`: {preview}" + outcome.message
 
 
-def undo(trace: Trace, **params) -> str:
-    """Revert the last edit."""
-    idx, err = _resolve_step_id(trace, params.get("step_id"))
+def move_section(trace: Trace, path, to_paragraph, step_id=None, from_paragraph=None) -> str:
+    idx, err = _resolve_step_id(trace, step_id)
+    if err:
+        return err
+    ps = _copy_sections(_get_sections(trace, idx))
+    path, inferred_paragraph, err = _parse_path_reference(path)
+    if err:
+        return err
+    section, err = _resolve_section(ps, path=path)
+    if err:
+        return err
+
+    from_paragraph, err = _resolve_paragraph(
+        section,
+        from_paragraph,
+        required=True,
+        inferred=inferred_paragraph,
+        param_name="from_paragraph",
+    )
+    if err:
+        return err
+    to_paragraph, err = _resolve_paragraph(
+        section,
+        to_paragraph,
+        required=True,
+        param_name="to_paragraph",
+    )
+    if err:
+        return err
+
+    if from_paragraph == to_paragraph:
+        return "No move needed — same paragraph position."
+
+    ps.push_undo()
+    paragraph = section.paragraphs.pop(from_paragraph)
+    section.paragraphs.insert(to_paragraph, paragraph)
+    logger.info(
+        "move_section step=%d path=%s %d -> %d",
+        idx + 1,
+        section.path,
+        from_paragraph,
+        to_paragraph,
+    )
+    outcome = _write_back(trace, idx, ps)
+    if not outcome.ok:
+        return outcome.message.strip() or "Error: failed to write to database."
+    return f"Moved `{section.paragraph_ref(from_paragraph)}` to `{section.paragraph_ref(to_paragraph)}`." + outcome.message
+
+
+def undo(trace: Trace, step_id=None) -> str:
+    idx, err = _resolve_step_id(trace, step_id)
     if err:
         return err
 
     cache_key = f"step:{idx}"
-    ps = trace.prompt_sections_cache.get(cache_key)
+    current = trace.prompt_sections_cache.get(cache_key)
+    ps = _copy_sections(current) if current is not None else None
     if ps is None:
         return "No edits to undo."
-
     if not ps.pop_undo():
         return "Nothing to undo."
 
     logger.info("undo step=%d — %d snapshots remain", idx + 1, len(ps.undo_stack))
-    return f"Undone. Step {idx + 1} reverted to previous state. {len(ps.sections)} sections." + _write_back(trace, idx, ps)
+    outcome = _write_back(trace, idx, ps)
+    if not outcome.ok:
+        return outcome.message.strip() or "Error: failed to write to database."
+    return f"Undone. Step {idx + 1} reverted to previous state." + outcome.message

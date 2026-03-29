@@ -17,7 +17,7 @@ class IncomingNode:
     label: str
     border_color: str
     stack_trace: str | None = None
-    model: str | None = None
+    name: str | None = None
     attachments: list[str] | None = None
 
     @classmethod
@@ -29,7 +29,7 @@ class IncomingNode:
             label=str(data["label"]),
             border_color=str(data["border_color"]),
             stack_trace=None if data.get("stack_trace") is None else str(data["stack_trace"]),
-            model=None if data.get("model") is None else str(data["model"]),
+            name=None if data.get("name") is None else str(data["name"]),
             attachments=list(data.get("attachments") or []),
         )
 
@@ -45,7 +45,7 @@ class GraphNode:
     label: str
     border_color: str
     stack_trace: str | None = None
-    model: str | None = None
+    name: str | None = None
     attachments: list[str] | None = None
 
     @classmethod
@@ -58,7 +58,7 @@ class GraphNode:
             label=node.label,
             border_color=node.border_color,
             stack_trace=node.stack_trace,
-            model=node.model,
+            name=node.name,
             attachments=node.attachments,
         )
 
@@ -72,7 +72,7 @@ class GraphNode:
             label=str(data["label"]),
             border_color=str(data["border_color"]),
             stack_trace=None if data.get("stack_trace") is None else str(data["stack_trace"]),
-            model=None if data.get("model") is None else str(data["model"]),
+            name=None if data.get("name") is None else str(data["name"]),
             attachments=list(data.get("attachments") or []),
         )
 
@@ -85,7 +85,7 @@ class GraphNode:
             "label": self.label,
             "border_color": self.border_color,
             "stack_trace": self.stack_trace,
-            "model": self.model,
+            "name": self.name,
             "attachments": self.attachments or [],
         }
 

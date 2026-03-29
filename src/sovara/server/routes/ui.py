@@ -877,13 +877,11 @@ def clear(state: ServerState = Depends(get_state)):
 class ChatMessageRequest(BaseModel):
     message: str
     history: list = []
-    model: str = "anthropic/claude-sonnet-4-6"
 
 
 @router.post("/prefetch/{run_id}", status_code=202)
 async def prefetch_trace(
     run_id: str,
-    model: str = "anthropic/claude-sonnet-4-6",
     state: ServerState = Depends(get_state),
 ):
     run_map, _running_ids = state.get_run_snapshot()
@@ -897,7 +895,6 @@ async def prefetch_trace(
     async with httpx.AsyncClient() as client:
         await client.post(
             f"http://{HOST}:{INFERENCE_PORT}/prefetch/{run_id}",
-            params={"model": model},
             timeout=5.0,
         )
     return {"status": "prefetching"}

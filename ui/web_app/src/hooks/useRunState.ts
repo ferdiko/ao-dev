@@ -22,7 +22,7 @@ export interface GraphNode {
   output: Record<string, unknown>;
   border_color?: string;
   stack_trace?: string;
-  model?: string;
+  name?: string;
   attachments?: unknown[];
 }
 
@@ -61,7 +61,7 @@ function parseGraphPayload(payload: GraphPayload): { nodes: GraphNode[]; edges: 
     output: parseNodeData(node.output),
     border_color: node.border_color,
     stack_trace: node.stack_trace,
-    model: node.model,
+    name: node.name,
     attachments: node.attachments,
   }));
   const edges: GraphEdge[] = payload.edges.map((edge: BackendGraphEdge) => ({
