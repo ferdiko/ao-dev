@@ -146,6 +146,8 @@ WHITELIST_ENDPOINT_PATTERNS = [
     (r".*", r"/v1/messages"),  # Anthropic
     (r".*", r"/v1/responses"),  # OpenAI
     (r".*", r"/v1/chat/completions"),  # OpenAI
+    (r".*bedrock-runtime\..*amazonaws\.com", r"/model/[^/]+/(?:converse|converse-stream)"),  # Bedrock Converse
+    (r".*bedrock-runtime\..*amazonaws\.com", r"/model/[^/]+/(?:invoke|invoke-with-response-stream)"),  # Bedrock Invoke
     (r".*", r"models/[^/]+:generateContent"),  # Google GenAI
     (r".*", r"models/[^/]+:streamGenerateContent"),  # Google GenAI
     (r".*", r"/api/chat"),  # Ollama

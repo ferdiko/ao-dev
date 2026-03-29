@@ -46,9 +46,6 @@ def _extract_model_from_body(input_dict: Dict[str, Any], api_type: str) -> Optio
                 return input_dict["request_dict"]["model"]
             return None
 
-        elif api_type == "botocore.BaseClient._make_api_call":
-            return input_dict.get("api_params", {}).get("modelId")
-
         elif api_type == "MCP.ClientSession.send_request":
             return input_dict["request"].root.params.name
 
@@ -77,6 +74,9 @@ def _extract_name_from_url(input_dict: Dict[str, Any], api_type: str) -> Optiona
         elif api_type in ["httpx.Client.send", "httpx.AsyncClient.send"]:
             url = str(input_dict["request"].url)
             path = input_dict["request"].url.path
+        elif api_type == "urllib3.HTTPConnectionPool.urlopen":
+            url = input_dict.get("full_url", input_dict.get("url", ""))
+            path = input_dict.get("url", "")
         elif api_type == "genai.BaseApiClient.async_request":
             path = input_dict.get("path", "")
             url = path  # genai doesn't have full URL
@@ -88,6 +88,10 @@ def _extract_name_from_url(input_dict: Dict[str, Any], api_type: str) -> Optiona
 
         # Try regex pattern for /models/xxx:<path> or models/xxx:<path>
         match = re.search(r"/?models/([^/:]+)", path)
+        if match:
+            return match.group(1)
+
+        match = re.search(r"/model/([^/]+)/(?:converse|converse-stream|invoke|invoke-with-response-stream)", path)
         if match:
             return match.group(1)
 
