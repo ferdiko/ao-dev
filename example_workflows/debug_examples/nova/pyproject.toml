@@ -1,0 +1,12 @@
+[project]
+name = "sovara-examples-nova"
+version = "0.1.0"
+description = "Sovara debug examples for Amazon Nova"
+requires-python = ">=3.10"
+dependencies = [
+    "sovara",
+    "boto3",
+]
+
+[tool.uv.sources]
+sovara = { path = "../../..", editable = true }

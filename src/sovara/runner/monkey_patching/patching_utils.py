@@ -46,6 +46,9 @@ def _extract_model_from_body(input_dict: Dict[str, Any], api_type: str) -> Optio
                 return input_dict["request_dict"]["model"]
             return None
 
+        elif api_type == "botocore.BaseClient._make_api_call":
+            return input_dict.get("api_params", {}).get("modelId")
+
         elif api_type == "MCP.ClientSession.send_request":
             return input_dict["request"].root.params.name
 

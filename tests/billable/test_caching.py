@@ -60,6 +60,8 @@ def _deepresearch_asserts(run_data_obj: RunData):
         "./example_workflows/debug_examples/openai/tool_call.py",
         "./example_workflows/debug_examples/google/debate.py",
         "./example_workflows/debug_examples/google/debate_async.py",
+        "./example_workflows/debug_examples/xai/debate.py",
+        "./example_workflows/debug_examples/nova/debate.py",
     ],
 )
 def test_debug_examples(script_path: str):

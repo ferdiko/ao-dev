@@ -6,6 +6,7 @@ from sovara.runner.monkey_patching.patches.randomness_patch import random_seed_p
 # Lazy patches - these are only applied when the user imports the relevant module
 # Maps module name prefix -> (patch_function_module, patch_function_name)
 PATCHES = {
+    "botocore": ("sovara.runner.monkey_patching.patches.botocore_patch", "botocore_patch"),
     "mcp": ("sovara.runner.monkey_patching.patches.mcp_patches", "mcp_patch"),
     "requests": ("sovara.runner.monkey_patching.patches.requests_patch", "requests_patch"),
     "google.genai": ("sovara.runner.monkey_patching.patches.genai_patch", "genai_patch"),

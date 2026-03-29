@@ -33,6 +33,12 @@ from sovara.runner.monkey_patching.api_parsers.claude_sdk_api_parser import (
     json_str_to_api_obj_claude_sdk,
     json_str_to_original_inp_dict_claude_sdk,
 )
+from sovara.runner.monkey_patching.api_parsers.botocore_api_parser import (
+    func_kwargs_to_json_str_botocore,
+    api_obj_to_json_str_botocore,
+    json_str_to_api_obj_botocore,
+    json_str_to_original_inp_dict_botocore,
+)
 from sovara.common.constants import EDIT_IO_EXCLUDE_PATTERNS
 
 
@@ -135,6 +141,8 @@ def func_kwargs_to_json_str(input_dict: Dict[str, Any], api_type: str) -> Tuple[
         complete_json_str, metadata = func_kwargs_to_json_str_genai(input_dict)
     elif api_type == "claude_agent_sdk.parse_message":
         complete_json_str, metadata = func_kwargs_to_json_str_claude_sdk(input_dict)
+    elif api_type == "botocore.BaseClient._make_api_call":
+        complete_json_str, metadata = func_kwargs_to_json_str_botocore(input_dict)
     else:
         raise ValueError(f"Unknown API type {api_type}")
 
@@ -187,6 +195,8 @@ def json_str_to_original_inp_dict(json_str: str, input_dict: dict, api_type: str
         return json_str_to_original_inp_dict_genai(merged_json_str, input_dict)
     elif api_type == "claude_agent_sdk.parse_message":
         return json_str_to_original_inp_dict_claude_sdk(merged_json_str, input_dict)
+    elif api_type == "botocore.BaseClient._make_api_call":
+        return json_str_to_original_inp_dict_botocore(merged_json_str, input_dict)
     else:
         return merged_dict
 
@@ -213,6 +223,8 @@ def api_obj_to_json_str(response_obj: Any, api_type: str) -> str:
         complete_json_str = api_obj_to_json_str_genai(response_obj)
     elif api_type == "claude_agent_sdk.parse_message":
         complete_json_str = api_obj_to_json_str_claude_sdk(response_obj)
+    elif api_type == "botocore.BaseClient._make_api_call":
+        complete_json_str = api_obj_to_json_str_botocore(response_obj)
     else:
         raise ValueError(f"Unknown API type {api_type}")
 
@@ -258,6 +270,8 @@ def json_str_to_api_obj(new_output_text: str, api_type: str) -> Any:
         return json_str_to_api_obj_genai(merged_json_str)
     elif api_type == "claude_agent_sdk.parse_message":
         return json_str_to_api_obj_claude_sdk(merged_json_str)
+    elif api_type == "botocore.BaseClient._make_api_call":
+        return json_str_to_api_obj_botocore(merged_json_str)
     else:
         raise ValueError(f"Unknown API type {api_type}")
 
@@ -271,6 +285,8 @@ def api_obj_to_response_ok(response_obj: Any, api_type: str) -> bool:
         # MCP tool responses should always be cached for replay, even if isError=True.
         # Unlike HTTP errors (which may be transient), MCP tool errors are deterministic
         # responses that should be replayed consistently.
+        return True
+    elif api_type == "botocore.BaseClient._make_api_call":
         return True
     else:
         return True
