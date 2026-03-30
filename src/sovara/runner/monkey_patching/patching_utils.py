@@ -358,8 +358,7 @@ def send_graph_node_and_edges(
     output_full_str = api_obj_to_json_str(output_obj, api_type)
     input_string = json.dumps(json.loads(input_full_str)["to_show"])
     output_string = json.dumps(json.loads(output_full_str)["to_show"])
-    name = get_node_name(input_dict, api_type)
-    model = name
+    raw_node_name = get_node_name(input_dict, api_type)
     label = get_node_label(input_dict, api_type)
     node_kind = get_node_kind(input_dict, api_type)
     run_id = get_run_id()
@@ -399,10 +398,9 @@ def send_graph_node_and_edges(
             "border_color": CERTAINTY_UNKNOWN,
             "label": label,
             "stack_trace": stack_trace,
-            "model": model,
             "node_kind": node_kind,
             "prior_count": prior_count,
-            "name": name,
+            "raw_node_name": raw_node_name,
             "attachments": attachments,
         },
         "incoming_edges": source_node_ids,

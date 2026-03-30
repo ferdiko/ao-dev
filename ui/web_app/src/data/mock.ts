@@ -2070,7 +2070,7 @@ export interface GraphNode {
   input: Record<string, unknown>;
   output: Record<string, unknown>;
   latency: number;
-  name?: string;
+  raw_node_name?: string;
   toolName?: string;
   border_color?: string;
 }
@@ -2133,7 +2133,7 @@ export const mockGraphs: Record<string, GraphData> = {
           usage: { prompt_tokens: 245, completion_tokens: 89, total_tokens: 334 },
         },
         latency: 1240,
-        name: "gpt-4o",
+        raw_node_name: "gpt-4o",
       },
       {
         id: "b7e42f90",
@@ -2160,7 +2160,7 @@ export const mockGraphs: Record<string, GraphData> = {
           usage: { prompt_tokens: 312, completion_tokens: 142, total_tokens: 454 },
         },
         latency: 2180,
-        name: "gpt-4o",
+        raw_node_name: "gpt-4o",
       },
       {
         id: "c4d19e5a",
@@ -2220,7 +2220,7 @@ export const mockGraphs: Record<string, GraphData> = {
           usage: { prompt_tokens: 198, completion_tokens: 56, total_tokens: 254 },
         },
         latency: 680,
-        name: "gpt-4o-mini",
+        raw_node_name: "gpt-4o-mini",
       },
       {
         id: "e2f07d4e",
@@ -2262,7 +2262,7 @@ export const mockGraphs: Record<string, GraphData> = {
           usage: { prompt_tokens: 287, completion_tokens: 163, total_tokens: 450 },
         },
         latency: 1890,
-        name: "gpt-4o",
+        raw_node_name: "gpt-4o",
       },
     ],
     edges: [

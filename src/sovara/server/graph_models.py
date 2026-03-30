@@ -17,10 +17,9 @@ class IncomingNode:
     label: str
     border_color: str
     stack_trace: str | None = None
-    model: str | None = None
     node_kind: str | None = None
     prior_count: int | None = None
-    name: str | None = None
+    raw_node_name: str | None = None
     attachments: list[str] | None = None
 
     @classmethod
@@ -32,10 +31,9 @@ class IncomingNode:
             label=str(data["label"]),
             border_color=str(data["border_color"]),
             stack_trace=None if data.get("stack_trace") is None else str(data["stack_trace"]),
-            model=None if data.get("model") is None else str(data["model"]),
             node_kind=None if data.get("node_kind") is None else str(data["node_kind"]),
             prior_count=None if data.get("prior_count") is None else int(data["prior_count"]),
-            name=None if data.get("name") is None else str(data["name"]),
+            raw_node_name=None if data.get("raw_node_name") is None else str(data["raw_node_name"]),
             attachments=list(data.get("attachments") or []),
         )
 
@@ -51,10 +49,9 @@ class GraphNode:
     label: str
     border_color: str
     stack_trace: str | None = None
-    model: str | None = None
     node_kind: str | None = None
     prior_count: int | None = None
-    name: str | None = None
+    raw_node_name: str | None = None
     attachments: list[str] | None = None
 
     @classmethod
@@ -67,10 +64,9 @@ class GraphNode:
             label=node.label,
             border_color=node.border_color,
             stack_trace=node.stack_trace,
-            model=node.model,
             node_kind=node.node_kind,
             prior_count=node.prior_count,
-            name=node.name,
+            raw_node_name=node.raw_node_name,
             attachments=node.attachments,
         )
 
@@ -84,10 +80,9 @@ class GraphNode:
             label=str(data["label"]),
             border_color=str(data["border_color"]),
             stack_trace=None if data.get("stack_trace") is None else str(data["stack_trace"]),
-            model=None if data.get("model") is None else str(data["model"]),
             node_kind=None if data.get("node_kind") is None else str(data["node_kind"]),
             prior_count=None if data.get("prior_count") is None else int(data["prior_count"]),
-            name=None if data.get("name") is None else str(data["name"]),
+            raw_node_name=None if data.get("raw_node_name") is None else str(data["raw_node_name"]),
             attachments=list(data.get("attachments") or []),
         )
 
@@ -100,10 +95,9 @@ class GraphNode:
             "label": self.label,
             "border_color": self.border_color,
             "stack_trace": self.stack_trace,
-            "model": self.model,
             "node_kind": self.node_kind,
             "prior_count": self.prior_count,
-            "name": self.name,
+            "raw_node_name": self.raw_node_name,
             "attachments": self.attachments or [],
         }
 

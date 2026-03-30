@@ -25,7 +25,7 @@ export interface GraphNode {
   output: Record<string, unknown>;
   border_color?: string;
   stack_trace?: string;
-  name?: string;
+  raw_node_name?: string;
   node_kind?: string | null;
   prior_count?: number | null;
   attachments?: unknown[];
@@ -73,7 +73,7 @@ function parseGraphPayload(payload: GraphPayload): { nodes: GraphNode[]; edges: 
     output: parseNodeData(node.output),
     border_color: node.border_color,
     stack_trace: node.stack_trace,
-    name: node.name,
+    raw_node_name: node.raw_node_name,
     node_kind: node.node_kind,
     prior_count: node.prior_count,
     attachments: node.attachments,

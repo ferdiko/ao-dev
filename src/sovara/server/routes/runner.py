@@ -48,8 +48,7 @@ class IncomingNodeRequest(BaseModel):
     label: str
     border_color: str
     stack_trace: Optional[str] = None
-    name: Optional[str] = None
-    model: Optional[str] = None
+    raw_node_name: Optional[str] = None
     node_kind: Optional[str] = None
     prior_count: Optional[int] = None
     attachments: list[str] = Field(default_factory=list)
