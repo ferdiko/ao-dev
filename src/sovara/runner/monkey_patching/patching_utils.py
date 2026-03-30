@@ -347,7 +347,7 @@ def send_graph_node_and_edges(
     source_node_ids,
     api_type,
     stack_trace,
-    prior_count=None,
+    prior_count,
 ):
     """Send graph node and edge updates to the server."""
     # Import here to avoid circular import
