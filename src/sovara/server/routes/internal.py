@@ -70,7 +70,6 @@ class InternalInferRequest(BaseModel):
 class InternalPriorsRetrieveRequest(BaseModel):
     run_id: str
     context: str
-    base_path: str = ""
     model: str | None = None
     ignore_prior_ids: list[str] = Field(default_factory=list)
 
@@ -83,13 +82,11 @@ class InternalResolveAnchorRequest(BaseModel):
 
 class InternalPrefixCacheLookupRequest(BaseModel):
     run_id: str
-    base_path: str = ""
     clean_pairs: list[dict[str, str]] = Field(default_factory=list)
 
 
 class InternalPrefixCacheStoreRequest(BaseModel):
     run_id: str
-    base_path: str = ""
     clean_pairs: list[dict[str, str]] = Field(default_factory=list)
     injected_pairs: list[dict[str, str]] = Field(default_factory=list)
     prior_ids: list[str] = Field(default_factory=list)
@@ -144,7 +141,6 @@ def internal_priors_retrieve(req: InternalPriorsRetrieveRequest):
         return client.retrieve_priors(
             {
                 "context": req.context,
-                "base_path": req.base_path,
                 "model": req.model,
                 "ignore_prior_ids": req.ignore_prior_ids,
             }
@@ -168,7 +164,6 @@ def internal_priors_prefix_cache_lookup(req: InternalPrefixCacheLookupRequest):
     try:
         return client.lookup_prefix_cache(
             {
-                "base_path": req.base_path,
                 "clean_pairs": req.clean_pairs,
             }
         )
@@ -191,7 +186,6 @@ def internal_priors_prefix_cache_store(req: InternalPrefixCacheStoreRequest):
     try:
         return client.store_prefix_cache(
             {
-                "base_path": req.base_path,
                 "clean_pairs": req.clean_pairs,
                 "injected_pairs": req.injected_pairs,
                 "prior_ids": req.prior_ids,

@@ -164,7 +164,7 @@ def _init_db(conn):
             label TEXT,
             api_type TEXT,
             node_kind TEXT CHECK (node_kind IN ('llm', 'mcp', 'tool')),
-            input_delta_json TEXT NOT NULL DEFAULT '[]',
+            prompt_suffix_json TEXT NOT NULL DEFAULT '[]',
             stack_trace TEXT,
             timestamp TIMESTAMP DEFAULT (datetime('now')),
             PRIMARY KEY (run_id, node_uuid),
@@ -331,8 +331,11 @@ def _ensure_llm_calls_schema(conn):
         conn.execute(
             "ALTER TABLE llm_calls ADD COLUMN node_kind TEXT CHECK (node_kind IN ('llm', 'mcp', 'tool'))"
         )
-    if "input_delta_json" not in columns:
-        conn.execute("ALTER TABLE llm_calls ADD COLUMN input_delta_json TEXT NOT NULL DEFAULT '[]'")
+    if "input_delta_json" in columns and "prompt_suffix_json" not in columns:
+        conn.execute("ALTER TABLE llm_calls RENAME COLUMN input_delta_json TO prompt_suffix_json")
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(llm_calls)").fetchall()}
+    if "prompt_suffix_json" not in columns:
+        conn.execute("ALTER TABLE llm_calls ADD COLUMN prompt_suffix_json TEXT NOT NULL DEFAULT '[]'")
 
 
 def _ensure_prior_schema(conn):
@@ -786,13 +789,13 @@ def insert_llm_call_with_output_query(
     output_pickle,
     stack_trace=None,
     node_kind=None,
-    input_delta_json="[]",
+    prompt_suffix_json="[]",
 ):
     """Insert new LLM call record with output in a single operation (upsert)."""
     execute(
         """
         INSERT INTO llm_calls (
-            run_id, input, input_hash, node_uuid, api_type, output, stack_trace, node_kind, input_delta_json
+            run_id, input, input_hash, node_uuid, api_type, output, stack_trace, node_kind, prompt_suffix_json
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (run_id, node_uuid)
@@ -800,7 +803,7 @@ def insert_llm_call_with_output_query(
             output = excluded.output,
             stack_trace = excluded.stack_trace,
             node_kind = COALESCE(excluded.node_kind, llm_calls.node_kind),
-            input_delta_json = excluded.input_delta_json
+            prompt_suffix_json = excluded.prompt_suffix_json
         """,
         (
             run_id,
@@ -811,7 +814,7 @@ def insert_llm_call_with_output_query(
             output_pickle,
             stack_trace,
             node_kind,
-            input_delta_json,
+            prompt_suffix_json,
         ),
     )
 
@@ -1059,10 +1062,10 @@ def copy_llm_calls_query(old_run_id, new_run_id):
         """
         INSERT INTO llm_calls (
             run_id, node_uuid, input, input_hash, input_overwrite, output, color, label, api_type,
-            node_kind, input_delta_json, stack_trace, timestamp
+            node_kind, prompt_suffix_json, stack_trace, timestamp
         )
         SELECT ?, node_uuid, input, input_hash, input_overwrite, output, color, label, api_type,
-               node_kind, input_delta_json, stack_trace, timestamp
+               node_kind, prompt_suffix_json, stack_trace, timestamp
         FROM llm_calls WHERE run_id=?
         """,
         (new_run_id, old_run_id),
@@ -1273,7 +1276,7 @@ def get_run_metadata_query(run_id):
 def get_llm_calls_for_run_query(run_id):
     """Get all LLM calls for a run, ordered by insertion time."""
     return query_all(
-        """SELECT node_uuid, input, input_overwrite, output, api_type, node_kind, input_delta_json, label, timestamp
+        """SELECT node_uuid, input, input_overwrite, output, api_type, node_kind, prompt_suffix_json, label, timestamp
            FROM llm_calls WHERE run_id=? ORDER BY rowid""",
         (run_id,),
     )
@@ -1283,7 +1286,7 @@ def get_llm_call_full_query(run_id, node_uuid):
     """Get full LLM call data including input, output, overwrites, and stack_trace."""
     return query_one(
         """SELECT node_uuid, input, input_hash, input_overwrite, output, api_type, node_kind,
-                  input_delta_json, label, timestamp, stack_trace
+                  prompt_suffix_json, label, timestamp, stack_trace
            FROM llm_calls WHERE run_id=? AND node_uuid=?""",
         (run_id, node_uuid),
     )

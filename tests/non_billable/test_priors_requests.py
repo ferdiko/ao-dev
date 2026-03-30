@@ -85,7 +85,12 @@ def test_inject_priors_formats_context_and_tracks_ids(monkeypatch):
 
     injected = priors.inject_priors(path="demo/", context="Need SQL guidance")
 
-    assert injected == "<priors>\n## Prior 1\nUse retries\n</priors>"
+    assert injected == (
+        "<sovara-priors>\n"
+        '<!-- {"manual":true,"priors":[{"id":"p1"}]} -->\n'
+        "## Prior 1\nUse retries\n"
+        "</sovara-priors>"
+    )
     assert tracked["ids"] == ["p1"]
 
 

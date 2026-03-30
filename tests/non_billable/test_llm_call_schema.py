@@ -7,7 +7,7 @@ import httpx
 
 from sovara.common.constants import TEST_PROJECT_ID, TEST_USER_ID
 from sovara.runner.monkey_patching.patching_utils import get_node_kind
-from sovara.server.database_backends.sqlite import _ensure_prior_schema
+from sovara.server.database_backends.sqlite import _ensure_llm_calls_schema, _ensure_prior_schema
 from sovara.server.database_manager import DB
 
 
@@ -49,7 +49,7 @@ def _make_httpx_input(instructions: str) -> dict:
     }
 
 
-def test_copy_llm_calls_preserves_node_kind_and_input_delta():
+def test_copy_llm_calls_preserves_node_kind_and_prompt_suffix():
     old_run_id = str(uuid.uuid4())
     new_run_id = str(uuid.uuid4())
     node_uuid = str(uuid.uuid4())
@@ -73,7 +73,7 @@ def test_copy_llm_calls_preserves_node_kind_and_input_delta():
         copied = dict(DB.get_llm_call_full(new_run_id, node_uuid))
 
         assert copied["node_kind"] == "tool"
-        assert json.loads(copied["input_delta_json"]) == [{"key": "body.messages.0", "value": "hello"}]
+        assert json.loads(copied["prompt_suffix_json"]) == [{"key": "body.messages.0", "value": "hello"}]
     finally:
         DB.backend.delete_runs_by_ids_query([old_run_id, new_run_id], user_id=None)
         DB._occurrence_counters.clear()
@@ -204,3 +204,33 @@ def test_ensure_prior_schema_drops_legacy_lessons_applied_table():
 
     assert legacy_table is None
     assert prior_table is not None
+
+
+def test_ensure_llm_calls_schema_renames_input_delta_column():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE llm_calls (
+            run_id TEXT,
+            node_uuid TEXT,
+            input TEXT,
+            input_hash TEXT,
+            input_overwrite TEXT,
+            output TEXT,
+            color TEXT,
+            label TEXT,
+            api_type TEXT,
+            node_kind TEXT,
+            input_delta_json TEXT NOT NULL DEFAULT '[]',
+            stack_trace TEXT,
+            timestamp TIMESTAMP
+        )
+        """
+    )
+
+    _ensure_llm_calls_schema(conn)
+
+    columns = [row["name"] for row in conn.execute("PRAGMA table_info(llm_calls)").fetchall()]
+    assert "input_delta_json" not in columns
+    assert "prompt_suffix_json" in columns

@@ -74,7 +74,7 @@ def test_prepare_llm_call_for_priors_strips_manual_priors_and_retrieves_on_suffi
     executed_flattened = flatten_complete_to_show(executed_payload["to_show"])
     executed_flattened = flatten_complete_to_show(executed_payload["to_show"])
 
-    assert json.loads(result.input_delta_json) == [{"key": "body.instructions", "value": "New ask"}]
+    assert json.loads(result.prompt_suffix_json) == [{"key": "body.instructions", "value": "New ask"}]
     assert result.metadata.status == "applied"
     assert result.metadata.inherited_prior_ids == ["p-old"]
     assert result.metadata.model == "qwen3.5"
@@ -138,7 +138,7 @@ def test_prepare_llm_call_for_priors_replays_cached_prefix_and_retrieves_only_su
     executed_payload = json.loads(func_kwargs_to_json_str(result.executed_input_dict, "httpx.Client.send")[0])
     executed_flattened = flatten_complete_to_show(executed_payload["to_show"])
 
-    assert json.loads(result.input_delta_json) == [
+    assert json.loads(result.prompt_suffix_json) == [
         {"key": "body.messages.2.content", "value": "Answer"}
     ]
     assert result.metadata.status == "none"
@@ -150,3 +150,32 @@ def test_prepare_llm_call_for_priors_replays_cached_prefix_and_retrieves_only_su
         "/internal/priors/retrieve",
         "/internal/priors/prefix-cache/store",
     ]
+
+
+def test_prepare_llm_call_for_priors_skips_automation_for_manual_priors(monkeypatch):
+    manual_input = _make_responses_input(
+        "<sovara-priors>\n"
+        '<!-- {"manual":true,"priors":[{"id":"p1"}]} -->\n'
+        "## Retry\nRetry once.\n"
+        "</sovara-priors>\n\n"
+        "Answer briefly."
+    )
+
+    monkeypatch.setattr(priors_runtime, "get_run_id", lambda: "run-123")
+
+    def fail_http_post(endpoint, data, timeout=None):
+        raise AssertionError(f"Unexpected endpoint: {endpoint}")
+
+    monkeypatch.setattr(priors_runtime, "http_post", fail_http_post)
+
+    result = priors_runtime.prepare_llm_call_for_priors(manual_input, "httpx.Client.send")
+    executed_payload = json.loads(func_kwargs_to_json_str(result.executed_input_dict, "httpx.Client.send")[0])
+
+    assert result.metadata.status == "manual"
+    assert result.metadata.inherited_prior_ids == []
+    assert result.metadata.warning_message == (
+        "Detected a manual <sovara-priors> block; skipped automated priors retrieval."
+    )
+    assert json.loads(result.prompt_suffix_json) == []
+    assert executed_payload["to_show"]["body.instructions"].startswith("<sovara-priors>")
+    assert executed_payload["to_show"]["body.instructions"].endswith("Answer briefly.")

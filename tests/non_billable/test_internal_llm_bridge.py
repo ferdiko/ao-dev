@@ -272,7 +272,6 @@ def test_internal_priors_retrieve_resolves_scope_from_run(monkeypatch):
             json={
                 "run_id": run_id,
                 "context": "body.messages.0.content: retry",
-                "base_path": "ops/",
                 "ignore_prior_ids": ["p1"],
             },
         )
@@ -283,7 +282,6 @@ def test_internal_priors_retrieve_resolves_scope_from_run(monkeypatch):
     assert captured["scope"] == (TEST_USER_ID, TEST_PROJECT_ID)
     assert captured["body"] == {
         "context": "body.messages.0.content: retry",
-        "base_path": "ops/",
         "model": None,
         "ignore_prior_ids": ["p1"],
     }
@@ -317,7 +315,6 @@ def test_internal_priors_prefix_cache_lookup_resolves_scope_from_run(monkeypatch
             "/internal/priors/prefix-cache/lookup",
             json={
                 "run_id": run_id,
-                "base_path": "",
                 "clean_pairs": [{"key": "body.messages.0.content", "value": "Question"}],
             },
         )
@@ -327,7 +324,6 @@ def test_internal_priors_prefix_cache_lookup_resolves_scope_from_run(monkeypatch
     assert response.status_code == 200
     assert captured["scope"] == (TEST_USER_ID, TEST_PROJECT_ID)
     assert captured["body"] == {
-        "base_path": "",
         "clean_pairs": [{"key": "body.messages.0.content", "value": "Question"}],
     }
 
@@ -360,7 +356,6 @@ def test_internal_priors_prefix_cache_store_resolves_scope_from_run(monkeypatch)
             "/internal/priors/prefix-cache/store",
             json={
                 "run_id": run_id,
-                "base_path": "",
                 "clean_pairs": [{"key": "body.messages.0.content", "value": "Question"}],
                 "injected_pairs": [{"key": "body.messages.0.content", "value": "<sovara-priors>...</sovara-priors>\n\nQuestion"}],
                 "prior_ids": ["p1"],
@@ -372,7 +367,6 @@ def test_internal_priors_prefix_cache_store_resolves_scope_from_run(monkeypatch)
     assert response.status_code == 200
     assert captured["scope"] == (TEST_USER_ID, TEST_PROJECT_ID)
     assert captured["body"] == {
-        "base_path": "",
         "clean_pairs": [{"key": "body.messages.0.content", "value": "Question"}],
         "injected_pairs": [{"key": "body.messages.0.content", "value": "<sovara-priors>...</sovara-priors>\n\nQuestion"}],
         "prior_ids": ["p1"],

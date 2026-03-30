@@ -1,6 +1,4 @@
 """Runtime priors helpers and the legacy manual priors injection API."""
-
-from copy import deepcopy
 from dataclasses import dataclass, field
 import json
 import time
@@ -16,10 +14,10 @@ from sovara.common.utils import http_post
 from sovara.runner.context_manager import get_run_id
 from sovara.runner.monkey_patching.api_parser import (
     func_kwargs_to_json_str,
-    json_str_to_original_inp_dict,
-    merge_filtered_into_raw,
+    replace_to_show_in_input_dict,
 )
 from sovara.runner.priors_pipeline import (
+    detect_manual_priors_reason,
     extract_prompt_bearing_pairs,
     flatten_complete_to_show,
     inject_priors_block,
@@ -38,23 +36,49 @@ _INTERNAL_PREFIX_CACHE_HTTP_TIMEOUT_S = (_INTERNAL_PREFIX_CACHE_TIMEOUT_MS / 100
 
 @dataclass(slots=True)
 class PriorRuntimeMetadata:
+    """Priors-sidecar metadata for one prepared LLM call.
+
+    `status` is a coarse runtime/debug label for the preparation outcome.
+    `injection_anchor` is the prompt-bearing key where newly retrieved priors
+    would be injected for this node's suffix, if any.
+    `warning_message` captures non-fatal cleanup/strip warnings.
+    `retrieval_context` is the rendered suffix context sent to the retriever.
+    `inherited_prior_ids` are priors recovered from stripped manual blocks or
+    prefix-cache replay.
+    `newly_applied_priors` are only the priors freshly retrieved for this node.
+    `rendered_priors_block` is the exact block injected for those fresh priors.
+    `model` is the retriever model actually used.
+    `timeout_ms` is the fixed internal priors-route timeout.
+    `latency_ms` is populated only when a retrieval request is made.
+    `error_message` captures fatal retrieval/preparation failures.
+    """
+
     status: str
+    injection_anchor: dict[str, Any] | None
+    warning_message: str | None
     retrieval_context: str = ""
     inherited_prior_ids: list[str] = field(default_factory=list)
     newly_applied_priors: list[dict[str, Any]] = field(default_factory=list)
     rendered_priors_block: str = ""
-    injection_anchor: dict[str, Any] | None = None
     model: str | None = None
-    timeout_ms: int = _INTERNAL_PRIORS_TIMEOUT_MS
+    timeout_ms: int = field(default=_INTERNAL_PRIORS_TIMEOUT_MS, init=False)
     latency_ms: int | None = None
-    warning_message: str | None = None
     error_message: str | None = None
 
 
 @dataclass(slots=True)
 class PriorPreparationResult:
+    """Prepared priors artifacts returned to a transport patch.
+
+    `executed_input_dict` is the final outbound payload that should be sent to
+    the provider after stripping, replaying, and injecting priors.
+    `prompt_suffix_json` is the JSON-serialized unmatched prompt-bearing suffix
+    for this node, which is stored for observability on the captured LLM call.
+    `metadata` is the priors retrieval/replay sidecar persisted separately.
+    """
+
     executed_input_dict: dict[str, Any]
-    input_delta_json: str
+    prompt_suffix_json: str
     metadata: PriorRuntimeMetadata
 
 
@@ -67,6 +91,7 @@ def _runtime_log(level: str, message: str, **details: Any) -> None:
         log_method(message)
 
 def _unique_prior_ids(prior_ids: list[str]) -> list[str]:
+    # Preserve first-seen order so replayed/inherited priors stay stable.
     ordered_unique: list[str] = []
     for prior_id in prior_ids:
         if prior_id and prior_id not in ordered_unique:
@@ -85,7 +110,6 @@ def _lookup_longest_prefix_cache_hit(
             "/internal/priors/prefix-cache/lookup",
             {
                 "run_id": run_id,
-                "base_path": "",
                 "clean_pairs": clean_pairs,
             },
             timeout=_INTERNAL_PREFIX_CACHE_HTTP_TIMEOUT_S,
@@ -115,10 +139,9 @@ def _store_prefix_cache_entry(
             "/internal/priors/prefix-cache/store",
             {
                 "run_id": run_id,
-                "base_path": "",
                 "clean_pairs": clean_pairs,
                 "injected_pairs": injected_pairs,
-                "prior_ids": _unique_prior_ids(prior_ids),
+                "prior_ids": prior_ids,
             },
             timeout=_INTERNAL_PREFIX_CACHE_HTTP_TIMEOUT_S,
         )
@@ -134,34 +157,40 @@ def _append_message(existing: str | None, new_message: str | None) -> str | None
     return f"{existing}\n{new_message}"
 
 
-def _apply_flattened_to_input_dict(
-    input_dict: dict[str, Any],
-    api_type: str,
-    flattened_to_show: dict[str, Any],
-) -> dict[str, Any]:
-    try:
-        cloned_input_dict = deepcopy(input_dict)
-    except Exception:
-        import dill
-
-        cloned_input_dict = dill.loads(dill.dumps(input_dict))
-
-    complete_json_str, _ = func_kwargs_to_json_str(cloned_input_dict, api_type)
-    complete_input = json.loads(complete_json_str)
-    restored_to_show = restore_to_show_from_flattened(flattened_to_show)
-    merged_raw = merge_filtered_into_raw(complete_input["raw"], restored_to_show)
-    wrapped = json.dumps({"raw": merged_raw, "to_show": restored_to_show}, sort_keys=True)
-    return json_str_to_original_inp_dict(wrapped, cloned_input_dict, api_type)
-
-
 def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> PriorPreparationResult:
     run_id = get_run_id()
     complete_json_str, _ = func_kwargs_to_json_str(input_dict, api_type)
     complete_input = json.loads(complete_json_str)
     flattened_to_show = flatten_complete_to_show(complete_input.get("to_show"))
+    manual_priors_reason = detect_manual_priors_reason(flattened_to_show)
+    if manual_priors_reason is not None:
+        metadata = PriorRuntimeMetadata(
+            status="manual",
+            retrieval_context="",
+            inherited_prior_ids=[],
+            injection_anchor=None,
+            warning_message=manual_priors_reason,
+        )
+        _runtime_log(
+            "info",
+            "[PRIORS RUNTIME] skipping retrieval",
+            status="manual",
+            api_type=api_type,
+            warning=manual_priors_reason,
+        )
+        return PriorPreparationResult(
+            executed_input_dict=input_dict,
+            prompt_suffix_json="[]",
+            metadata=metadata,
+        )
+
     cleaned_flattened, inherited_prior_ids, warnings = strip_priors_from_flattened(flattened_to_show)
 
-    cleaned_input_dict = _apply_flattened_to_input_dict(input_dict, api_type, cleaned_flattened)
+    cleaned_input_dict = replace_to_show_in_input_dict(
+        input_dict,
+        api_type,
+        restore_to_show_from_flattened(cleaned_flattened),
+    )
     clean_prompt_pairs = extract_prompt_bearing_pairs(cleaned_flattened, api_type)
 
     prefix_entry = None
@@ -179,7 +208,7 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
             )
 
     suffix_pairs = clean_prompt_pairs[matched_prefix_len:]
-    input_delta_json = json.dumps(suffix_pairs, sort_keys=True)
+    prompt_suffix_json = json.dumps(suffix_pairs, sort_keys=True)
     retrieval_context = render_retrieval_context(suffix_pairs)
 
     metadata = PriorRuntimeMetadata(
@@ -217,7 +246,7 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
         )
         return PriorPreparationResult(
             executed_input_dict=cleaned_input_dict,
-            input_delta_json=input_delta_json,
+            prompt_suffix_json=prompt_suffix_json,
             metadata=metadata,
         )
 
@@ -225,7 +254,11 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
 
     if not suffix_pairs:
         metadata.status = "none"
-        executed_input_dict = _apply_flattened_to_input_dict(cleaned_input_dict, api_type, executed_flattened)
+        executed_input_dict = replace_to_show_in_input_dict(
+            cleaned_input_dict,
+            api_type,
+            restore_to_show_from_flattened(executed_flattened),
+        )
         _store_prefix_cache_entry(
             run_id,
             clean_prompt_pairs,
@@ -240,13 +273,17 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
         )
         return PriorPreparationResult(
             executed_input_dict=executed_input_dict,
-            input_delta_json=input_delta_json,
+            prompt_suffix_json=prompt_suffix_json,
             metadata=metadata,
         )
 
     if not retrieval_context.strip():
         metadata.status = "empty_context"
-        executed_input_dict = _apply_flattened_to_input_dict(cleaned_input_dict, api_type, executed_flattened)
+        executed_input_dict = replace_to_show_in_input_dict(
+            cleaned_input_dict,
+            api_type,
+            restore_to_show_from_flattened(executed_flattened),
+        )
         _store_prefix_cache_entry(
             run_id,
             clean_prompt_pairs,
@@ -261,7 +298,7 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
         )
         return PriorPreparationResult(
             executed_input_dict=executed_input_dict,
-            input_delta_json=input_delta_json,
+            prompt_suffix_json=prompt_suffix_json,
             metadata=metadata,
         )
 
@@ -276,8 +313,12 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
             error=metadata.error_message,
         )
         return PriorPreparationResult(
-            executed_input_dict=_apply_flattened_to_input_dict(cleaned_input_dict, api_type, executed_flattened),
-            input_delta_json=input_delta_json,
+            executed_input_dict=replace_to_show_in_input_dict(
+                cleaned_input_dict,
+                api_type,
+                restore_to_show_from_flattened(executed_flattened),
+            ),
+            prompt_suffix_json=prompt_suffix_json,
             metadata=metadata,
         )
 
@@ -294,7 +335,6 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
             {
                 "run_id": run_id,
                 "context": retrieval_context,
-                "base_path": "",
                 "ignore_prior_ids": inherited_prior_ids,
             },
             timeout=_INTERNAL_PRIORS_HTTP_TIMEOUT_S,
@@ -313,7 +353,11 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
             model=metadata.model,
         )
 
-        executed_input_dict = _apply_flattened_to_input_dict(cleaned_input_dict, api_type, executed_flattened)
+        executed_input_dict = replace_to_show_in_input_dict(
+            cleaned_input_dict,
+            api_type,
+            restore_to_show_from_flattened(executed_flattened),
+        )
         if metadata.rendered_priors_block:
             injected_flattened = inject_priors_block(
                 executed_flattened,
@@ -321,7 +365,11 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
                 metadata.injection_anchor or {"key": suffix_pairs[0]["key"]},
             )
             executed_flattened = injected_flattened
-            executed_input_dict = _apply_flattened_to_input_dict(cleaned_input_dict, api_type, injected_flattened)
+            executed_input_dict = replace_to_show_in_input_dict(
+                cleaned_input_dict,
+                api_type,
+                restore_to_show_from_flattened(injected_flattened),
+            )
         effective_prior_ids = _unique_prior_ids(
             inherited_prior_ids + [
                 str(prior.get("id"))
@@ -338,7 +386,7 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
 
         return PriorPreparationResult(
             executed_input_dict=executed_input_dict,
-            input_delta_json=input_delta_json,
+            prompt_suffix_json=prompt_suffix_json,
             metadata=metadata,
         )
     except httpx.TimeoutException as exc:
@@ -364,7 +412,11 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
         metadata.error_message = str(exc)
         _runtime_log("error", "[PRIORS RUNTIME] retrieval failed unexpectedly", error=metadata.error_message)
 
-    executed_input_dict = _apply_flattened_to_input_dict(cleaned_input_dict, api_type, executed_flattened)
+    executed_input_dict = replace_to_show_in_input_dict(
+        cleaned_input_dict,
+        api_type,
+        restore_to_show_from_flattened(executed_flattened),
+    )
     _store_prefix_cache_entry(
         run_id,
         clean_prompt_pairs,
@@ -373,7 +425,7 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
     )
     return PriorPreparationResult(
         executed_input_dict=executed_input_dict,
-        input_delta_json=input_delta_json,
+        prompt_suffix_json=prompt_suffix_json,
         metadata=metadata,
     )
 
@@ -434,8 +486,21 @@ def _format_priors(priors: List[dict]) -> str:
     """Format priors into an injectable context block."""
     if not priors:
         return ""
+    manifest = {
+        "manual": True,
+        "priors": [
+            {"id": prior["id"]}
+            for prior in priors
+            if prior.get("id")
+        ],
+    }
     blocks = [f"## {prior['name']}\n{prior['content']}" for prior in priors]
-    return "<priors>\n" + "\n\n".join(blocks) + "\n</priors>"
+    return (
+        "<sovara-priors>\n"
+        f"<!-- {json.dumps(manifest, separators=(',', ':'))} -->\n"
+        + "\n\n".join(blocks)
+        + "\n</sovara-priors>"
+    )
 
 
 def _track_priors(prior_ids: List[str]) -> None:

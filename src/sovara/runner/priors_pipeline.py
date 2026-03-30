@@ -88,6 +88,31 @@ def parse_inherited_prior_ids(value: str) -> tuple[list[str], list[str]]:
     return inherited_prior_ids, warnings
 
 
+def detect_manual_priors_reason(flattened_to_show: dict[str, Any]) -> str | None:
+    """Return a reason when the payload contains user-managed priors blocks."""
+    for value in flattened_to_show.values():
+        if not isinstance(value, str):
+            continue
+        if "<sovara-priors>" not in value:
+            continue
+
+        for block_match in _PRIORS_BLOCK_RE.finditer(value):
+            block = block_match.group(0)
+            manifest_match = _MANIFEST_RE.search(block)
+            if not manifest_match:
+                return "Detected a manual <sovara-priors> block without a manifest; skipped automated priors retrieval."
+            try:
+                manifest = json.loads(manifest_match.group(1))
+            except json.JSONDecodeError:
+                return "Detected a manual <sovara-priors> block with an invalid manifest; skipped automated priors retrieval."
+            if manifest.get("manual") is True:
+                return "Detected a manual <sovara-priors> block; skipped automated priors retrieval."
+            if not isinstance(manifest.get("priors"), list):
+                return "Detected a manual <sovara-priors> block with a malformed manifest payload; skipped automated priors retrieval."
+
+    return None
+
+
 def strip_priors_from_flattened(flattened_to_show: dict[str, Any]) -> tuple[dict[str, Any], list[str], list[str]]:
     """Strip priors blocks from every string value in a flattened mapping."""
     cleaned = dict(flattened_to_show)

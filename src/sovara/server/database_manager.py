@@ -52,6 +52,8 @@ class CacheOutput:
         input_hash: Hash of the input for efficient cache lookups
         run_id: The run ID associated with this cache operation
         stack_trace: Python stack trace at the point of the LLM call
+        prompt_suffix_json: Serialized unmatched prompt-bearing suffix stored on
+            the LLM call for priors observability
     """
 
     input_dict: dict
@@ -62,7 +64,7 @@ class CacheOutput:
     run_id: str
     stack_trace: Optional[str] = None
     node_kind: Optional[str] = None
-    input_delta_json: str = "[]"
+    prompt_suffix_json: str = "[]"
     prior_result: Any = None
 
 
@@ -704,7 +706,7 @@ class DatabaseManager:
                 run_id=run_id,
                 stack_trace=stack_trace,
                 node_kind=node_kind,
-                input_delta_json=prior_result.input_delta_json if prior_result is not None else "[]",
+                prompt_suffix_json=prior_result.prompt_suffix_json if prior_result is not None else "[]",
                 prior_result=prior_result,
             )
 
@@ -734,7 +736,7 @@ class DatabaseManager:
             run_id=run_id,
             stack_trace=stack_trace,
             node_kind=node_kind,
-            input_delta_json=prior_result.input_delta_json if prior_result is not None else "[]",
+            prompt_suffix_json=prior_result.prompt_suffix_json if prior_result is not None else "[]",
             prior_result=prior_result,
         )
 
@@ -763,7 +765,7 @@ class DatabaseManager:
                 output_json_str,
                 cache_result.stack_trace,
                 cache_result.node_kind,
-                cache_result.input_delta_json,
+                cache_result.prompt_suffix_json,
             )
             self.checkpoint_active_runtime(cache_result.run_id)
         else:
