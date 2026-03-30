@@ -346,14 +346,10 @@ def send_graph_node_and_edges(
     output_obj,
     source_node_ids,
     api_type,
-    stack_trace=None,
+    stack_trace,
     prior_count=None,
 ):
     """Send graph node and edge updates to the server."""
-    # Use provided stack_trace or capture a new one
-    if stack_trace is None:
-        stack_trace = capture_stack_trace()
-
     # Import here to avoid circular import
     from sovara.runner.monkey_patching.api_parser import func_kwargs_to_json_str, api_obj_to_json_str
 

@@ -65,6 +65,7 @@ def patch_mcp_send_request(bound_obj, bound_cls):
             source_node_ids=source_node_ids,
             api_type=api_type,
             stack_trace=cache_output.stack_trace,
+            prior_count=None,
         )
 
         return cache_output.output
