@@ -287,3 +287,179 @@ def test_internal_priors_retrieve_resolves_scope_from_run(monkeypatch):
         "model": None,
         "ignore_prior_ids": ["p1"],
     }
+
+
+def test_internal_priors_prefix_cache_lookup_resolves_scope_from_run(monkeypatch):
+    run_id = str(uuid.uuid4())
+    DB.add_run(
+        run_id=run_id,
+        name="Prefix Lookup",
+        timestamp=datetime.now(timezone.utc),
+        cwd="/tmp",
+        command="python -m test.workflow",
+        environment={},
+        project_id=TEST_PROJECT_ID,
+        user_id=TEST_USER_ID,
+    )
+
+    captured = {}
+
+    def fake_lookup_prefix_cache(self, body):
+        captured["scope"] = (self.user_id, self.project_id)
+        captured["body"] = body
+        return {"found": True, "matched_pair_count": 1, "injected_pairs": body["clean_pairs"], "prior_ids": ["p1"]}
+
+    monkeypatch.setattr("sovara.server.priors_client.PriorsBackendClient.lookup_prefix_cache", fake_lookup_prefix_cache)
+    client = _make_internal_test_client()
+
+    try:
+        response = client.post(
+            "/internal/priors/prefix-cache/lookup",
+            json={
+                "run_id": run_id,
+                "base_path": "",
+                "clean_pairs": [{"key": "body.messages.0.content", "value": "Question"}],
+            },
+        )
+    finally:
+        DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
+
+    assert response.status_code == 200
+    assert captured["scope"] == (TEST_USER_ID, TEST_PROJECT_ID)
+    assert captured["body"] == {
+        "base_path": "",
+        "clean_pairs": [{"key": "body.messages.0.content", "value": "Question"}],
+    }
+
+
+def test_internal_priors_prefix_cache_store_resolves_scope_from_run(monkeypatch):
+    run_id = str(uuid.uuid4())
+    DB.add_run(
+        run_id=run_id,
+        name="Prefix Store",
+        timestamp=datetime.now(timezone.utc),
+        cwd="/tmp",
+        command="python -m test.workflow",
+        environment={},
+        project_id=TEST_PROJECT_ID,
+        user_id=TEST_USER_ID,
+    )
+
+    captured = {}
+
+    def fake_store_prefix_cache(self, body):
+        captured["scope"] = (self.user_id, self.project_id)
+        captured["body"] = body
+        return {"stored": True}
+
+    monkeypatch.setattr("sovara.server.priors_client.PriorsBackendClient.store_prefix_cache", fake_store_prefix_cache)
+    client = _make_internal_test_client()
+
+    try:
+        response = client.post(
+            "/internal/priors/prefix-cache/store",
+            json={
+                "run_id": run_id,
+                "base_path": "",
+                "clean_pairs": [{"key": "body.messages.0.content", "value": "Question"}],
+                "injected_pairs": [{"key": "body.messages.0.content", "value": "<sovara-priors>...</sovara-priors>\n\nQuestion"}],
+                "prior_ids": ["p1"],
+            },
+        )
+    finally:
+        DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
+
+    assert response.status_code == 200
+    assert captured["scope"] == (TEST_USER_ID, TEST_PROJECT_ID)
+    assert captured["body"] == {
+        "base_path": "",
+        "clean_pairs": [{"key": "body.messages.0.content", "value": "Question"}],
+        "injected_pairs": [{"key": "body.messages.0.content", "value": "<sovara-priors>...</sovara-priors>\n\nQuestion"}],
+        "prior_ids": ["p1"],
+    }
+
+
+def test_internal_priors_resolve_anchor_returns_valid_candidate(monkeypatch):
+    captured = {}
+
+    class FakeLogger:
+        def warning(self, message, *args):
+            captured["warning"] = message % args if args else message
+
+        def info(self, message, *args):
+            captured["info"] = message % args if args else message
+
+    def fake_infer_structured_json(messages, model, tier="expensive", response_format=None, repair_attempts=1, **kwargs):
+        assert tier == "cheap"
+        assert response_format is not None
+        assert "Candidate string keys with previews" in messages[-1]["content"]
+        return {
+            "raw_text": '{"found":true,"anchor_key":"body.prompt_text","reason":"Primary prompt field."}',
+            "parsed": {
+                "found": True,
+                "anchor_key": "body.prompt_text",
+                "reason": "Primary prompt field.",
+            },
+            "structured_mode": "local_parse",
+            "model_used": model,
+        }
+
+    monkeypatch.setattr("sovara.server.routes.internal.infer_structured_json", fake_infer_structured_json)
+    monkeypatch.setattr("sovara.server.routes.internal.main_server_logger", FakeLogger())
+    client = _make_internal_test_client()
+
+    response = client.post(
+        "/internal/priors/resolve-anchor",
+        json={
+            "api_type": "httpx.Client.send",
+            "available_keys": ["body.prompt_text", "body.model", "url"],
+            "candidate_previews": {
+                "body.prompt_text": "Should uniforms be required?",
+                "body.model": "gpt-4o-mini",
+                "url": "https://api.example.com/v1/custom",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "found": True,
+        "anchor_key": "body.prompt_text",
+        "reason": "Primary prompt field.",
+        "model_used": "openai/gpt-5.4",
+        "structured_mode": "local_parse",
+    }
+    assert "available_keys" in captured["warning"]
+    assert "body.prompt_text" in captured["warning"]
+    assert "anchor_key=body.prompt_text" in captured["info"]
+
+
+def test_internal_priors_resolve_anchor_rejects_model_invented_key(monkeypatch):
+    def fake_infer_structured_json(*args, **kwargs):
+        return {
+            "raw_text": '{"found":true,"anchor_key":"body.made_up","reason":"Guess"}',
+            "parsed": {
+                "found": True,
+                "anchor_key": "body.made_up",
+                "reason": "Guess",
+            },
+            "structured_mode": "local_parse",
+            "model_used": "openai/gpt-5.4",
+        }
+
+    monkeypatch.setattr("sovara.server.routes.internal.infer_structured_json", fake_infer_structured_json)
+    client = _make_internal_test_client()
+
+    response = client.post(
+        "/internal/priors/resolve-anchor",
+        json={
+            "api_type": "httpx.Client.send",
+            "available_keys": ["body.prompt_text"],
+            "candidate_previews": {"body.prompt_text": "Prompt"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["found"] is False
+    assert response.json()["anchor_key"] == ""
+    assert "unsupported anchor key" in response.json()["reason"]

@@ -13,6 +13,7 @@ from sovara.server.state import ServerState, logger
 from sovara.server.database_manager import DB, BadRequestError, ResourceNotFoundError
 from sovara.server.priors_client import PriorsBackendClient, PriorsBackendError
 from sovara.server.graph_models import RunGraph
+from sovara.server.prior_display import attach_ui_prior_counts, build_ui_prior_records
 from sovara.common.user import read_user_id, write_user_id
 from sovara.common.project import find_project_root, read_project_id, write_project_id, delete_project_configs
 from sovara.server.handlers.ui_handlers import (
@@ -115,15 +116,17 @@ def _attach_prior_metadata_to_graph(run_id: str, graph: RunGraph) -> RunGraph:
     prior_rows = DB.get_prior_retrievals_for_run(run_id)
     if not prior_rows:
         return graph
+    return attach_ui_prior_counts(graph, prior_rows)
 
-    by_node_uuid = {row["node_uuid"]: row for row in prior_rows}
-    for node in graph.nodes:
-        prior_row = by_node_uuid.get(node.uuid)
-        if prior_row is None:
-            continue
-        node.prior_status = prior_row["status"]
-        node.prior_count = len(prior_row["applied_priors"])
-    return graph
+
+def _get_ui_prior_records(run_id: str, graph: RunGraph | None = None) -> dict[str, dict]:
+    prior_rows = DB.get_prior_retrievals_for_run(run_id)
+    if not prior_rows:
+        return {}
+    if graph is None:
+        row = DB.get_run_metadata(run_id)
+        graph = RunGraph.from_json_string(row["graph_topology"] if row else None)
+    return build_ui_prior_records(graph, prior_rows)
 
 
 # ============================================================
@@ -837,11 +840,27 @@ def get_node_prior_retrieval(run_id: str, node_uuid: str):
             ResourceNotFoundError(f"Node not found for run_id={run_id}, node_uuid={node_uuid}.")
         )
 
+    graph_row = DB.get_run_metadata(run_id)
+    graph = RunGraph.from_json_string(graph_row["graph_topology"] if graph_row else None)
+    ui_records = _get_ui_prior_records(run_id, graph=graph)
+
     return {
         "type": "prior_retrieval",
         "run_id": run_id,
         "node_uuid": node_uuid,
-        "record": DB.get_prior_retrieval(run_id, node_uuid),
+        "record": ui_records.get(node_uuid) or DB.get_prior_retrieval(run_id, node_uuid),
+    }
+
+
+@router.get("/run/{run_id}/prior-retrievals")
+def get_run_prior_retrievals(run_id: str):
+    row = DB.get_run_metadata(run_id)
+    graph = RunGraph.from_json_string(row["graph_topology"] if row else None)
+    return {
+        "type": "prior_retrievals",
+        "run_id": run_id,
+        "records": list(_get_ui_prior_records(run_id, graph=graph).values())
+        or DB.get_prior_retrievals_for_run(run_id),
     }
 
 

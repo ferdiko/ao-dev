@@ -19,7 +19,6 @@ class IncomingNode:
     stack_trace: str | None = None
     model: str | None = None
     node_kind: str | None = None
-    prior_status: str | None = None
     prior_count: int | None = None
     name: str | None = None
     attachments: list[str] | None = None
@@ -35,7 +34,6 @@ class IncomingNode:
             stack_trace=None if data.get("stack_trace") is None else str(data["stack_trace"]),
             model=None if data.get("model") is None else str(data["model"]),
             node_kind=None if data.get("node_kind") is None else str(data["node_kind"]),
-            prior_status=None if data.get("prior_status") is None else str(data["prior_status"]),
             prior_count=None if data.get("prior_count") is None else int(data["prior_count"]),
             name=None if data.get("name") is None else str(data["name"]),
             attachments=list(data.get("attachments") or []),
@@ -55,7 +53,6 @@ class GraphNode:
     stack_trace: str | None = None
     model: str | None = None
     node_kind: str | None = None
-    prior_status: str | None = None
     prior_count: int | None = None
     name: str | None = None
     attachments: list[str] | None = None
@@ -72,7 +69,6 @@ class GraphNode:
             stack_trace=node.stack_trace,
             model=node.model,
             node_kind=node.node_kind,
-            prior_status=node.prior_status,
             prior_count=node.prior_count,
             name=node.name,
             attachments=node.attachments,
@@ -90,7 +86,6 @@ class GraphNode:
             stack_trace=None if data.get("stack_trace") is None else str(data["stack_trace"]),
             model=None if data.get("model") is None else str(data["model"]),
             node_kind=None if data.get("node_kind") is None else str(data["node_kind"]),
-            prior_status=None if data.get("prior_status") is None else str(data["prior_status"]),
             prior_count=None if data.get("prior_count") is None else int(data["prior_count"]),
             name=None if data.get("name") is None else str(data["name"]),
             attachments=list(data.get("attachments") or []),
@@ -107,13 +102,8 @@ class GraphNode:
             "stack_trace": self.stack_trace,
             "model": self.model,
             "node_kind": self.node_kind,
-            "prior_status": self.prior_status,
             "prior_count": self.prior_count,
             "name": self.name,
-            "model": self.model,
-            "node_kind": self.node_kind,
-            "prior_status": self.prior_status,
-            "prior_count": self.prior_count,
             "attachments": self.attachments or [],
         }
 

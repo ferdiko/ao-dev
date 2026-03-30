@@ -362,7 +362,6 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         data.inputValue,
                         data.outputValue,
                         data.nodeKind,
-                        data.priorStatus,
                         data.priorCount,
                     );
                     break;
@@ -522,7 +521,6 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         inputValue: any,
         outputValue: any,
         nodeKind?: string,
-        priorStatus?: string,
         priorCount?: number,
     ): Promise<void> {
         // Single reusable tab for all node editors (not per-node)
@@ -550,7 +548,6 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                         inputValue,
                         outputValue,
                         nodeKind,
-                        priorStatus,
                         priorCount,
                     }
                 });
@@ -591,7 +588,6 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
             inputValue,
             outputValue,
             nodeKind,
-            priorStatus,
             priorCount,
         );
 
@@ -618,7 +614,6 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
                             inputValue,
                             outputValue,
                             nodeKind,
-                            priorStatus,
                             priorCount,
                         }
                     });
@@ -665,7 +660,6 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         inputValue: any,
         outputValue: any,
         nodeKind?: string,
-        priorStatus?: string,
         priorCount?: number,
     ): string {
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview.js'));
@@ -730,7 +724,6 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
             inputValue: '${escapedInputValue}',
             outputValue: '${escapedOutputValue}',
             nodeKind: ${JSON.stringify(nodeKind || null)},
-            priorStatus: ${JSON.stringify(priorStatus || null)},
             priorCount: ${typeof priorCount === 'number' ? priorCount : 'null'}
         };
     </script>

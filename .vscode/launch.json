@@ -76,6 +76,12 @@
       "name": "so-record",
       "type": "debugpy",
       "request": "launch",
+      // Uses the uv-managed project venv. Install once with:
+      //   uv sync --extra examples
+      // or, if you also want pytest/formatting/etc in the same env:
+      //   uv sync --extra dev --extra examples
+      // No separate debugpy install is needed; it's already a base dependency.
+      "python": "${workspaceFolder}/.venv/bin/python",
       "module": "sovara.cli.so_record",
       // Anthropic examples
       // "args": ["./example_workflows/debug_examples/anthropic/async_debate.py"],
@@ -108,12 +114,12 @@
       // OpenAI examples
       // "args": ["./example_workflows/debug_examples/openai/document_query.py"],
       // "args": ["./example_workflows/debug_examples/openai/chat_async.py"],
-      // "args": ["./example_workflows/debug_examples/openai/debate.py"],
+      "args": ["./example_workflows/debug_examples/openai/debate.py"],
       // "args": ["./example_workflows/debug_examples/openai/async_debate.py"],
       // "args": ["./example_workflows/debug_examples/openai/tool_call.py"],
       // "args": ["./example_workflows/debug_examples/openai/document_reader.py"],
       // "args": ["./example_workflows/debug_examples/openai/document_writer.py"],
-      "args": ["./example_workflows/debug_examples/openai/chat.py"],
+      // "args": ["./example_workflows/debug_examples/openai/chat.py"],
       // "args": ["./example_workflows/debug_examples/openai/async_agents.py"],
       // "args": ["./example_workflows/debug_examples/openai/inline_docs.py"],
       // Subruns examples

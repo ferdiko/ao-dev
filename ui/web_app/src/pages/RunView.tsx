@@ -47,15 +47,24 @@ function LLMNode({ data, selected }: NodeProps) {
     stepId?: number;
     focused?: boolean;
     borderColor?: string;
+    priorCount?: number | null;
   };
+  const priorCount = typeof d.priorCount === "number" ? d.priorCount : 0;
+  const showPriorHeader = priorCount > 0;
+  const priorHeaderLabel = `${priorCount} prior${priorCount === 1 ? "" : "s"}`;
   return (
     <div
-      className={`graph-llm-node${selected ? " selected" : ""}${d.focused ? " focused" : ""}`}
+      className={`graph-llm-node${selected ? " selected" : ""}${d.focused ? " focused" : ""}${showPriorHeader ? " has-prior-header" : ""}`}
       style={d.focused ? { borderColor: "#43884e" } : undefined}
     >
       <Handle type="target" position={Position.Top} id="top" className="graph-handle" />
       <Handle type="target" position={Position.Left} id="left" className="graph-handle graph-handle-side" />
       <Handle type="target" position={Position.Right} id="right" className="graph-handle graph-handle-side" />
+      {showPriorHeader && priorHeaderLabel && (
+        <div className="graph-node-priors-header applied">
+          {priorHeaderLabel}
+        </div>
+      )}
       <div className={`graph-node-title-row${typeof d.stepId === "number" ? " has-step" : ""}`}>
         <div className="graph-node-label">{d.label}</div>
         {typeof d.stepId === "number" && <div className="graph-node-step">{`Step ${d.stepId}`}</div>}
@@ -174,6 +183,7 @@ export function RunView() {
         <Breadcrumb items={[
           { label: "Projects", to: "/" },
           { label: projectName || "Project", to: `/project/${projectId}` },
+          { label: "Runs", to: `/project/${projectId}` },
           { label: tabNames.get(runIds[0]) || runIds[0] || "Run" },
         ]} />
         <RunViewContent
@@ -244,6 +254,7 @@ function RunViewContent({
     handleSaveEdit,
     handleStartEdit,
     loading,
+    priorRetrievalsByNode,
     refreshRunDetail,
     rerunning,
     selectedTags,
@@ -426,6 +437,7 @@ function RunViewContent({
           nodeId: id,
           stepId: node.step_id,
           borderColor: node.border_color,
+          priorCount: node.prior_count,
         },
       };
     }).filter(Boolean) as Node[];
@@ -590,6 +602,7 @@ function RunViewContent({
             {hasGraph ? (
               <RunTraceFlow
                 nodes={orderedGraphNodes}
+                priorRetrievalsByNode={priorRetrievalsByNode}
                 viewMode={viewMode}
                 focusedNodeId={focusedNodeId}
                 nodeRefs={nodeRefs}

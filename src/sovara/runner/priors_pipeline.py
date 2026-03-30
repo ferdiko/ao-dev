@@ -1,4 +1,4 @@
-"""Helpers for strip/delta/retrieve/inject over fully flattened ``to_show`` payloads."""
+"""Helpers for strip/retrieve/inject over fully flattened ``to_show`` payloads."""
 
 from __future__ import annotations
 
@@ -19,15 +19,17 @@ _PREFERRED_EXACT_ANCHORS = [
     "system",
     "body.instructions",
     "instructions",
+    "body.input",
+    "input",
 ]
-_FALLBACK_ANCHOR_PATTERNS = [
-    re.compile(r"^body\.messages\.0\.content$"),
-    re.compile(r"^messages\.0\.content$"),
-    re.compile(r"^body\.input\.0\.content\.0\.text$"),
-    re.compile(r"^input\.0\.content\.0\.text$"),
-    re.compile(r"^system_instruction\.parts\.0\.text$"),
-    re.compile(r"^systemInstruction\.parts\.0\.text$"),
-    re.compile(r"^contents\.0\.parts\.0\.text$"),
+_PROMPT_BEARING_PATTERNS = [
+    re.compile(r"^body\.messages\.\d+\.content$"),
+    re.compile(r"^messages\.\d+\.content$"),
+    re.compile(r"^body\.input\.\d+\.content\.\d+\.text$"),
+    re.compile(r"^input\.\d+\.content\.\d+\.text$"),
+    re.compile(r"^system_instruction\.parts\.\d+\.text$"),
+    re.compile(r"^systemInstruction\.parts\.\d+\.text$"),
+    re.compile(r"^contents\.\d+\.parts\.\d+\.text$"),
 ]
 
 
@@ -109,33 +111,55 @@ def strip_priors_from_flattened(flattened_to_show: dict[str, Any]) -> tuple[dict
     return cleaned, inherited_prior_ids, warnings
 
 
-def _value_fingerprint(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, ensure_ascii=False)
+def _flattened_key_sort_key(key: str) -> tuple[Any, ...]:
+    parts: list[Any] = []
+    for segment in key.split("."):
+        if segment.isdigit():
+            parts.append(int(segment))
+        else:
+            parts.append(segment)
+    return tuple(parts)
 
 
-def build_input_delta(
-    current_flattened_to_show: dict[str, Any],
-    parent_flattened_to_shows: list[dict[str, Any]] | None = None,
-) -> list[dict[str, Any]]:
-    """Return entries whose values do not already appear anywhere in parent contexts."""
-    parent_flattened_to_shows = parent_flattened_to_shows or []
-    seen_parent_values = {
-        _value_fingerprint(value)
-        for parent in parent_flattened_to_shows
-        for value in parent.values()
-    }
+def extract_prompt_bearing_keys(flattened_to_show: dict[str, Any], api_type: str) -> list[str]:
+    """Return the ordered prompt-bearing keys for a flattened ``to_show`` payload."""
+    del api_type  # keyed off normalized ``to_show`` keys in v1.
 
-    delta_entries: list[dict[str, Any]] = []
-    for key, value in current_flattened_to_show.items():
-        if _value_fingerprint(value) in seen_parent_values:
-            continue
-        delta_entries.append({"key": key, "value": value})
+    ordered_keys: list[str] = []
+    seen: set[str] = set()
 
-    return delta_entries
+    for key in _PREFERRED_EXACT_ANCHORS:
+        value = flattened_to_show.get(key)
+        if isinstance(value, str):
+            ordered_keys.append(key)
+            seen.add(key)
+
+    string_keys = sorted(
+        (
+            key
+            for key, value in flattened_to_show.items()
+            if isinstance(value, str) and key not in seen
+        ),
+        key=_flattened_key_sort_key,
+    )
+    for key in string_keys:
+        if any(pattern.match(key) for pattern in _PROMPT_BEARING_PATTERNS):
+            ordered_keys.append(key)
+            seen.add(key)
+
+    return ordered_keys
+
+
+def extract_prompt_bearing_pairs(flattened_to_show: dict[str, Any], api_type: str) -> list[dict[str, str]]:
+    """Return ordered prompt-bearing ``(key, value)`` pairs for matching and replay."""
+    return [
+        {"key": key, "value": flattened_to_show[key]}
+        for key in extract_prompt_bearing_keys(flattened_to_show, api_type)
+    ]
 
 
 def render_retrieval_context(input_delta: list[dict[str, Any]]) -> str:
-    """Serialize delta entries into the retriever-facing context string."""
+    """Serialize prompt-bearing suffix entries into the retriever-facing context string."""
     lines: list[str] = []
     for entry in input_delta:
         value = entry.get("value")
@@ -147,25 +171,18 @@ def render_retrieval_context(input_delta: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def resolve_injection_anchor(flattened_to_show: dict[str, Any], api_type: str) -> dict[str, Any] | None:
-    """Resolve a provider-approved prompt-bearing anchor from flattened ``to_show`` keys."""
-    del api_type  # Anchor selection is keyed off normalized ``to_show`` keys in v1.
-
-    for key in _PREFERRED_EXACT_ANCHORS:
-        value = flattened_to_show.get(key)
-        if isinstance(value, str):
-            return {"key": key}
-
-    string_keys = sorted(
-        key for key, value in flattened_to_show.items()
-        if isinstance(value, str)
-    )
-    for pattern in _FALLBACK_ANCHOR_PATTERNS:
-        for key in string_keys:
-            if pattern.match(key):
-                return {"key": key}
-
-    return None
+def replay_injected_prefix(
+    flattened_to_show: dict[str, Any],
+    injected_prefix_pairs: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Replay a cached injected prompt prefix onto a clean flattened mapping."""
+    updated = dict(flattened_to_show)
+    for pair in injected_prefix_pairs:
+        key = pair.get("key")
+        value = pair.get("value")
+        if isinstance(key, str) and isinstance(value, str):
+            updated[key] = value
+    return updated
 
 
 def inject_priors_block(

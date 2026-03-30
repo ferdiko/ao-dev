@@ -26,15 +26,32 @@ class PriorsBackendClient:
             "x-sovara-project-id": self.project_id,
         }
 
+    def _ensure_backend_running(self) -> bool:
+        from sovara.server.priors_backend import server as priors_backend_server
+
+        priors_backend_server.start()
+        return priors_backend_server.wait_until_healthy()
+
     def _request(self, method: str, path: str, *, params: dict[str, Any] | None = None, json_body: Any = None) -> Any:
-        try:
-            with httpx.Client(base_url=PRIORS_SERVER_URL, timeout=35.0, headers=self._headers()) as client:
-                response = client.request(method, path, params=params, json=json_body)
-        except httpx.HTTPError as exc:
+        last_exc: httpx.HTTPError | None = None
+        for attempt in range(2):
+            try:
+                with httpx.Client(base_url=PRIORS_SERVER_URL, timeout=35.0, headers=self._headers()) as client:
+                    response = client.request(method, path, params=params, json=json_body)
+                break
+            except httpx.HTTPError as exc:
+                last_exc = exc
+                if attempt == 0 and self._ensure_backend_running():
+                    continue
+                raise PriorsBackendError(
+                    f"Unable to reach priors backend at {PRIORS_SERVER_URL}: {exc}",
+                    status_code=502,
+                ) from exc
+        else:
             raise PriorsBackendError(
-                f"Unable to reach priors backend at {PRIORS_SERVER_URL}: {exc}",
+                f"Unable to reach priors backend at {PRIORS_SERVER_URL}: {last_exc}",
                 status_code=502,
-            ) from exc
+            )
         if response.status_code >= 400:
             try:
                 payload = response.json()
@@ -117,3 +134,9 @@ class PriorsBackendClient:
 
     def retrieve_priors(self, body: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/api/v1/priors/retrieve", json_body=body)
+
+    def lookup_prefix_cache(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/api/v1/priors/prefix-cache/lookup", json_body=body)
+
+    def store_prefix_cache(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/api/v1/priors/prefix-cache/store", json_body=body)

@@ -328,7 +328,6 @@ def test_get_graph_enriches_nodes_with_prior_metadata():
         DB.upsert_prior_retrieval(
             run_id,
             node_uuid,
-            status="timeout",
             applied_priors=[],
             timeout_ms=30000,
             error_message="timed out",
@@ -336,8 +335,8 @@ def test_get_graph_enriches_nodes_with_prior_metadata():
 
         result = ui.get_graph(run_id, state=state)
 
-        assert result["payload"]["nodes"][0]["prior_status"] == "timeout"
         assert result["payload"]["nodes"][0]["prior_count"] == 0
+        assert "prior_status" not in result["payload"]["nodes"][0]
     finally:
         DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
 
@@ -362,7 +361,6 @@ def test_get_node_prior_retrieval_returns_lazy_record():
         DB.upsert_prior_retrieval(
             run_id,
             node_uuid,
-            status="applied",
             retrieval_context="body.instructions: hello",
             applied_priors=[{"id": "p1", "content": "Retry once"}],
             rendered_priors_block="<sovara-priors>...</sovara-priors>",
@@ -371,7 +369,41 @@ def test_get_node_prior_retrieval_returns_lazy_record():
         result = ui.get_node_prior_retrieval(run_id, node_uuid)
 
         assert result["type"] == "prior_retrieval"
-        assert result["record"]["status"] == "applied"
         assert result["record"]["applied_priors"] == [{"id": "p1", "content": "Retry once"}]
+    finally:
+        DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
+
+
+def test_get_run_prior_retrievals_returns_records():
+    run_id = str(uuid.uuid4())
+    node_uuid = str(uuid.uuid4())
+    _seed_run(run_id)
+
+    try:
+        DB.backend.insert_llm_call_with_output_query(
+            run_id,
+            '{"raw":{"body":{}},"to_show":{"body":{"instructions":"hello"}}}',
+            "hash-ui-priors-all",
+            node_uuid,
+            "httpx.Client.send",
+            '{"raw":{"content":"ok"},"to_show":{"content":"ok"}}',
+            "stack line",
+            "llm",
+            "[]",
+        )
+        DB.upsert_prior_retrieval(
+            run_id,
+            node_uuid,
+            retrieval_context="body.instructions: hello",
+            applied_priors=[{"id": "p1", "content": "Retry once"}],
+            rendered_priors_block="<sovara-priors>...</sovara-priors>",
+        )
+
+        result = ui.get_run_prior_retrievals(run_id)
+
+        assert result["type"] == "prior_retrievals"
+        assert len(result["records"]) == 1
+        assert result["records"][0]["node_uuid"] == node_uuid
+        assert result["records"][0]["applied_priors"] == [{"id": "p1", "content": "Retry once"}]
     finally:
         DB.backend.delete_runs_by_ids_query([run_id], user_id=None)

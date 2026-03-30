@@ -18,6 +18,8 @@ import subprocess
 import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Optional
+from urllib.error import URLError
+from urllib.request import urlopen
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -193,10 +195,23 @@ async def chat(run_id: str, req: ChatRequest):
 _process: Optional[subprocess.Popen] = None
 
 
+def _is_inference_server_running(host: str, port: int, timeout: float = 1.0) -> bool:
+    try:
+        with urlopen(f"http://{host}:{port}/health", timeout=timeout) as response:
+            return response.status == 200
+    except (OSError, URLError):
+        return False
+
+
 def start() -> None:
     """Spawn the inference server as a child process."""
     global _process
     from sovara.common.constants import HOST, INFERENCE_PORT, INFERENCE_SERVER_LOG
+
+    if _process is not None and _process.poll() is None:
+        return
+    if _is_inference_server_running(HOST, INFERENCE_PORT):
+        return
 
     os.makedirs(os.path.dirname(INFERENCE_SERVER_LOG), exist_ok=True)
     log_f = open(INFERENCE_SERVER_LOG, "a")

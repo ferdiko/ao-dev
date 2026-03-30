@@ -46,6 +46,38 @@ _RESPONSE_SCHEMA = {
 }
 
 
+def _preview_text(value: str, limit: int = 400) -> str:
+    text = (value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."
+
+
+def _format_prior_refs(priors: list[dict]) -> str:
+    if not priors:
+        return "(none)"
+    lines = []
+    for prior in priors:
+        lines.append(
+            f"- {prior['id']} | {prior.get('path', '')}{prior.get('name', '')} | "
+            f"summary={_preview_text(str(prior.get('summary', '')), 140)}"
+        )
+    return "\n".join(lines)
+
+
+def _format_selected_priors(priors: list[dict]) -> str:
+    if not priors:
+        return "(none)"
+    lines = []
+    for prior in priors:
+        lines.append(
+            f"- {prior['id']} | {prior.get('path', '')}{prior.get('name', '')}\n"
+            f"  summary: {_preview_text(str(prior.get('summary', '')), 180)}\n"
+            f"  content: {_preview_text(str(prior.get('content', '')), 260)}"
+        )
+    return "\n".join(lines)
+
+
 def collect_folder_priors(store, path: str = "") -> tuple[list[tuple[str, list[dict]]], dict[str, dict]]:
     result = []
     all_priors: dict[str, dict] = {}
@@ -82,7 +114,9 @@ async def _query_llm_for_folder(
     model: str,
     *,
     ignore_prior_ids: set[str],
+    folder_path: str,
 ) -> list[str]:
+    considered_priors = [prior for prior in priors if prior["id"] not in ignore_prior_ids]
     priors_context = "\n\n---\n\n".join(
         (
             f"ID: {prior['id']}\n"
@@ -94,7 +128,20 @@ async def _query_llm_for_folder(
     )
 
     if not priors_context:
+        logger.info(
+            "[PRIORS RETRIEVER] folder=%s skipped after ignore filter; ignored_ids=%s",
+            folder_path or "(root)",
+            sorted(ignore_prior_ids),
+        )
         return []
+
+    logger.info(
+        "[PRIORS RETRIEVER] folder=%s candidates=%d ignored_ids=%s\n%s",
+        folder_path or "(root)",
+        len(considered_priors),
+        sorted(ignore_prior_ids),
+        _format_prior_refs(considered_priors),
+    )
 
     result = await infer_structured_json(
         purpose="priors_retrieval",
@@ -116,7 +163,15 @@ async def _query_llm_for_folder(
         timeout_ms=30000,
         repair_attempts=2,
     )
-    return list(result["parsed"].get("prior_ids", []))
+    selected_ids = list(result["parsed"].get("prior_ids", []))
+    logger.info(
+        "[PRIORS RETRIEVER] folder=%s selected_ids=%s mode=%s model=%s",
+        folder_path or "(root)",
+        selected_ids,
+        result.get("structured_mode"),
+        result.get("model_used") or model,
+    )
+    return selected_ids
 
 
 async def retrieve_relevant_priors(
@@ -128,21 +183,35 @@ async def retrieve_relevant_priors(
 ) -> list[dict]:
     folder_priors, all_priors_lookup = collect_folder_priors(store, base_path)
     if not folder_priors:
+        logger.info(
+            "[PRIORS RETRIEVER] no active priors found under base_path=%s",
+            base_path or "(root)",
+        )
         return []
 
     resolved_model = model or "openai/gpt-5.4"
     ignored = set(ignore_prior_ids or [])
 
     logger.info(
-        "[PRIORS RETRIEVER] start: %s folders, model=%s, base_path=%s",
+        "[PRIORS RETRIEVER] start: folders=%s model=%s base_path=%s ignored_ids=%s\n"
+        "[PRIORS RETRIEVER] context (%d chars):\n%s",
         len(folder_priors),
         resolved_model,
         base_path or "(root)",
+        sorted(ignored),
+        len(context or ""),
+        context or "(empty)",
     )
 
     tasks = [
-        _query_llm_for_folder(priors, context, resolved_model, ignore_prior_ids=ignored)
-        for _, priors in folder_priors
+        _query_llm_for_folder(
+            priors,
+            context,
+            resolved_model,
+            ignore_prior_ids=ignored,
+            folder_path=folder_path,
+        )
+        for folder_path, priors in folder_priors
     ]
     results = await asyncio.gather(*tasks)
 
@@ -156,4 +225,10 @@ async def retrieve_relevant_priors(
                 selected_ids.append(prior_id)
                 seen.add(prior_id)
 
-    return [all_priors_lookup[prior_id] for prior_id in selected_ids]
+    selected_priors = [all_priors_lookup[prior_id] for prior_id in selected_ids]
+    logger.info(
+        "[PRIORS RETRIEVER] final selection: ids=%s\n%s",
+        selected_ids,
+        _format_selected_priors(selected_priors),
+    )
+    return selected_priors

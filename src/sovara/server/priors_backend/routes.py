@@ -10,8 +10,9 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from sovara.server.priors_backend.deps import get_prior_store
+from sovara.server.priors_backend.deps import get_prior_store, get_scope_from_request
 from sovara.server.priors_backend.events import publish
+from sovara.server.llm_backend import resolve_model
 from sovara.server.priors_backend.llm.lesson_retriever import (
     build_folder_tree_summary,
     retrieve_relevant_priors,
@@ -25,6 +26,11 @@ from sovara.server.priors_backend.logger import logger
 from sovara.server.priors_backend.retrieval_cache import (
     get_cached_retrieval,
     store_cached_retrieval,
+)
+from sovara.server.priors_backend.prefix_cache import (
+    clear_scope_prefix_cache,
+    lookup_longest_prefix,
+    store_prefix,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -167,6 +173,18 @@ class PriorRetrieveRequest(BaseModel):
     ignore_prior_ids: list[str] = Field(default_factory=list)
 
 
+class PrefixCacheLookupRequest(BaseModel):
+    base_path: str = ""
+    clean_pairs: list[dict[str, str]] = Field(default_factory=list)
+
+
+class PrefixCacheStoreRequest(BaseModel):
+    base_path: str = ""
+    clean_pairs: list[dict[str, str]] = Field(default_factory=list)
+    injected_pairs: list[dict[str, str]] = Field(default_factory=list)
+    prior_ids: list[str] = Field(default_factory=list)
+
+
 class RetrievedPrior(BaseModel):
     id: str
     name: str
@@ -258,10 +276,45 @@ def _items_affect_active_world(store, items: list[PriorItemRef]) -> bool:
     return False
 
 
+def _clear_scope_prefix_cache_for_request(request: Request) -> None:
+    user_id, project_id = get_scope_from_request(request)
+    clear_scope_prefix_cache(user_id=user_id, project_id=project_id)
+
+
 @router.get("/priors/scope")
 def get_scope(request: Request):
     store = get_prior_store(request)
     return store.read_scope_metadata()
+
+
+@router.post("/priors/prefix-cache/lookup")
+def lookup_prefix_cache_endpoint(request: Request, body: PrefixCacheLookupRequest):
+    user_id, project_id = get_scope_from_request(request)
+    base_path = _normalize_path(body.base_path)
+    match = lookup_longest_prefix(
+        user_id=user_id,
+        project_id=project_id,
+        base_path=base_path,
+        clean_pairs=body.clean_pairs,
+    )
+    if match is None:
+        return {"found": False}
+    return {"found": True, **match}
+
+
+@router.post("/priors/prefix-cache/store")
+def store_prefix_cache_endpoint(request: Request, body: PrefixCacheStoreRequest):
+    user_id, project_id = get_scope_from_request(request)
+    base_path = _normalize_path(body.base_path)
+    store_prefix(
+        user_id=user_id,
+        project_id=project_id,
+        base_path=base_path,
+        clean_pairs=body.clean_pairs,
+        injected_pairs=body.injected_pairs,
+        prior_ids=body.prior_ids,
+    )
+    return {"stored": True}
 
 
 @router.get("/priors")
@@ -341,6 +394,7 @@ def move_folder(request: Request, body: FolderMoveRequest):
 
     revision = None
     if active_affected:
+        _clear_scope_prefix_cache_for_request(request)
         scope = store.bump_scope_revision()
         revision = scope["revision"]
     publish("folder_moved", {"path": path, "new_path": new_path, "revision": revision})
@@ -359,6 +413,7 @@ def delete_folder(request: Request, body: FolderDeleteRequest):
         raise HTTPException(status_code=404, detail="Folder not found")
     revision = None
     if active_affected:
+        _clear_scope_prefix_cache_for_request(request)
         scope = store.bump_scope_revision()
         revision = scope["revision"]
     publish("folder_deleted", {"path": path, "revision": revision})
@@ -390,6 +445,7 @@ def copy_items(request: Request, body: PriorItemsCopyRequest):
 
     revision = None
     if active_affected:
+        _clear_scope_prefix_cache_for_request(request)
         scope = store.bump_scope_revision()
         revision = scope["revision"]
     publish("items_copied", {"count": len(copied_items), "revision": revision})
@@ -448,6 +504,7 @@ def move_items(request: Request, body: PriorItemsMoveRequest):
 
     revision = None
     if active_affected:
+        _clear_scope_prefix_cache_for_request(request)
         scope = store.bump_scope_revision()
         revision = scope["revision"]
     publish("items_moved", {"count": len(moved_items), "revision": revision})
@@ -484,6 +541,7 @@ def delete_items(request: Request, body: PriorItemsDeleteRequest):
 
     revision = None
     if active_affected:
+        _clear_scope_prefix_cache_for_request(request)
         scope = store.bump_scope_revision()
         revision = scope["revision"]
     publish(
@@ -574,6 +632,7 @@ async def create_prior(
         trace_source=prior.trace_source,
         validation_metadata=validation_metadata,
     )
+    _clear_scope_prefix_cache_for_request(request)
     scope = store.bump_scope_revision()
     publish("prior_created", {"id": prior_id, "path": prior.path, "revision": scope["revision"]})
     logger.info("Created prior %s at '%s'", prior_id, prior.path)
@@ -680,6 +739,7 @@ async def submit_prior(
         status="active",
         validation_metadata=validation_metadata,
     )
+    _clear_scope_prefix_cache_for_request(request)
     scope = store.bump_scope_revision()
     publish("prior_updated", {"id": prior_id, "path": result_path, "revision": scope["revision"]})
     logger.info("Submitted draft prior %s", prior_id)
@@ -760,6 +820,7 @@ async def update_prior(
     )
     revision = None
     if existing_status == "active":
+        _clear_scope_prefix_cache_for_request(request)
         scope = store.bump_scope_revision()
         revision = scope["revision"]
     publish("prior_updated", {"id": prior_id, "path": result_path, "revision": revision})
@@ -781,6 +842,7 @@ def delete_prior(request: Request, prior_id: str):
         raise HTTPException(status_code=404, detail="Prior not found")
     revision = None
     if existing.get("prior_status", "active") == "active":
+        _clear_scope_prefix_cache_for_request(request)
         scope = store.bump_scope_revision()
         revision = scope["revision"]
     publish("prior_deleted", {"id": prior_id, "revision": revision})
@@ -794,7 +856,23 @@ async def retrieve_priors_endpoint(request: Request, body: PriorRetrieveRequest)
     base_path = _normalize_path(body.base_path)
     scope = store.read_scope_metadata()
     priors_revision = int(scope["revision"])
-    model_used = body.model or "openai/gpt-5.4"
+    requested_model = body.model or "openai/gpt-5.4"
+    model_used = resolve_model(requested_model, "cheap")
+    ignore_ids = sorted({prior_id for prior_id in body.ignore_prior_ids if prior_id}) if body.ignore_prior_ids else []
+
+    logger.info(
+        "[PRIORS ROUTE] retrieve start user=%s project=%s revision=%s base_path=%s requested_model=%s resolved_model=%s ignore_ids=%s\n"
+        "[PRIORS ROUTE] context (%d chars):\n%s",
+        scope["user_id"],
+        scope["project_id"],
+        priors_revision,
+        base_path or "(root)",
+        requested_model,
+        model_used,
+        ignore_ids,
+        len(body.context or ""),
+        body.context or "(empty)",
+    )
 
     cached = get_cached_retrieval(
         user_id=str(scope["user_id"]),
@@ -806,14 +884,31 @@ async def retrieve_priors_endpoint(request: Request, body: PriorRetrieveRequest)
         ignore_prior_ids=body.ignore_prior_ids,
     )
     if cached is not None:
+        logger.info(
+            "[PRIORS ROUTE] cache hit revision=%s base_path=%s requested_model=%s resolved_model=%s prior_count=%s ids=%s",
+            priors_revision,
+            base_path or "(root)",
+            requested_model,
+            model_used,
+            cached.get("prior_count"),
+            [prior.get("id") for prior in cached.get("priors", [])],
+        )
         return PriorRetrieveResponse(**cached)
+
+    logger.info(
+        "[PRIORS ROUTE] cache miss revision=%s base_path=%s requested_model=%s resolved_model=%s",
+        priors_revision,
+        base_path or "(root)",
+        requested_model,
+        model_used,
+    )
 
     retrieve_task = asyncio.create_task(
         retrieve_relevant_priors(
             store=store,
             context=body.context,
             base_path=base_path,
-            model=body.model,
+            model=requested_model,
             ignore_prior_ids=body.ignore_prior_ids,
         )
     )
@@ -847,6 +942,12 @@ async def retrieve_priors_endpoint(request: Request, body: PriorRetrieveRequest)
         priors_revision=priors_revision,
         rendered_priors_block=_build_injected_context(priors),
         model_used=model_used,
+    )
+    logger.info(
+        "[PRIORS ROUTE] retrieve complete prior_count=%s ids=%s rendered_block_chars=%d",
+        response.prior_count,
+        [prior.id for prior in response.priors],
+        len(response.rendered_priors_block),
     )
     store_cached_retrieval(
         user_id=str(scope["user_id"]),

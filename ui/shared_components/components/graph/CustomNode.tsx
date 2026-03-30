@@ -72,7 +72,6 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
           inputValue: data.input,
           outputValue: data.output,
           nodeKind: data.node_kind,
-          priorStatus: data.prior_status,
           priorCount: data.prior_count,
         });
         break;
@@ -86,7 +85,6 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
           inputValue: data.input,
           outputValue: data.output,
           nodeKind: data.node_kind,
-          priorStatus: data.prior_status,
           priorCount: data.prior_count,
         });
         break;
@@ -109,30 +107,13 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
 
   const isDarkTheme = data.isDarkTheme ?? false;
   const priorCount = typeof data.prior_count === 'number' ? data.prior_count : 0;
-  const priorStatus = data.prior_status || null;
-  const showPriorHeader = priorCount > 0 || ['timeout', 'unavailable', 'uninjectable', 'error'].includes(priorStatus || '');
-  const priorHeaderLabel = priorCount > 0
-    ? `${priorCount} prior${priorCount === 1 ? '' : 's'}`
-    : priorStatus === 'timeout'
-      ? 'Priors timeout'
-      : priorStatus === 'unavailable'
-        ? 'Priors unavailable'
-        : priorStatus === 'uninjectable'
-          ? 'Priors skipped'
-          : priorStatus === 'error'
-            ? 'Priors error'
-            : '';
-  const priorHeaderStyle: React.CSSProperties = priorCount > 0
-    ? {
-        background: isDarkTheme ? 'rgba(56, 139, 253, 0.18)' : 'rgba(9, 105, 218, 0.14)',
-        color: isDarkTheme ? '#9ecbff' : '#0550ae',
-        borderBottom: isDarkTheme ? '1px solid rgba(88, 166, 255, 0.28)' : '1px solid rgba(9, 105, 218, 0.22)',
-      }
-    : {
-        background: isDarkTheme ? 'rgba(187, 128, 9, 0.18)' : 'rgba(191, 135, 0, 0.14)',
-        color: isDarkTheme ? '#f2cc60' : '#9a6700',
-        borderBottom: isDarkTheme ? '1px solid rgba(242, 204, 96, 0.22)' : '1px solid rgba(191, 135, 0, 0.2)',
-      };
+  const showPriorHeader = priorCount > 0;
+  const priorHeaderLabel = `${priorCount} prior${priorCount === 1 ? '' : 's'}`;
+  const priorHeaderStyle: React.CSSProperties = {
+    background: isDarkTheme ? 'rgba(56, 139, 253, 0.18)' : 'rgba(9, 105, 218, 0.14)',
+    color: isDarkTheme ? '#9ecbff' : '#0550ae',
+    borderBottom: isDarkTheme ? '1px solid rgba(88, 166, 255, 0.28)' : '1px solid rgba(9, 105, 218, 0.22)',
+  };
   // const isHighlighted = data.isHighlighted ?? false;
 
   const nodeRef = useRef<HTMLDivElement>(null);

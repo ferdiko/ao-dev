@@ -91,7 +91,7 @@ def test_priors_retrieve_endpoint_returns_selected_priors_and_scope_revision(mon
     assert data["prior_count"] == 1
     assert [prior["id"] for prior in data["priors"]] == ["p1"]
     assert data["priors"][0]["path"] == "ops/"
-    assert data["model_used"] == "openai/gpt-5.4"
+    assert data["model_used"] == "openai/gpt-5.4-mini"
     assert data["rendered_priors_block"].startswith('<sovara-priors>\n<!-- {"priors":[{"id":"p1"}]} -->')
     assert calls["count"] == 1
 

@@ -11,7 +11,6 @@ interface NodeEditorViewProps {
   isDarkTheme: boolean;
   nodeLabel: string;
   nodeKind?: string;
-  priorStatus?: string;
   priorCount?: number;
   priorRetrieval?: PriorRetrievalRecord | null;
   onTabChange: (tab: 'input' | 'output') => void;
@@ -29,7 +28,6 @@ export const NodeEditorView: React.FC<NodeEditorViewProps> = ({
   isDarkTheme,
   nodeLabel,
   nodeKind,
-  priorStatus,
   priorCount,
   priorRetrieval,
   onTabChange,
@@ -116,7 +114,7 @@ export const NodeEditorView: React.FC<NodeEditorViewProps> = ({
   const effectivePriorCount = typeof priorCount === 'number'
     ? priorCount
     : (priorRetrieval?.applied_priors?.length ?? 0);
-  const showPriorsPanel = !!priorStatus;
+  const showPriorsPanel = effectivePriorCount > 0;
   const nodeKindLabel = nodeKind === 'mcp'
     ? 'MCP'
     : nodeKind === 'tool'
@@ -124,40 +122,12 @@ export const NodeEditorView: React.FC<NodeEditorViewProps> = ({
       : nodeKind === 'llm'
         ? 'LLM'
         : null;
-  const priorsTone = priorStatus === 'applied'
-    ? {
-        border: 'rgba(9, 105, 218, 0.22)',
-        background: isDarkTheme ? 'rgba(56, 139, 253, 0.16)' : 'rgba(9, 105, 218, 0.10)',
-        title: isDarkTheme ? '#9ecbff' : '#0550ae',
-        body: colors.text,
-      }
-    : priorStatus === 'timeout' || priorStatus === 'unavailable' || priorStatus === 'error'
-      ? {
-          border: 'rgba(191, 135, 0, 0.26)',
-          background: isDarkTheme ? 'rgba(187, 128, 9, 0.16)' : 'rgba(191, 135, 0, 0.10)',
-          title: isDarkTheme ? '#f2cc60' : '#9a6700',
-          body: colors.text,
-        }
-      : {
-          border: isDarkTheme ? '#3c3c3c' : '#d0d7de',
-          background: isDarkTheme ? 'rgba(110, 118, 129, 0.14)' : '#f6f8fa',
-          title: colors.text,
-          body: colors.textMuted,
-        };
-  const priorStatusMessage = (() => {
-    if (!priorStatus) return '';
-    if (priorStatus === 'applied') return `${effectivePriorCount} prior${effectivePriorCount === 1 ? '' : 's'} attached to this node.`;
-    if (priorStatus === 'none') return 'No priors were applied to this node.';
-    if (priorStatus === 'empty_context') return 'Priors were skipped because no new input context remained after parent diffing.';
-    if (priorStatus === 'uninjectable') return priorRetrieval?.warning_message || 'Priors could not be injected because no supported prompt-bearing field was found.';
-    if (priorStatus === 'timeout') {
-      const seconds = priorRetrieval?.timeout_ms ? Math.round(priorRetrieval.timeout_ms / 1000) : null;
-      return seconds ? `Priors retrieval timed out after ${seconds}s.` : 'Priors retrieval timed out.';
-    }
-    if (priorStatus === 'unavailable') return priorRetrieval?.error_message || 'Priors backend was unavailable for this node.';
-    if (priorStatus === 'error') return priorRetrieval?.error_message || 'Priors retrieval failed for this node.';
-    return priorStatus;
-  })();
+  const priorsTone = {
+    border: 'rgba(9, 105, 218, 0.22)',
+    background: isDarkTheme ? 'rgba(56, 139, 253, 0.16)' : 'rgba(9, 105, 218, 0.10)',
+    title: isDarkTheme ? '#9ecbff' : '#0550ae',
+    body: colors.text,
+  };
 
   return (
     <div
@@ -399,9 +369,7 @@ export const NodeEditorView: React.FC<NodeEditorViewProps> = ({
                 color: priorsTone.title,
               }}
             >
-              {priorStatus === 'applied'
-                ? `${effectivePriorCount} prior${effectivePriorCount === 1 ? '' : 's'} attached`
-                : 'Priors status'}
+              {`${effectivePriorCount} prior${effectivePriorCount === 1 ? '' : 's'} introduced here`}
             </div>
             {priorRetrieval?.model && (
               <div
@@ -423,21 +391,9 @@ export const NodeEditorView: React.FC<NodeEditorViewProps> = ({
               whiteSpace: 'pre-wrap',
             }}
           >
-            {priorStatusMessage}
+            {`${effectivePriorCount} prior${effectivePriorCount === 1 ? '' : 's'} introduced at this node relative to its parents.`}
           </div>
-          {priorRetrieval?.warning_message && priorStatus !== 'uninjectable' && (
-            <div
-              style={{
-                marginTop: '8px',
-                fontSize: '11px',
-                color: colors.textMuted,
-                whiteSpace: 'pre-wrap',
-              }}
-            >
-              {priorRetrieval.warning_message}
-            </div>
-          )}
-          {priorStatus === 'applied' && (priorRetrieval?.applied_priors?.length || 0) > 0 && (
+          {(priorRetrieval?.applied_priors?.length || 0) > 0 && (
             <div
               style={{
                 marginTop: '12px',

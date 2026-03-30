@@ -10,7 +10,6 @@ export interface GraphNode {
     name?: string;
     model?: string;
     node_kind?: 'llm' | 'mcp' | 'tool' | string;
-    prior_status?: string | null;
     prior_count?: number | null;
     attachments?: any[];
 }
@@ -18,7 +17,6 @@ export interface GraphNode {
 export interface PriorRetrievalRecord {
     run_id: string;
     node_uuid: string;
-    status: string;
     retrieval_context: string;
     inherited_prior_ids: string[];
     applied_priors: Array<{
@@ -28,6 +26,7 @@ export interface PriorRetrievalRecord {
         content?: string;
         path?: string;
     }>;
+    effective_prior_ids?: string[];
     rendered_priors_block: string;
     injection_anchor?: { key?: string } | null;
     model?: string | null;

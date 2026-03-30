@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import {
   ArrowRightLeft,
   Check,
@@ -1020,7 +1020,6 @@ function ExplorerRowView({
 
 export function PriorsPage() {
   const { projectId } = useParams<{ projectId: string }>();
-  const navigate = useNavigate();
   const treeRef = useRef<HTMLDivElement | null>(null);
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const dragExpandTimerRef = useRef<number | null>(null);
@@ -2020,10 +2019,21 @@ export function PriorsPage() {
     void handleMoveSelection(keys, row.path);
   }, [clearDragState, draggedKeys, handleMoveSelection]);
 
-  const breadcrumbItems = useMemo(() => [
-    { label: projectName, onClick: () => navigate(`/project/${projectId}`) },
-    { label: "SovaraDB" },
-  ], [navigate, projectId, projectName]);
+  const breadcrumbItems = useMemo(() => {
+    const items: Array<{ label: string; to?: string }> = [
+      { label: "Projects", to: "/" },
+      { label: projectName, to: `/project/${projectId}` },
+    ];
+
+    if (singleSelectedRow?.kind === "prior") {
+      items.push({ label: "SovaraDB", to: `/project/${projectId}/priors` });
+      items.push({ label: displayPriorName(singleSelectedRow.name) });
+      return items;
+    }
+
+    items.push({ label: "SovaraDB" });
+    return items;
+  }, [projectId, projectName, singleSelectedRow]);
 
   const emptySelectionMessage = selectedRows.length > 1
     ? `${selectedRows.length} items selected. Choose one prior to edit its contents.`

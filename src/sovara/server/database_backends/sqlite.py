@@ -341,7 +341,6 @@ def _ensure_prior_schema(conn):
         CREATE TABLE IF NOT EXISTS prior_retrievals (
             run_id TEXT NOT NULL,
             node_uuid TEXT NOT NULL,
-            status TEXT NOT NULL,
             retrieval_context TEXT NOT NULL DEFAULT '',
             inherited_prior_ids_json TEXT NOT NULL DEFAULT '[]',
             applied_priors_json TEXT NOT NULL DEFAULT '[]',
@@ -1066,11 +1065,11 @@ def copy_prior_retrievals_query(old_run_id, new_run_id):
     execute(
         """
         INSERT INTO prior_retrievals (
-            run_id, node_uuid, status, retrieval_context, inherited_prior_ids_json,
+            run_id, node_uuid, retrieval_context, inherited_prior_ids_json,
             applied_priors_json, rendered_priors_block, injection_anchor_json, model,
             timeout_ms, latency_ms, warning_message, error_message, created_at, updated_at
         )
-        SELECT ?, node_uuid, status, retrieval_context, inherited_prior_ids_json,
+        SELECT ?, node_uuid, retrieval_context, inherited_prior_ids_json,
                applied_priors_json, rendered_priors_block, injection_anchor_json, model,
                timeout_ms, latency_ms, warning_message, error_message, created_at, updated_at
         FROM prior_retrievals WHERE run_id=?
@@ -1288,7 +1287,7 @@ def get_prior_retrieval_query(run_id, node_uuid):
     """Get prior retrieval metadata for a single node."""
     return query_one(
         """
-        SELECT run_id, node_uuid, status, retrieval_context, inherited_prior_ids_json,
+        SELECT run_id, node_uuid, retrieval_context, inherited_prior_ids_json,
                applied_priors_json, rendered_priors_block, injection_anchor_json,
                model, timeout_ms, latency_ms, warning_message, error_message,
                created_at, updated_at
@@ -1303,7 +1302,7 @@ def get_prior_retrievals_for_run_query(run_id):
     """Get all prior retrieval metadata rows for a run."""
     return query_all(
         """
-        SELECT run_id, node_uuid, status, retrieval_context, inherited_prior_ids_json,
+        SELECT run_id, node_uuid, retrieval_context, inherited_prior_ids_json,
                applied_priors_json, rendered_priors_block, injection_anchor_json,
                model, timeout_ms, latency_ms, warning_message, error_message,
                created_at, updated_at
@@ -1318,7 +1317,6 @@ def get_prior_retrievals_for_run_query(run_id):
 def upsert_prior_retrieval_query(
     run_id,
     node_uuid,
-    status,
     retrieval_context,
     inherited_prior_ids_json,
     applied_priors_json,
@@ -1334,14 +1332,13 @@ def upsert_prior_retrieval_query(
     execute(
         """
         INSERT INTO prior_retrievals (
-            run_id, node_uuid, status, retrieval_context, inherited_prior_ids_json,
+            run_id, node_uuid, retrieval_context, inherited_prior_ids_json,
             applied_priors_json, rendered_priors_block, injection_anchor_json, model,
             timeout_ms, latency_ms, warning_message, error_message
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (run_id, node_uuid)
         DO UPDATE SET
-            status = excluded.status,
             retrieval_context = excluded.retrieval_context,
             inherited_prior_ids_json = excluded.inherited_prior_ids_json,
             applied_priors_json = excluded.applied_priors_json,
@@ -1357,7 +1354,6 @@ def upsert_prior_retrieval_query(
         (
             run_id,
             node_uuid,
-            status,
             retrieval_context,
             inherited_prior_ids_json,
             applied_priors_json,

@@ -51,7 +51,6 @@ class IncomingNodeRequest(BaseModel):
     name: Optional[str] = None
     model: Optional[str] = None
     node_kind: Optional[str] = None
-    prior_status: Optional[str] = None
     prior_count: Optional[int] = None
     attachments: list[str] = Field(default_factory=list)
 

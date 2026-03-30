@@ -25,6 +25,7 @@ from sovara.common.constants import (
 )
 from sovara.server.database_manager import DB
 from sovara.server.graph_models import RunGraph
+from sovara.server.prior_display import attach_ui_prior_counts
 
 logger = create_file_logger(MAIN_SERVER_LOG)
 
@@ -118,11 +119,14 @@ class ServerState:
     async def broadcast_graph_update(self, run_id: str) -> None:
         """Broadcast current graph state for a run to all UIs."""
         if run_id in self.run_graphs:
-            graph = self.run_graphs[run_id].to_dict()
+            graph = self.run_graphs[run_id]
+            prior_rows = DB.get_prior_retrievals_for_run(run_id)
+            if prior_rows:
+                graph = attach_ui_prior_counts(graph, prior_rows)
             await self.broadcast_to_all_uis({
                 "type": "graph_update",
                 "run_id": run_id,
-                "payload": graph,
+                "payload": graph.to_dict(),
                 "active_runtime_seconds": self.get_persisted_active_runtime_seconds(run_id),
             })
 

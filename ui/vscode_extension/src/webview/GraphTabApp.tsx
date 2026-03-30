@@ -31,9 +31,7 @@ function normalizeGraphPayload(payload: any): GraphData {
         border_color: node.border_color,
         model: node.model,
         node_kind: node.node_kind,
-        prior_status: node.prior_status,
         prior_count: typeof node.prior_count === 'number' ? node.prior_count : undefined,
-        name: node.name,
         name: node.name,
         attachments: node.attachments,
       }))

@@ -28,7 +28,7 @@ _TIER_MODELS = {
 # --- Inference ---
 
 
-def _resolve_model(model: str | None, tier: str) -> str:
+def resolve_model(model: str | None, tier: str) -> str:
     """Resolve the effective model for a request.
 
     `tier` remains the default routing knob, but callers may also provide an
@@ -53,7 +53,7 @@ def _resolve_model(model: str | None, tier: str) -> str:
 def infer(messages, model=None, tier="expensive", **kwargs):
     """Sync LLM call via litellm. Returns the full response object."""
     kwargs.setdefault("temperature", 0)
-    resolved = _resolve_model(model, tier)
+    resolved = resolve_model(model, tier)
 
     # Normalize system= kwarg into a system message for cross-provider compat
     system = kwargs.pop("system", None)
@@ -268,7 +268,7 @@ def infer_structured_json(
 ) -> dict[str, Any]:
     """Run a structured inference request with native-first, local-validated fallback."""
     schema = _extract_json_schema(response_format)
-    resolved_model = _resolve_model(model, tier)
+    resolved_model = resolve_model(model, tier)
 
     if response_format is not None:
         try:

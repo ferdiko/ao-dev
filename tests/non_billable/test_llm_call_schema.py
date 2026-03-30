@@ -101,7 +101,6 @@ def test_prior_retrieval_roundtrip_and_copy():
         DB.upsert_prior_retrieval(
             old_run_id,
             node_uuid,
-            status="applied",
             retrieval_context="body.messages.0.content: hello",
             inherited_prior_ids=["p-old"],
             applied_priors=[{"id": "p-new", "content": "Retry once"}],
@@ -113,7 +112,6 @@ def test_prior_retrieval_roundtrip_and_copy():
         )
 
         stored = DB.get_prior_retrieval(old_run_id, node_uuid)
-        assert stored["status"] == "applied"
         assert stored["inherited_prior_ids"] == ["p-old"]
         assert stored["applied_priors"] == [{"id": "p-new", "content": "Retry once"}]
         assert stored["injection_anchor"] == {"key": "body.messages.0.content"}
@@ -121,7 +119,6 @@ def test_prior_retrieval_roundtrip_and_copy():
         DB.copy_prior_retrievals(old_run_id, new_run_id)
         copied = DB.get_prior_retrieval(new_run_id, node_uuid)
         assert copied["run_id"] == new_run_id
-        assert copied["status"] == "applied"
         assert copied["model"] == "qwen3.5"
     finally:
         DB.backend.delete_runs_by_ids_query([old_run_id, new_run_id], user_id=None)
@@ -147,7 +144,7 @@ def test_get_node_kind_classifies_llm_mcp_and_tool_calls():
     assert get_node_kind({"model": "claude-sonnet"}, "claude_agent_sdk.parse_message") == "llm"
 
 
-def test_get_in_out_hashes_executed_input_but_stores_clean_display_input(monkeypatch):
+def test_get_in_out_hashes_and_stores_executed_input(monkeypatch):
     run_id = str(uuid.uuid4())
     _seed_run(run_id)
     monkeypatch.setattr("sovara.runner.context_manager.get_run_id", lambda: run_id)
@@ -158,15 +155,10 @@ def test_get_in_out_hashes_executed_input_but_stores_clean_display_input(monkeyp
     )
 
     try:
-        cache_output = DB.get_in_out(
-            clean_input,
-            "httpx.Client.send",
-            cache_input_dict=executed_input,
-        )
+        cache_output = DB.get_in_out(executed_input, "httpx.Client.send")
         clean_hash_output = DB.get_in_out(clean_input, "httpx.Client.send")
 
         assert cache_output.input_hash != clean_hash_output.input_hash
-        assert cache_output.display_input_dict["request"].content != cache_output.input_dict["request"].content
 
         response = httpx.Response(
             200,
@@ -179,8 +171,8 @@ def test_get_in_out_hashes_executed_input_but_stores_clean_display_input(monkeyp
         stored_input = json.loads(stored["input"])
 
         assert stored["input_hash"] == cache_output.input_hash
-        assert stored_input["to_show"]["body.instructions"] == "Answer briefly."
-        assert "<sovara-priors>" not in stored_input["to_show"]["body.instructions"]
+        assert stored_input["to_show"]["body.instructions"].startswith("<sovara-priors>")
+        assert stored_input["to_show"]["body.instructions"].endswith("Answer briefly.")
     finally:
         DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
         DB._occurrence_counters.clear()

@@ -1,12 +1,11 @@
 from functools import wraps
 from sovara.runner.monkey_patching.patching_utils import (
     get_input_dict,
-    get_node_kind,
     send_graph_node_and_edges,
 )
 from sovara.runner.string_matching import find_source_nodes, store_output_strings
 from sovara.runner.context_manager import get_run_id
-from sovara.runner.priors import persist_prior_metadata, prepare_llm_call_for_priors
+from sovara.runner.priors import persist_prior_metadata
 from sovara.server.database_manager import DB
 from sovara.common.logger import logger
 from sovara.runner.monkey_patching.patching_utils import is_whitelisted_endpoint
@@ -47,27 +46,11 @@ def patch_requests_send(bound_obj, bound_cls):
         if not is_whitelisted_endpoint(url, path):
             return original_function(*args, **kwargs)
 
-        node_kind = get_node_kind(input_dict, api_type)
-        prior_result = None
-        if node_kind == "llm":
-            prior_result = prepare_llm_call_for_priors(input_dict, api_type)
-            working_input_dict = prior_result.executed_input_dict
-            source_node_ids = prior_result.source_node_ids
-            display_input_dict = prior_result.display_input_dict
-        else:
-            run_id = get_run_id()
-            working_input_dict = input_dict
-            source_node_ids = find_source_nodes(run_id, input_dict, api_type)
-            display_input_dict = working_input_dict
+        source_node_ids = find_source_nodes(get_run_id(), input_dict, api_type)
 
         # Get result from cache or call LLM
-        cache_output = DB.get_in_out(
-            display_input_dict,
-            api_type,
-            cache_input_dict=working_input_dict,
-        )
-        if prior_result is not None:
-            cache_output.input_delta_json = prior_result.input_delta_json
+        cache_output = DB.get_in_out(input_dict, api_type, prepare_runtime_priors=True)
+        prior_result = cache_output.prior_result
         if cache_output.output is None:
             result = original_function(**cache_output.input_dict)  # Call LLM
             DB.cache_output(cache_result=cache_output, output_obj=result, api_type=api_type)
@@ -87,8 +70,6 @@ def patch_requests_send(bound_obj, bound_cls):
             source_node_ids=source_node_ids,
             api_type=api_type,
             stack_trace=cache_output.stack_trace,
-            display_input_dict=cache_output.display_input_dict,
-            prior_status=prior_result.metadata.status if prior_result is not None else None,
             prior_count=len(prior_result.metadata.applied_priors) if prior_result is not None else None,
         )
 

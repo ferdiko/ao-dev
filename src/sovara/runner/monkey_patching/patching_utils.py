@@ -360,8 +360,6 @@ def send_graph_node_and_edges(
     source_node_ids,
     api_type,
     stack_trace=None,
-    display_input_dict=None,
-    prior_status=None,
     prior_count=None,
 ):
     """Send graph node and edge updates to the server."""
@@ -373,8 +371,7 @@ def send_graph_node_and_edges(
     from sovara.runner.monkey_patching.api_parser import func_kwargs_to_json_str, api_obj_to_json_str
 
     # Build display strings: only send to_show portion to the UI (not raw)
-    display_input_dict = display_input_dict or input_dict
-    input_full_str, attachments = func_kwargs_to_json_str(display_input_dict, api_type)
+    input_full_str, attachments = func_kwargs_to_json_str(input_dict, api_type)
     output_full_str = api_obj_to_json_str(output_obj, api_type)
     input_string = json.dumps(json.loads(input_full_str)["to_show"])
     output_string = json.dumps(json.loads(output_full_str)["to_show"])
@@ -387,7 +384,7 @@ def send_graph_node_and_edges(
     # Store input for this node (needed for containment checks)
     from sovara.runner.string_matching import store_input_strings, output_contained_in_input
 
-    store_input_strings(run_id, node_id, display_input_dict, api_type)
+    store_input_strings(run_id, node_id, input_dict, api_type)
 
     # Update reachability and filter redundant edges under lock
     with _graph_lock:
@@ -421,9 +418,7 @@ def send_graph_node_and_edges(
             "stack_trace": stack_trace,
             "model": model,
             "node_kind": node_kind,
-            "prior_status": prior_status,
             "prior_count": prior_count,
-            "name": name,
             "name": name,
             "attachments": attachments,
         },

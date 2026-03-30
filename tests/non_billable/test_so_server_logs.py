@@ -44,3 +44,18 @@ def test_clear_logs_truncates_all_server_logs(tmp_path, monkeypatch):
     assert main_log.read_text(encoding="utf-8") == ""
     assert priors_log.read_text(encoding="utf-8") == ""
     assert inference_log.read_text(encoding="utf-8") == ""
+
+
+def test_start_skips_when_startup_lock_is_fresh(tmp_path, monkeypatch):
+    startup_lock = tmp_path / "server.starting.lock"
+    startup_lock.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(so_server, "MAIN_SERVER_STARTUP_LOCK", str(startup_lock))
+    monkeypatch.setattr(so_server, "MAIN_SERVER_LOG", str(tmp_path / "main_server.log"))
+    monkeypatch.setattr(
+        so_server.subprocess,
+        "Popen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("launch_daemon_server should not spawn")),
+    )
+
+    assert so_server.launch_daemon_server() is False

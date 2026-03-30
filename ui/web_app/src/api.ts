@@ -5,6 +5,7 @@
  * Types use the same field names as the backend JSON responses.
  */
 
+import type { PriorRetrievalRecord } from "@sovara/shared-components/types";
 import type { Tag } from "./tags";
 
 // ============================================================
@@ -610,6 +611,8 @@ export interface BackendGraphNode {
   border_color?: string;
   stack_trace?: string;
   name?: string;
+  node_kind?: string | null;
+  prior_count?: number | null;
   attachments?: unknown[];
 }
 
@@ -635,6 +638,13 @@ export async function fetchGraph(runId: string) {
   return get<GraphResponse>(
     `/ui/graph/${runId}`
   );
+}
+
+export async function fetchPriorRetrievals(runId: string): Promise<Record<string, PriorRetrievalRecord>> {
+  const response = await get<{ type: string; run_id: string; records: PriorRetrievalRecord[] }>(
+    `/ui/run/${runId}/prior-retrievals`,
+  );
+  return Object.fromEntries((response.records || []).map((record) => [record.node_uuid, record]));
 }
 
 // ============================================================

@@ -79,6 +79,8 @@ export function RunTabsHeader({
       <ChevronRight size={14} className="breadcrumb-separator" />
       <Link to={`/project/${projectId}`} className="breadcrumb-link">{projectName || "Project"}</Link>
       <ChevronRight size={14} className="breadcrumb-separator" />
+      <Link to={`/project/${projectId}`} className="breadcrumb-link">Runs</Link>
+      <ChevronRight size={14} className="breadcrumb-separator" />
       {dividerPath && (
         <svg className="run-tab-divider-svg" preserveAspectRatio="none">
           <path d={tabFillPath} fill="var(--color-surface)" stroke="none" />

@@ -3,17 +3,27 @@ FastAPI application factory.
 """
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 
 from sovara.common.logger import create_file_logger
-from sovara.common.constants import MAIN_SERVER_LOG
+from sovara.common.constants import MAIN_SERVER_LOG, MAIN_SERVER_STARTUP_LOCK
 from sovara.server.state import ServerState
 from sovara.server.graph_analysis import inference_server
 from sovara.server.priors_backend import server as priors_backend_server
 
 logger = create_file_logger(MAIN_SERVER_LOG)
+
+
+def _clear_startup_lock() -> None:
+    try:
+        os.remove(MAIN_SERVER_STARTUP_LOCK)
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        logger.warning("Could not remove startup lock %s: %s", MAIN_SERVER_STARTUP_LOCK, exc)
 
 
 @asynccontextmanager
@@ -47,6 +57,7 @@ async def lifespan(app: FastAPI):
     monitor_task = asyncio.create_task(inactivity_monitor())
 
     logger.info("Server ready")
+    _clear_startup_lock()
     yield
 
     monitor_task.cancel()

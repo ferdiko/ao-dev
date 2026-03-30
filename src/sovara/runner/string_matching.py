@@ -27,6 +27,8 @@ MIN_MATCH_WORDS = 3
 
 # Minimum fraction of output words that must appear in the input
 MIN_OUTPUT_COVERAGE = 0.8
+_PRIORS_BLOCK_RE = re.compile(r"<sovara-priors>.*?</sovara-priors>", re.DOTALL)
+_COLLAPSE_BLANKS_RE = re.compile(r"\n{3,}")
 
 
 # ===========================================================
@@ -105,6 +107,14 @@ def tokenize(text: str) -> List[str]:
     return cleaned.split()
 
 
+def _strip_priors_blocks(text: str) -> str:
+    if not text or "<sovara-priors>" not in text:
+        return text
+    stripped = _PRIORS_BLOCK_RE.sub("", text)
+    stripped = _COLLAPSE_BLANKS_RE.sub("\n\n", stripped)
+    return stripped.strip()
+
+
 def compute_longest_match(output_words: List[str], input_words: List[str]) -> int:
     """Return length of longest contiguous matching word sequence."""
     if not output_words or not input_words:
@@ -135,7 +145,9 @@ def extract_input_strings(input_dict: Dict[str, Any], api_type: str) -> List[str
         flattened = flatten(
             json.loads(func_kwargs_to_json_str(input_dict, api_type)[0])["to_show"], "."
         )
-        return _filter_excluded_keys(flattened)
+        values = _filter_excluded_keys(flattened)
+        normalized_values = [_strip_priors_blocks(value).strip() for value in values]
+        return [value for value in normalized_values if value]
     except Exception as e:
         logger.error(f"Error extracting input strings: {e}")
         return []

@@ -55,16 +55,15 @@ class CacheOutput:
     """
 
     input_dict: dict
-    display_input_dict: Optional[dict]
     output: Optional[Any]
     node_uuid: Optional[str]
     input_pickle: bytes
-    display_input_pickle: bytes | str | None
     input_hash: str
     run_id: str
     stack_trace: Optional[str] = None
     node_kind: Optional[str] = None
     input_delta_json: str = "[]"
+    prior_result: Any = None
 
 
 class DatabaseManager:
@@ -662,7 +661,7 @@ class DatabaseManager:
         file_paths = [self.get_file_path(attachment_id) for attachment_id in attachment_ids]
         return [f for f in file_paths if f is not None]
 
-    def get_in_out(self, input_dict: dict, api_type: str, *, cache_input_dict: dict | None = None) -> CacheOutput:
+    def get_in_out(self, input_dict: dict, api_type: str, *, prepare_runtime_priors: bool = False) -> CacheOutput:
         """Get input/output for LLM call, handling caching and overwrites."""
         from sovara.runner.context_manager import get_run_id
         from sovara.common.utils import hash_input, set_seed
@@ -670,15 +669,24 @@ class DatabaseManager:
 
         # Capture stack trace early (before any internal calls pollute it)
         stack_trace = capture_stack_trace()
-        node_kind = get_node_kind(input_dict, api_type)
-
-        display_input_dict = input_dict
-        display_input_pickle, _ = func_kwargs_to_json_str(display_input_dict, api_type)
-        cache_input_dict = cache_input_dict or input_dict
-        input_pickle, _ = func_kwargs_to_json_str(cache_input_dict, api_type)
-        input_hash = hash_input(input_pickle)
-
         run_id = get_run_id()
+        node_kind = get_node_kind(input_dict, api_type)
+        prior_result = None
+
+        working_input_dict = input_dict
+        if prepare_runtime_priors and node_kind == "llm" and api_type in {
+            "httpx.Client.send",
+            "httpx.AsyncClient.send",
+            "requests.Session.send",
+            "genai.BaseApiClient.async_request",
+        }:
+            from sovara.runner.priors import prepare_llm_call_for_priors
+
+            prior_result = prepare_llm_call_for_priors(input_dict, api_type)
+            working_input_dict = prior_result.executed_input_dict
+
+        input_pickle, _ = func_kwargs_to_json_str(working_input_dict, api_type)
+        input_hash = hash_input(input_pickle)
 
         occurrence = self._next_occurrence(run_id, input_hash)
         row = self.backend.get_llm_call_by_run_and_hash_query(run_id, input_hash, offset=occurrence)
@@ -688,16 +696,16 @@ class DatabaseManager:
                 f"Cache miss: run_id {str(run_id)[:4]}, input_hash {str(input_hash)[:4]}"
             )
             return CacheOutput(
-                input_dict=cache_input_dict,
-                display_input_dict=display_input_dict,
+                input_dict=working_input_dict,
                 output=None,
                 node_uuid=None,
                 input_pickle=input_pickle,
-                display_input_pickle=display_input_pickle,
                 input_hash=input_hash,
                 run_id=run_id,
                 stack_trace=stack_trace,
                 node_kind=node_kind,
+                input_delta_json=prior_result.input_delta_json if prior_result is not None else "[]",
+                prior_result=prior_result,
             )
 
         node_uuid = row["node_uuid"]
@@ -707,7 +715,7 @@ class DatabaseManager:
             logger.debug(
                 f"Cache hit (input overwritten): run_id {str(run_id)[:4]}, input_hash {str(input_hash)[:4]}"
             )
-            display_input_dict = json_str_to_original_inp_dict(row["input_overwrite"], display_input_dict, api_type)
+            working_input_dict = json_str_to_original_inp_dict(row["input_overwrite"], working_input_dict, api_type)
 
         # TODO We can't distinguish between output and output_overwrite
         if row["output"] is not None:
@@ -718,16 +726,16 @@ class DatabaseManager:
 
         set_seed(node_uuid)
         return CacheOutput(
-            input_dict=cache_input_dict,
-            display_input_dict=display_input_dict,
+            input_dict=working_input_dict,
             output=output,
             node_uuid=node_uuid,
             input_pickle=input_pickle,
-            display_input_pickle=display_input_pickle,
             input_hash=input_hash,
             run_id=run_id,
             stack_trace=stack_trace,
             node_kind=node_kind,
+            input_delta_json=prior_result.input_delta_json if prior_result is not None else "[]",
+            prior_result=prior_result,
         )
 
     def cache_output(
@@ -748,7 +756,7 @@ class DatabaseManager:
             output_json_str = api_obj_to_json_str(output_obj, api_type)
             self.backend.insert_llm_call_with_output_query(
                 cache_result.run_id,
-                cache_result.display_input_pickle or cache_result.input_pickle,
+                cache_result.input_pickle,
                 cache_result.input_hash,
                 node_uuid,
                 api_type,
@@ -949,7 +957,6 @@ class DatabaseManager:
         return {
             "run_id": row["run_id"],
             "node_uuid": row["node_uuid"],
-            "status": row["status"],
             "retrieval_context": row["retrieval_context"] or "",
             "inherited_prior_ids": self._decode_json_column(row["inherited_prior_ids_json"], []),
             "applied_priors": self._decode_json_column(row["applied_priors_json"], []),
@@ -977,7 +984,6 @@ class DatabaseManager:
         run_id: str,
         node_uuid: str,
         *,
-        status: str,
         retrieval_context: str = "",
         inherited_prior_ids: list[str] | None = None,
         applied_priors: list[dict[str, Any]] | None = None,
@@ -992,7 +998,6 @@ class DatabaseManager:
         self.backend.upsert_prior_retrieval_query(
             run_id,
             node_uuid,
-            status,
             retrieval_context,
             json.dumps(inherited_prior_ids or []),
             json.dumps(applied_priors or []),
