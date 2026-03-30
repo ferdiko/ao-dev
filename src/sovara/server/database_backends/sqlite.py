@@ -336,6 +336,13 @@ def _ensure_llm_calls_schema(conn):
 
 
 def _ensure_prior_schema(conn):
+    dropped_legacy_lessons_applied = (
+        conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='lessons_applied'"
+        ).fetchone()
+        is not None
+    )
+    conn.execute("DROP TABLE IF EXISTS lessons_applied")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS prior_retrievals (
@@ -363,6 +370,8 @@ def _ensure_prior_schema(conn):
         CREATE INDEX IF NOT EXISTS prior_retrievals_run_idx ON prior_retrievals(run_id)
         """
     )
+    if dropped_legacy_lessons_applied:
+        logger.info("Dropped legacy lessons_applied table")
     conn.commit()
 
 

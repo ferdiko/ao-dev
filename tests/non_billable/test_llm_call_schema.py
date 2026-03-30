@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 
@@ -6,6 +7,7 @@ import httpx
 
 from sovara.common.constants import TEST_PROJECT_ID, TEST_USER_ID
 from sovara.runner.monkey_patching.patching_utils import get_node_kind
+from sovara.server.database_backends.sqlite import _ensure_prior_schema
 from sovara.server.database_manager import DB
 
 
@@ -176,3 +178,29 @@ def test_get_in_out_hashes_and_stores_executed_input(monkeypatch):
     finally:
         DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
         DB._occurrence_counters.clear()
+
+
+def test_ensure_prior_schema_drops_legacy_lessons_applied_table():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE lessons_applied (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lesson_id TEXT NOT NULL,
+            run_id TEXT NOT NULL
+        )
+        """
+    )
+
+    _ensure_prior_schema(conn)
+
+    legacy_table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='lessons_applied'"
+    ).fetchone()
+    prior_table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='prior_retrievals'"
+    ).fetchone()
+
+    assert legacy_table is None
+    assert prior_table is not None
