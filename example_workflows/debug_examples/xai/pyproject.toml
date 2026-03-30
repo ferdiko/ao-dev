@@ -1,0 +1,12 @@
+[project]
+name = "sovara-examples-xai"
+version = "0.1.0"
+description = "Sovara debug examples for xAI"
+requires-python = ">=3.10"
+dependencies = [
+    "sovara",
+    "openai",
+]
+
+[tool.uv.sources]
+sovara = { path = "../../..", editable = true }

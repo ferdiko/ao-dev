@@ -146,6 +146,8 @@ WHITELIST_ENDPOINT_PATTERNS = [
     (r".*", r"/v1/messages"),  # Anthropic
     (r".*", r"/v1/responses"),  # OpenAI
     (r".*", r"/v1/chat/completions"),  # OpenAI
+    (r".*bedrock-runtime\..*amazonaws\.com", r"/model/[^/]+/(?:converse|converse-stream)"),  # Bedrock Converse
+    (r".*bedrock-runtime\..*amazonaws\.com", r"/model/[^/]+/(?:invoke|invoke-with-response-stream)"),  # Bedrock Invoke
     (r".*", r"models/[^/]+:generateContent"),  # Google GenAI
     (r".*", r"models/[^/]+:streamGenerateContent"),  # Google GenAI
     (r".*", r"/api/chat"),  # Ollama
@@ -475,10 +477,32 @@ def _format_slug_family(match: re.Match[str]) -> str:
 
 
 # Exact match patterns for known models -> clean display names
-# These are matched against the raw model name before cleanup rules are applied
+# These are matched against the raw model name before cleanup rules are applied.
 # Order matters: more specific patterns should come before general ones.
-# Keep this list for truly irregular aliases that cannot be derived from family formatters.
-MODEL_NAME_PATTERNS: list[tuple[str, str]] = []
+# Keep this list for irregular aliases that cannot be derived from family formatters.
+MODEL_NAME_PATTERNS: list[tuple[str, str]] = [
+    # xAI - Grok 4 series aliases
+    (r"^grok-4\.20-multi-agent-beta-\d{4}$", "Grok 4.20 Multi-Agent Beta"),
+    (r"^grok-4\.20(?:-beta(?:-latest(?:-non-reasoning)?)?)?$", "Grok 4.20 Beta"),
+    (r"^grok-4-fast-(?:reasoning|non-reasoning)$", "Grok 4 Fast"),
+    (r"^grok-4(?:-latest|-0709)?$", "Grok 4"),
+    # Cohere
+    (r"^command-a-03-2025$", "Command A"),
+    # Amazon - Bedrock model IDs
+    (r"^(?:[a-z]{2}\.)?amazon\.nova-premier-v1(?::0)?$", "Amazon Nova Premier"),
+    (r"^(?:[a-z]{2}\.)?amazon\.nova-pro-v1(?::0)?$", "Amazon Nova Pro"),
+    (r"^(?:[a-z]{2}\.)?amazon\.nova-lite-v1(?::0)?$", "Amazon Nova Lite"),
+    (r"^(?:[a-z]{2}\.)?amazon\.nova-micro-v1(?::0)?$", "Amazon Nova Micro"),
+    (r"^(?:[a-z]{2}\.)?amazon\.nova-2-sonic-v1(?::0)?$", "Amazon Nova 2 Sonic"),
+    (
+        r"^(?:[a-z]{2}\.)?amazon\.nova-2-multimodal-embeddings-v1(?::0)?$",
+        "Amazon Nova 2 Multimodal Embeddings",
+    ),
+    (r"^(?:[a-z]{2}\.)?amazon\.nova-sonic-v1(?::0)?$", "Amazon Nova Sonic"),
+    # Mistral
+    (r"^magistral-medium-2507$", "Magistral Medium 1.1"),
+    (r"^magistral-small-2507$", "Magistral Small 1.1"),
+]
 COMPILED_MODEL_NAME_PATTERNS = [
     (re.compile(pattern), name) for pattern, name in MODEL_NAME_PATTERNS
 ]

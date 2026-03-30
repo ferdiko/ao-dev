@@ -11,6 +11,7 @@ PATCHES = {
     "google.genai": ("sovara.runner.monkey_patching.patches.genai_patch", "genai_patch"),
     "numpy": ("sovara.runner.monkey_patching.patches.randomness_patch", "numpy_seed_patch"),
     "torch": ("sovara.runner.monkey_patching.patches.randomness_patch", "torch_seed_patch"),
+    "urllib3": ("sovara.runner.monkey_patching.patches.urllib3_patch", "urllib3_patch"),
     "uuid": ("sovara.runner.monkey_patching.patches.randomness_patch", "uuid_patch"),
     "httpx": ("sovara.runner.monkey_patching.patches.httpx_patch", "httpx_patch"),
     "claude_agent_sdk": ("sovara.runner.monkey_patching.patches.claude_sdk_patch", "claude_sdk_patch"),

@@ -68,7 +68,9 @@ uv run pytest tests/billable/ -v -s
 
 !!! warning "API Keys Required"
     Billable tests require environment variables for API keys:
-    `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `TOGETHER_API_KEY`, etc.
+    `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `TOGETHER_API_KEY`, `XAI_API_KEY`,
+    or AWS credentials such as `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+    and `AWS_REGION`.
 
 !!! note "Quoting in zsh"
     If using zsh, quote test paths with brackets to prevent shell expansion:
@@ -97,7 +99,7 @@ Billable tests run example scripts that make real LLM API calls. Each provider h
 example_workflows/debug_examples/<provider>/
 ```
 
-Existing providers: `anthropic`, `openai`, `langchain`, `together`, `google`, `mcp`, `subruns`
+Existing providers: `anthropic`, `openai`, `langchain`, `together`, `google`, `mcp`, `subruns`, `xai`, `nova`
 
 **2. Add your test script:**
 
