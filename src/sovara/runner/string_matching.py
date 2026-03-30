@@ -16,6 +16,7 @@ from flatten_json import flatten
 from sovara.common.logger import logger
 from sovara.common.constants import COMPILED_STRING_MATCH_EXCLUDE_PATTERNS
 from sovara.runner.monkey_patching.api_parser import func_kwargs_to_json_str, api_obj_to_json_str
+from sovara.runner.priors_pipeline import strip_priors_blocks_exact
 
 
 # ===========================================================
@@ -27,10 +28,6 @@ MIN_MATCH_WORDS = 3
 
 # Minimum fraction of output words that must appear in the input
 MIN_OUTPUT_COVERAGE = 0.8
-_PRIORS_BLOCK_RE = re.compile(r"<sovara-priors>.*?</sovara-priors>", re.DOTALL)
-_COLLAPSE_BLANKS_RE = re.compile(r"\n{3,}")
-
-
 # ===========================================================
 # Match Criteria
 # ===========================================================
@@ -110,9 +107,7 @@ def tokenize(text: str) -> List[str]:
 def _strip_priors_blocks(text: str) -> str:
     if not text or "<sovara-priors>" not in text:
         return text
-    stripped = _PRIORS_BLOCK_RE.sub("", text)
-    stripped = _COLLAPSE_BLANKS_RE.sub("\n\n", stripped)
-    return stripped.strip()
+    return strip_priors_blocks_exact(text).strip()
 
 
 def compute_longest_match(output_words: List[str], input_words: List[str]) -> int:

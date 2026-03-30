@@ -12,7 +12,7 @@ from sovara.runner.monkey_patching.api_parser import flatten_to_show, unflatten_
 
 _PRIORS_BLOCK_RE = re.compile(r"<sovara-priors>.*?</sovara-priors>", re.DOTALL)
 _MANIFEST_RE = re.compile(r"<!--\s*(\{.*?\})\s*-->", re.DOTALL)
-_COLLAPSE_BLANKS_RE = re.compile(r"\n{3,}")
+_PRIORS_BLOCK_WITH_SEPARATOR_RE = re.compile(r"<sovara-priors>.*?</sovara-priors>\n\n", re.DOTALL)
 
 _PREFERRED_EXACT_ANCHORS = [
     "body.system",
@@ -104,11 +104,15 @@ def strip_priors_from_flattened(flattened_to_show: dict[str, Any]) -> tuple[dict
                 inherited_prior_ids.append(prior_id)
         warnings.extend(parse_warnings)
 
-        stripped = _PRIORS_BLOCK_RE.sub("", value)
-        stripped = _COLLAPSE_BLANKS_RE.sub("\n\n", stripped).strip()
-        cleaned[key] = stripped
+        cleaned[key] = strip_priors_blocks_exact(value)
 
     return cleaned, inherited_prior_ids, warnings
+
+
+def strip_priors_blocks_exact(value: str) -> str:
+    """Remove managed priors blocks without altering unrelated prompt whitespace."""
+    without_prefixed_blocks = _PRIORS_BLOCK_WITH_SEPARATOR_RE.sub("", value)
+    return _PRIORS_BLOCK_RE.sub("", without_prefixed_blocks)
 
 
 def _flattened_key_sort_key(key: str) -> tuple[Any, ...]:

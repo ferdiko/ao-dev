@@ -47,6 +47,24 @@ def test_strip_priors_from_flattened_extracts_manifest_ids_and_warns_on_manual_b
     assert warnings == ["Stripped a manual <sovara-priors> block without a manifest."]
 
 
+def test_strip_priors_from_flattened_preserves_user_blank_lines_outside_managed_block():
+    flattened = {
+        "body.instructions": (
+            "<sovara-priors>\n"
+            '<!-- {"priors":[{"id":"p1"}]} -->\n'
+            "## Retry\nRetry once.\n"
+            "</sovara-priors>\n\n"
+            "Heading\n\n\n\nBody"
+        )
+    }
+
+    cleaned, inherited_prior_ids, warnings = strip_priors_from_flattened(flattened)
+
+    assert inherited_prior_ids == ["p1"]
+    assert warnings == []
+    assert cleaned["body.instructions"] == "Heading\n\n\n\nBody"
+
+
 def test_extract_prompt_bearing_keys_in_order_without_role_fields():
     flattened = {
         "body.messages.1.role": "assistant",
