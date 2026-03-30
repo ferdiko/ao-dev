@@ -67,31 +67,18 @@ def _extract_name_from_url(input_dict: Dict[str, Any], api_type: str) -> Optiona
     Returns None if extraction fails.
     """
     try:
-        # Get URL based on API type
-        if api_type == "requests.Session.send":
-            url = str(input_dict["request"].url)
-            path = input_dict["request"].path_url
-        elif api_type in ["httpx.Client.send", "httpx.AsyncClient.send"]:
-            url = str(input_dict["request"].url)
-            path = input_dict["request"].url.path
-        elif api_type == "genai.BaseApiClient.async_request":
-            path = input_dict.get("path", "")
-            url = path  # genai doesn't have full URL
-        elif api_type == "MCP.ClientSession.send_request":
-            # MCP doesn't have URL-based fallback traditionally, but we can try
-            return None
-        else:
+        url, path = _extract_request_url_and_path(input_dict, api_type)
+        if not url:
             return None
 
         # Try regex pattern for /models/xxx:<path> or models/xxx:<path>
-        match = re.search(r"/?models/([^/:]+)", path)
+        match = re.search(r"/?models/([^/:]+)", path or "")
         if match:
             return match.group(1)
 
-        # Try known URL patterns (tools like Serper, Brave, etc.)
-        for pattern, name in COMPILED_URL_PATTERN_TO_NODE_NAME:
-            if pattern.search(url):
-                return name
+        tool_name = get_tool_name_for_url(url)
+        if tool_name:
+            return tool_name
 
         # Last resort: return the path itself
         if url:
@@ -195,8 +182,8 @@ def is_whitelisted_endpoint(url: str, path: str) -> bool:
     return False
 
 
-def get_node_name_for_url(url: str) -> Optional[str]:
-    """Return the display name for a URL if it matches any pattern, else None."""
+def get_tool_name_for_url(url: str) -> Optional[str]:
+    """Return the display name for a known tool URL if it matches any pattern, else None."""
     for pattern, name in COMPILED_URL_PATTERN_TO_NODE_NAME:
         if pattern.search(url):
             return name
@@ -240,7 +227,7 @@ def get_node_kind(input_dict: Dict[str, Any], api_type: str) -> str:
     if _is_embedding_path(path):
         return "tool"
 
-    if url and get_node_name_for_url(url):
+    if url and get_tool_name_for_url(url):
         return "tool"
 
     return "llm"

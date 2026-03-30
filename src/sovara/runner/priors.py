@@ -41,7 +41,7 @@ class PriorRuntimeMetadata:
     status: str
     retrieval_context: str = ""
     inherited_prior_ids: list[str] = field(default_factory=list)
-    applied_priors: list[dict[str, Any]] = field(default_factory=list)
+    newly_applied_priors: list[dict[str, Any]] = field(default_factory=list)
     rendered_priors_block: str = ""
     injection_anchor: dict[str, Any] | None = None
     model: str | None = None
@@ -300,16 +300,16 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
             timeout=_INTERNAL_PRIORS_HTTP_TIMEOUT_S,
         )
         metadata.latency_ms = int((time.perf_counter() - started_at) * 1000)
-        metadata.applied_priors = list(response.get("priors") or [])
+        metadata.newly_applied_priors = list(response.get("priors") or [])
         metadata.rendered_priors_block = str(response.get("rendered_priors_block") or "")
         metadata.model = response.get("model_used")
-        metadata.status = "applied" if metadata.applied_priors else "none"
+        metadata.status = "applied" if metadata.newly_applied_priors else "none"
         _runtime_log(
             "info",
             "[PRIORS RUNTIME] retrieval complete",
             status=metadata.status,
             latency_ms=metadata.latency_ms,
-            applied_ids=[prior.get("id") for prior in metadata.applied_priors],
+            applied_ids=[prior.get("id") for prior in metadata.newly_applied_priors],
             model=metadata.model,
         )
 
@@ -325,7 +325,7 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
         effective_prior_ids = _unique_prior_ids(
             inherited_prior_ids + [
                 str(prior.get("id"))
-                for prior in metadata.applied_priors
+                for prior in metadata.newly_applied_priors
                 if isinstance(prior.get("id"), str) and prior.get("id")
             ]
         )
@@ -384,7 +384,7 @@ def persist_prior_metadata(run_id: str, node_uuid: str, metadata: PriorRuntimeMe
         node_uuid,
         retrieval_context=metadata.retrieval_context,
         inherited_prior_ids=metadata.inherited_prior_ids,
-        applied_priors=metadata.applied_priors,
+        applied_priors=metadata.newly_applied_priors,
         rendered_priors_block=metadata.rendered_priors_block,
         injection_anchor=metadata.injection_anchor,
         model=metadata.model,
@@ -393,7 +393,7 @@ def persist_prior_metadata(run_id: str, node_uuid: str, metadata: PriorRuntimeMe
         warning_message=metadata.warning_message,
         error_message=metadata.error_message,
     )
-    for prior in metadata.applied_priors:
+    for prior in metadata.newly_applied_priors:
         prior_id = prior.get("id")
         if isinstance(prior_id, str) and prior_id:
             DB.add_prior_applied(prior_id, run_id, node_uuid)

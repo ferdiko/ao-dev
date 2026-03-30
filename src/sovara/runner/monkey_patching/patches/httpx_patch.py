@@ -82,7 +82,7 @@ def patch_httpx_send(bound_obj, bound_cls):
             source_node_ids=source_node_ids,
             api_type=api_type,
             stack_trace=cache_output.stack_trace,
-            prior_count=len(prior_result.metadata.applied_priors) if prior_result is not None else None,
+            prior_count=len(prior_result.metadata.newly_applied_priors) if prior_result is not None else None,
         )
 
         return cache_output.output
@@ -132,7 +132,7 @@ def patch_async_httpx_send(bound_obj, bound_cls):
             source_node_ids=source_node_ids,
             api_type=api_type,
             stack_trace=cache_output.stack_trace,
-            prior_count=len(prior_result.metadata.applied_priors) if prior_result is not None else None,
+            prior_count=len(prior_result.metadata.newly_applied_priors) if prior_result is not None else None,
         )
 
         return cache_output.output
