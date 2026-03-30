@@ -3,12 +3,13 @@
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ....llm_backend import infer
+from ....llm_backend import NO_THINKING_EXTRA_BODY, infer
 from ..logger import get_logger
 from ..utils.step_ids import resolve_step_index
 from ..utils.trace import Trace, extract_tag, render_record_markdown
 
 logger = get_logger()
+_VERIFY_STEP_MAX_TOKENS = 512
 
 VERIFY_STEP_SYSTEM = """\
 You verify whether a single step's output is correct given its instructions and input.
@@ -23,18 +24,30 @@ step may have produced the best possible output given bad input
 Respond with exactly this format:
 <summary>2-3 sentence assessment</summary>
 <verdict>CORRECT or WRONG or UNCERTAIN</verdict>
+Do not output anything else.
 """
 
 
 def _parse_verdict(raw: str) -> tuple:
     """Extract verdict and summary from the verifier response."""
+    raw = (raw or "").strip()
+    if not raw:
+        return "UNKNOWN", "Verifier returned empty content."
+
     summary = extract_tag(raw, "summary")
-    verdict_text = extract_tag(raw, "verdict", "UNCERTAIN").upper()
-    verdict = "UNCERTAIN"
+    verdict_text = extract_tag(raw, "verdict").upper()
+    if not verdict_text:
+        return "UNKNOWN", "Verifier response was missing a <verdict> tag."
+
+    verdict = None
     for v in ("CORRECT", "WRONG", "UNCERTAIN"):
         if verdict_text.startswith(v):
             verdict = v
             break
+    if verdict is None:
+        return "UNKNOWN", f"Verifier returned an unrecognized verdict: {verdict_text!r}."
+    if not summary:
+        return "UNKNOWN", "Verifier response was missing a non-empty <summary> tag."
     return verdict, summary
 
 
@@ -53,11 +66,23 @@ def _verify_one(trace: Trace, index: int, record):
             [{"role": "system", "content": VERIFY_STEP_SYSTEM},
              {"role": "user", "content": user_msg}],
             tier="cheap",
-            max_tokens=256,
+            extra_body=NO_THINKING_EXTRA_BODY,
+            max_tokens=_VERIFY_STEP_MAX_TOKENS,
         )
-        raw = response.choices[0].message.content or ""
+        choice = response.choices[0]
+        message = choice.message
+        raw = message.content or ""
         verdict, justification = _parse_verdict(raw)
-        trace.verdict_cache[index] = (verdict, justification)
+        if verdict != "UNKNOWN":
+            trace.verdict_cache[index] = (verdict, justification)
+        else:
+            logger.warning(
+                "VERIFY step %d malformed verifier response finish_reason=%r reasoning_chars=%d raw=%r",
+                step_id,
+                getattr(choice, "finish_reason", None),
+                len(getattr(message, "reasoning_content", None) or ""),
+                raw[:400],
+            )
         logger.info(
             "VERIFY step %d done in %.1fs verdict=%s",
             step_id,
@@ -146,32 +171,35 @@ def verify(trace: Trace, step_id=None) -> str:
     lines = []
     wrong = []
     uncertain = []
+    unknown = []
 
     for idx, verdict, justification in results:
-        marker = ""
         if verdict == "WRONG":
-            marker = " ← ERROR"
             wrong.append(idx + 1)
         elif verdict == "UNCERTAIN":
-            marker = " ← UNCERTAIN"
             uncertain.append(idx + 1)
-        lines.append(f"Step {idx + 1}: {verdict}{marker}")
+        elif verdict == "UNKNOWN":
+            unknown.append(idx + 1)
+        lines.append(f"Step {idx + 1}: {verdict}")
         if justification:
             lines.append(f"  {justification}")
 
     header_parts = [f"{len(trace)} steps verified"]
     if wrong:
-        header_parts.append(f"{len(wrong)} error(s) at step(s) {wrong}")
+        header_parts.append(f"{len(wrong)} wrong at step(s) {wrong}")
     if uncertain:
         header_parts.append(f"{len(uncertain)} uncertain at step(s) {uncertain}")
-    if not wrong and not uncertain:
+    if unknown:
+        header_parts.append(f"{len(unknown)} unknown at step(s) {unknown}")
+    if not wrong and not uncertain and not unknown:
         header_parts.append("all correct")
 
     logger.info(
-        "VERIFY all done in %.1fs: total_steps=%d wrong=%d uncertain=%d",
+        "VERIFY all done in %.1fs: total_steps=%d wrong=%d uncertain=%d unknown=%d",
         time.monotonic() - t0,
         len(trace),
         len(wrong),
         len(uncertain),
+        len(unknown),
     )
     return " | ".join(header_parts) + "\n\n" + "\n".join(lines)

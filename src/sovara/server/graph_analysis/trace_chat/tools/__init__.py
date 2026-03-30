@@ -115,7 +115,7 @@ TOOLS_SCHEMA = [
             "name": "verify",
             "description": (
                 "Checks whether a step's output is correct given its instructions. "
-                "Returns CORRECT/WRONG/UNCERTAIN with explanation. "
+                "Returns CORRECT/WRONG/UNCERTAIN, or UNKNOWN when the verifier response is malformed. "
                 "If step_id is omitted, verifies ALL steps (may be slow)."
             ),
             "parameters": {

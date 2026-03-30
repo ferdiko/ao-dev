@@ -1,4 +1,6 @@
 import logging
+import os
+from pathlib import Path
 
 
 def setup_logging():
@@ -21,32 +23,51 @@ def setup_logging():
     return root
 
 
-def create_file_logger(log_file: str) -> logging.Logger:
+_FILE_FORMATTER = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+
+def create_file_logger(
+    log_file: str,
+    *,
+    logger_name: str | None = None,
+    level: int = logging.DEBUG,
+    replace_handlers: bool = False,
+    formatter: logging.Formatter | None = None,
+) -> logging.Logger:
     """
-    Create a logger with file handler for server components.
+    Create or configure a file-backed logger for server components.
 
     Args:
         log_file: Path to the log file
+        logger_name: Logger name to configure. Defaults to the log file path.
+        level: Logging level for the logger and file handler.
+        replace_handlers: Whether to replace existing handlers on that logger.
+        formatter: Optional formatter override for the file handler.
 
     Returns:
         Configured logger instance
     """
-    file_logger = logging.getLogger(log_file)
+    file_logger = logging.getLogger(logger_name or log_file)
+    resolved = str(Path(log_file).expanduser().resolve())
 
-    # Avoid adding duplicate handlers
-    if file_logger.handlers:
+    if file_logger.handlers and not replace_handlers:
         return file_logger
 
-    file_logger.setLevel(logging.DEBUG)  # NOTE: This is server logs, can stay DEBUG
-    file_logger.propagate = False  # Don't propagate to root logger
+    if replace_handlers:
+        for handler in list(file_logger.handlers):
+            file_logger.removeHandler(handler)
+            try:
+                handler.close()
+            except Exception:
+                pass
 
-    # File handler
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(logging.DEBUG)
+    file_logger.setLevel(level)
+    file_logger.propagate = False
 
-    # Formatter
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    file_handler.setFormatter(formatter)
+    os.makedirs(os.path.dirname(resolved), exist_ok=True)
+    file_handler = logging.FileHandler(resolved, mode="a")
+    file_handler.setLevel(level)
+    file_handler.setFormatter(formatter or _FILE_FORMATTER)
 
     file_logger.addHandler(file_handler)
     return file_logger

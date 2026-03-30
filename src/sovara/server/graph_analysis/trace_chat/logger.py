@@ -1,10 +1,14 @@
 import logging
-import os
-from pathlib import Path
 
 from sovara.common.constants import INFERENCE_SERVER_LOG
+from sovara.common.logger import create_file_logger
 
 LOGGER_NAME = "sovara_agent"
+_EXTERNAL_LOGGER_NAMES = (
+    "LiteLLM",
+    "LiteLLM Proxy",
+    "LiteLLM Router",
+)
 _FORMATTER = logging.Formatter(
     "%(asctime)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
@@ -47,34 +51,25 @@ def format_log_event_banner(
 
 
 def configure_logger(log_file: str, *, level: int = logging.INFO) -> logging.Logger:
-    logger = get_logger()
-    resolved = str(Path(log_file).expanduser().resolve())
-
-    for handler in list(logger.handlers):
-        logger.removeHandler(handler)
-        try:
-            handler.close()
-        except Exception:
-            pass
-
-    os.makedirs(os.path.dirname(resolved), exist_ok=True)
-    file_handler = logging.FileHandler(resolved, mode="a")
-    file_handler.setLevel(level)
-    file_handler.setFormatter(_FORMATTER)
-
-    logger.setLevel(level)
-    logger.propagate = False
-    logger.addHandler(file_handler)
+    logger = create_file_logger(
+        log_file,
+        logger_name=LOGGER_NAME,
+        level=level,
+        replace_handlers=True,
+        formatter=_FORMATTER,
+    )
+    file_handler = logger.handlers[0]
+    for external_logger_name in _EXTERNAL_LOGGER_NAMES:
+        external_logger = logging.getLogger(external_logger_name)
+        for existing_handler in list(external_logger.handlers):
+            external_logger.removeHandler(existing_handler)
+        external_logger.setLevel(logging.WARNING)
+        external_logger.propagate = False
+        external_logger.addHandler(file_handler)
     return logger
 
 
 def ensure_standalone_logger() -> logging.Logger:
-    logger = get_logger()
-    target = str(Path(INFERENCE_SERVER_LOG).expanduser().resolve())
-    for handler in logger.handlers:
-        base_filename = getattr(handler, "baseFilename", None)
-        if base_filename and str(Path(base_filename).resolve()) == target:
-            return logger
     return configure_logger(INFERENCE_SERVER_LOG, level=logging.INFO)
 
 

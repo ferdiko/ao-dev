@@ -667,6 +667,33 @@ def test_summarize_trace_keeps_internal_three_sentence_step_summaries(monkeypatc
     )
 
 
+def test_summarize_trace_synthesis_uses_cheap_no_thinking(monkeypatch):
+    trace = Trace.from_string(
+        """{"system_prompt":"You are concise.","input":[{"role":"user","content":"Hello"}],"output":"ok","name":"demo"}"""
+    )
+    summarize_module = importlib.import_module("sovara.server.graph_analysis.trace_chat.tools.summarize_trace")
+    step_overview_module = importlib.import_module(
+        "sovara.server.graph_analysis.trace_chat.tools.get_step_overview"
+    )
+    synth_kwargs: dict[str, object] = {}
+
+    def fake_infer_text(messages, **kwargs):
+        if messages[0]["content"] == summarize_module.SYNTHESIZE_SYSTEM:
+            synth_kwargs.update(kwargs)
+            return "Trace summary"
+        return "Sentence one. Sentence two. Sentence three."
+
+    monkeypatch.setattr(summarize_module, "infer_text", fake_infer_text)
+    monkeypatch.setattr(step_overview_module, "infer_text", fake_infer_text)
+
+    result = summarize_module.summarize_trace(trace)
+
+    assert result == "Trace summary"
+    assert synth_kwargs["tier"] == "cheap"
+    assert synth_kwargs["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+    assert synth_kwargs["max_tokens"] == summarize_module._SYNTHESIS_MAX_TOKENS
+
+
 def test_generate_summary_logs_prefetch_tagged_progress(monkeypatch):
     trace = Trace.from_string(
         "\n".join([
@@ -708,6 +735,62 @@ def test_generate_summary_logs_prefetch_tagged_progress(monkeypatch):
         and args[0] == "[prefetch run_id=run-1]"
         for message, args in logs
     )
+
+
+def test_generate_summary_uses_fallback_for_unfinished_step_summaries(monkeypatch):
+    trace = Trace.from_string(
+        "\n".join([
+            """{"system_prompt":"You are concise.","input":[{"role":"user","content":"Hello"}],"output":"ok","name":"demo"}""",
+            """{"system_prompt":"You are concise.","input":[{"role":"user","content":"Hello again"}],"output":"done","name":"demo"}""",
+        ])
+    )
+    trace.run_id = "run-1"
+    summarize_module = importlib.import_module("sovara.server.graph_analysis.trace_chat.tools.summarize_trace")
+    synth_inputs: list[str] = []
+    pool_state: dict[str, object] = {}
+
+    class FakeFuture:
+        pass
+
+    class FakePool:
+        def __init__(self, max_workers):
+            pool_state["max_workers"] = max_workers
+            pool_state["shutdown_calls"] = []
+
+        def submit(self, fn, trace, step_id):
+            return FakeFuture()
+
+        def shutdown(self, wait=False, cancel_futures=False):
+            pool_state["shutdown_calls"].append((wait, cancel_futures))
+
+    class FakeLogger:
+        def info(self, *args, **kwargs):
+            return None
+
+        def warning(self, *args, **kwargs):
+            return None
+
+        def exception(self, *args, **kwargs):
+            return None
+
+    def fake_infer_text(messages, **kwargs):
+        synth_inputs.append(messages[1]["content"])
+        return "Trace summary"
+
+    monkeypatch.setattr(summarize_module, "get_trace_overview", lambda trace: "overview")
+    monkeypatch.setattr(summarize_module, "ThreadPoolExecutor", FakePool)
+    monkeypatch.setattr(summarize_module, "wait", lambda futures, timeout, return_when: (set(), set(futures)))
+    monkeypatch.setattr(summarize_module, "infer_text", fake_infer_text)
+    monkeypatch.setattr(summarize_module, "logger", FakeLogger())
+
+    result = summarize_module._generate_summary(trace)
+
+    assert result == "Trace summary"
+    assert synth_inputs
+    assert "Step 1 summary:\nThis `demo` step takes" in synth_inputs[0]
+    assert "Step 2 summary:\nThis `demo` step takes" in synth_inputs[0]
+    assert pool_state["max_workers"] == 2
+    assert pool_state["shutdown_calls"] == [(False, True)]
 
 
 def test_read_tools_share_step_id_validation_messages():
@@ -766,4 +849,64 @@ def test_verify_logs_progress_for_all_steps(monkeypatch):
     assert "2 steps verified" in result
     assert ("VERIFY all start: total_steps=%d cached=%d llm_calls=%d", (2, 0, 2)) in logs
     assert any(message == "VERIFY all progress: %d/%d complete (latest step=%d verdict=%s)" for message, _args in logs)
-    assert any(message == "VERIFY all done in %.1fs: total_steps=%d wrong=%d uncertain=%d" for message, _args in logs)
+    assert any(
+        message == "VERIFY all done in %.1fs: total_steps=%d wrong=%d uncertain=%d unknown=%d"
+        for message, _args in logs
+    )
+
+
+def test_verify_returns_error_for_empty_or_malformed_verifier_output(monkeypatch):
+    trace = Trace.from_string(
+        """{"system_prompt":"You are concise.","input":[{"role":"user","content":"Hello"}],"output":"ok","name":"demo"}"""
+    )
+    verify_module = importlib.import_module("sovara.server.graph_analysis.trace_chat.tools.verify")
+
+    monkeypatch.setattr(
+        verify_module,
+        "infer",
+        lambda *args, **kwargs: SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="length",
+                    message=SimpleNamespace(content="", reasoning_content="thinking"),
+                )
+            ]
+        ),
+    )
+
+    result = verify(trace, step_id=1)
+
+    assert result == "Step 1: UNKNOWN\n  Verifier returned empty content."
+    assert trace.verdict_cache == {}
+
+
+def test_verify_all_distinguishes_wrong_from_unknown(monkeypatch):
+    trace = Trace.from_string(
+        "\n".join([
+            """{"system_prompt":"You are concise.","input":[{"role":"user","content":"Hello"}],"output":"ok","name":"demo"}""",
+            """{"system_prompt":"You are concise.","input":[{"role":"user","content":"Hi"}],"output":"bad","correct":false,"summary":"Recorded wrong output.","name":"demo"}""",
+        ])
+    )
+    verify_module = importlib.import_module("sovara.server.graph_analysis.trace_chat.tools.verify")
+
+    monkeypatch.setattr(
+        verify_module,
+        "infer",
+        lambda *args, **kwargs: SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="length",
+                    message=SimpleNamespace(content="", reasoning_content="thinking"),
+                )
+            ]
+        ),
+    )
+
+    result = verify(trace)
+
+    assert result.startswith(
+        "2 steps verified | 1 wrong at step(s) [2] | 1 unknown at step(s) [1]"
+    )
+    assert "Step 1: UNKNOWN" in result
+    assert "Step 2: WRONG" in result
+    assert trace.verdict_cache == {1: ("WRONG", "Recorded wrong output.")}

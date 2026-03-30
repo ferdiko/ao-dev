@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from fastapi import HTTPException
 
+from sovara.common.logger import create_file_logger
 from sovara.server.graph_analysis.inference_server import (
     _ensure_prefetch_future,
     _graph_fingerprint,
@@ -175,6 +176,44 @@ def test_handle_question_logs_llm_exceptions(monkeypatch):
         assert str(exc) == "llm exploded"
 
     assert calls == [("LLM call failed on iteration %d", (1,))]
+
+
+def test_create_file_logger_can_rebind_named_logger(tmp_path):
+    log_a = tmp_path / "a.log"
+    log_b = tmp_path / "b.log"
+    logger_name = "sovara.test.named_logger"
+
+    named_logger = logging.getLogger(logger_name)
+    previous_handlers = list(named_logger.handlers)
+    previous_level = named_logger.level
+    previous_propagate = named_logger.propagate
+
+    try:
+        for handler in list(named_logger.handlers):
+            named_logger.removeHandler(handler)
+
+        first = create_file_logger(str(log_a), logger_name=logger_name, level=logging.INFO)
+        second = create_file_logger(
+            str(log_b),
+            logger_name=logger_name,
+            level=logging.WARNING,
+            replace_handlers=True,
+        )
+
+        assert first is named_logger
+        assert second is named_logger
+        assert named_logger.level == logging.WARNING
+        assert named_logger.propagate is False
+        assert len(named_logger.handlers) == 1
+        assert Path(named_logger.handlers[0].baseFilename) == log_b.resolve()
+    finally:
+        for handler in list(named_logger.handlers):
+            named_logger.removeHandler(handler)
+            handler.close()
+        for handler in previous_handlers:
+            named_logger.addHandler(handler)
+        named_logger.setLevel(previous_level)
+        named_logger.propagate = previous_propagate
 
 
 def test_configure_inference_process_logging_routes_agent_logs_to_inference_file(monkeypatch, tmp_path):

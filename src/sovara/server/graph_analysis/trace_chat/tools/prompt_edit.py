@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Optional, Tuple
 
-from ....llm_backend import infer_text
+from ....llm_backend import NO_THINKING_EXTRA_BODY, infer_text
 from ..utils.content_items import StepContentItem, build_step_content_items
 from ..utils.edit_persist import (
     PersistOutcome,
@@ -431,6 +431,7 @@ def edit_content(trace, instruction, path=None, step_id=None, paragraph=None, co
         [{"role": "user", "content": source_text}],
         system=_edit_system(instruction),
         tier="expensive",
+        extra_body=NO_THINKING_EXTRA_BODY,
         max_tokens=1024,
     ).strip()
 

@@ -319,8 +319,6 @@ def _start_prefetch(trace: Trace, enabled: bool) -> tuple[ThreadPoolExecutor | N
 def run_terminal_chat(trace: Trace, *, prefetch_summary: bool = True) -> None:
     pool, prefetch_future = _start_prefetch(trace, enabled=prefetch_summary)
 
-    print("Chat started. Type 'quit' to exit.\n")
-
     history = []
 
     try:
@@ -379,7 +377,9 @@ def main(argv: Sequence[str] | None = None, *, default_trace_path: str | None = 
 
 
 if __name__ == "__main__":
+    # DEFAULT_STANDALONE_TRACE = "example_traces/miroflow.jsonl"
     DEFAULT_STANDALONE_TRACE = "example_traces/weather_agent.jsonl"
+
     # Quick-and-dirty local debugging examples. Uncomment whatever you want.
     #
     trace, trace_path = _load_trace(
@@ -390,11 +390,11 @@ if __name__ == "__main__":
     #
     # Read-only tool calls:
     # This prints the tool response while the summary prefetch is already running.
-    # print(execute_tool("get_trace_overview", trace, {}))
+    print(execute_tool("get_trace_overview", trace, {}))
     # print(execute_tool("get_step", trace, {"step_id": 1, "view": "full"}))
     # print(execute_tool("get_step", trace, {"step_id": 1, "view": "diff"}))
     # print(execute_tool("get_step", trace, {"step_id": 1, "view": "output"}))
-    print(execute_tool("get_step_overview", trace, {"step_id": 1}))
+    # print(execute_tool("get_step_overview", trace, {"step_id": 1}))
     # print(execute_tool("search", trace, {"query": "weather"}))
     # print(execute_tool("ask_step", trace, {
     #     "step_id": 1,

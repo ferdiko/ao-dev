@@ -6,7 +6,7 @@ from ..utils.step_ids import resolve_step_index
 from ..utils.trace import Trace, blocks_char_count, stringify_field
 
 logger = get_logger()
-MAX_FULL_STEP_CHARS = 5000
+MAX_FULL_STEP_CHARS = 1 # 5000
 MAX_PREVIEW_PARAGRAPHS_PER_BLOCK = 4
 
 

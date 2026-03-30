@@ -6,7 +6,7 @@ history within a character budget.
 
 import logging
 
-from ....llm_backend import infer_text
+from ....llm_backend import NO_THINKING_EXTRA_BODY, infer_text
 
 logger = logging.getLogger("sovara_agent")
 
@@ -34,6 +34,7 @@ def _summarize_tool_result(text: str) -> str:
         [{"role": "user", "content": text}],
         tier="cheap",
         system=COMPACT_SYSTEM,
+        extra_body=NO_THINKING_EXTRA_BODY,
         max_tokens=128,
     )
 

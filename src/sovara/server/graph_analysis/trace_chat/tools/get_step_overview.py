@@ -1,5 +1,6 @@
 """get_step_overview tool — compact step overview with content IDs."""
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 
 from ....llm_backend import infer_text
@@ -11,6 +12,14 @@ from .get_step import build_step_summary
 from .prompt_edit import _get_sections
 
 logger = get_logger()
+_SUMMARY_LINE_RE = re.compile(
+    r"^\s*(?:[-*]\s*)?(?:\d+[.)]\s*)?`?(i\d+)`?\s*(?:\t|:\s*|\|\s*|-\s+)(.+?)\s*$"
+)
+_SUMMARY_TIER = "cheap"
+_SEGMENT_SUMMARY_MAX_TOKENS = 512
+_STEP_SUMMARY_MAX_TOKENS = 2048
+_SUMMARY_EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": False}}
+_SEGMENT_SUMMARY_MAX_WORKERS = 10
 
 STEP_SUMMARIZE_SYSTEM = (
     "You summarize a single step from an AI agent trace. "
@@ -52,54 +61,126 @@ def _fallback_segment_summary(text: str) -> str:
     return " ".join(words[:5])
 
 
-def _summarize_content_items(trace: Trace, step_id: int, items: list[StepContentItem]) -> dict[str, str]:
-    pending_items = [item for item in items if item.summarized]
-
-    if not pending_items:
-        return {}
-
-    lines = []
-    id_map: dict[str, StepContentItem] = {}
-    for idx, item in enumerate(pending_items):
-        item_id = f"i{idx}"
-        id_map[item_id] = item
-        lines.extend([
-            f"{item_id}",
-            f"Path: {item.display_path}",
-            "Text:",
-            item.text or "(empty)",
-            "",
-        ])
-
-    raw = infer_text(
-        [{"role": "system", "content": SEGMENT_SUMMARIZE_SYSTEM},
-         {"role": "user", "content": "\n".join(lines).strip()}],
-        tier="cheap",
-        max_tokens=max(128, 24 * len(pending_items)),
-    )
-    logger.info(
-        "%s segment summaries generated items=%d chars=%d",
-        _content_tag(trace, step=step_id, phase="segment_summaries"),
-        len(pending_items),
-        len(raw),
-    )
-
+def _parse_segment_summary_response(raw: str, id_map: dict[str, StepContentItem]) -> dict[str, str]:
     parsed: dict[str, str] = {}
     for line in raw.splitlines():
-        item_id, sep, label = line.partition("\t")
-        item_id = item_id.strip()
+        stripped = line.strip()
+        if not stripped:
+            continue
+        item_id, sep, label = stripped.partition("\t")
+        item_id = item_id.strip().strip("`")
         label = label.strip()
         if sep and item_id in id_map and label:
             parsed[item_id] = label
-    if len(pending_items) == 1 and not parsed:
+            continue
+
+        match = _SUMMARY_LINE_RE.match(stripped)
+        if match:
+            item_id = match.group(1).strip()
+            label = match.group(2).strip().strip("`")
+            if item_id in id_map and label:
+                parsed[item_id] = label
+
+    if len(id_map) == 1 and not parsed:
         only_item_id = next(iter(id_map))
         fallback_label = raw.strip()
         if fallback_label:
             parsed[only_item_id] = fallback_label
 
+    return parsed
+
+
+def _summarize_one_content_item(
+    item: StepContentItem,
+    *,
+    item_index: int,
+    total: int,
+    phase_tag: str,
+) -> str | None:
+    raw = infer_text(
+        [{"role": "system", "content": SEGMENT_SUMMARIZE_SYSTEM},
+         {"role": "user", "content": "\n".join([
+             "i0",
+             f"Path: {item.display_path}",
+             "Text:",
+             item.text or "(empty)",
+         ]).strip()}],
+        tier=_SUMMARY_TIER,
+        extra_body=_SUMMARY_EXTRA_BODY,
+        max_tokens=_SEGMENT_SUMMARY_MAX_TOKENS,
+    )
+    logger.info(
+        "%s item=%d/%d generated chars=%d",
+        phase_tag,
+        item_index,
+        total,
+        len(raw),
+    )
+    parsed = _parse_segment_summary_response(raw, {"i0": item})
+    label = parsed.get("i0")
+    if not label:
+        logger.warning(
+            "%s item=%d/%d parse shortfall raw=%r",
+            phase_tag,
+            item_index,
+            total,
+            _compact_text(raw)[:400],
+        )
+    return label
+
+
+def _summarize_content_items(trace: Trace, step_id: int, items: list[StepContentItem]) -> dict[str, str]:
+    pending_items = [item for item in items if item.summarized]
+    phase_tag = _content_tag(trace, step=step_id, phase="segment_summaries")
+
+    if not pending_items:
+        logger.info("%s skipped items=0", phase_tag)
+        return {}
+
+    max_workers = min(len(pending_items), _SEGMENT_SUMMARY_MAX_WORKERS)
+    logger.info(
+        "%s start items=%d mode=per_item_parallel max_workers=%d",
+        phase_tag,
+        len(pending_items),
+        max_workers,
+    )
+
     summaries: dict[str, str] = {}
-    for item_id, item in id_map.items():
-        summaries[item.content_id] = parsed.get(item_id) or _fallback_segment_summary(item.text)
+    fallback_count = 0
+    total = len(pending_items)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_item = {
+            executor.submit(
+                _summarize_one_content_item,
+                item,
+                item_index=item_index,
+                total=total,
+                phase_tag=phase_tag,
+            ): item
+            for item_index, item in enumerate(pending_items, start=1)
+        }
+        for future in as_completed(future_to_item):
+            item = future_to_item[future]
+            try:
+                label = future.result()
+            except Exception:
+                logger.exception("%s item content_id=%s summary call failed", phase_tag, item.content_id)
+                label = None
+
+            if label:
+                summaries[item.content_id] = label
+                continue
+            summaries[item.content_id] = _fallback_segment_summary(item.text)
+            fallback_count += 1
+
+    if fallback_count:
+        logger.warning(
+            "%s segment summaries fell back count=%d/%d",
+            phase_tag,
+            fallback_count,
+            len(pending_items),
+        )
+
     return summaries
 
 
@@ -132,14 +213,21 @@ def _render_content_items(
     for section in sections:
         lines.append(f"### `{section.display_path}`")
         for item in items_by_path.get((section.branch, section.path), []):
-            label = "Summarized" if item.summarized else "Full"
             if item.summarized:
-                rendered_text = item_summaries.get(item.content_id) or _fallback_segment_summary(item.text)
+                rendered_text = item_summaries.get(item.content_id)
+                if rendered_text:
+                    lines.append(
+                        f"- [content_id={item.content_id}] Summarized content ({len(item.text)} chars): {rendered_text}"
+                    )
+                else:
+                    lines.append(
+                        f"- [content_id={item.content_id}] Summarized content ({len(item.text)} chars)"
+                    )
             else:
                 rendered_text = _compact_text(item.text) or "(empty)"
-            lines.append(
-                f"- [content_id={item.content_id}] {label} content ({len(item.text)} chars): {rendered_text}"
-            )
+                lines.append(
+                    f"- [content_id={item.content_id}] Full content ({len(item.text)} chars): {rendered_text}"
+                )
             if item.summarized:
                 lines.append(f"  Load unsummarized content with {_render_get_content_call(step_id, item)}.")
             lines.append(f"  Edit this content with {_render_edit_content_call(step_id, item)}.")
@@ -153,6 +241,12 @@ def _build_step_content(trace: Trace, index: int) -> str:
     sections = list(_get_sections(trace, index).sections)
     record = trace.get(index)
     content_items = build_step_content_items(sections)
+    logger.info(
+        "%s content_items total=%d summarized=%d",
+        _content_tag(trace, step=step_id, phase="content_items"),
+        len(content_items),
+        sum(1 for item in content_items if item.summarized),
+    )
     item_summaries = _summarize_content_items(trace, step_id, content_items)
     input_sections = [section for section in sections if section.branch == "input"]
     output_sections = [section for section in sections if section.branch == "output"]
@@ -208,8 +302,9 @@ def get_or_compute_step_semantic_summary(trace: Trace, step_id: int) -> str:
     semantic_summary = infer_text(
         [{"role": "system", "content": STEP_SUMMARIZE_SYSTEM},
          {"role": "user", "content": structured_summary}],
-        tier="cheap",
-        max_tokens=256,
+        tier=_SUMMARY_TIER,
+        extra_body=_SUMMARY_EXTRA_BODY,
+        max_tokens=_STEP_SUMMARY_MAX_TOKENS,
     ).strip()
     logger.info("%s generated chars=%d", log_tag, len(semantic_summary))
     trace.step_semantic_summary_cache[index] = semantic_summary
