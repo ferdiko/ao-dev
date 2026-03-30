@@ -75,6 +75,30 @@ def unflatten_to_show(inp):
     return unflattened_dict
 
 
+def flatten_complete_to_show(to_show: dict[str, Any] | list[Any] | str | None) -> dict[str, Any]:
+    """Fully flatten a stored ``to_show`` payload, including list indices."""
+    if to_show is None:
+        return {}
+    if isinstance(to_show, dict):
+        nested = unflatten_to_show(to_show)
+        return flatten(nested, ".")
+    if isinstance(to_show, list):
+        return flatten(to_show, ".")
+    return {"value": to_show}
+
+
+def restore_complete_to_show_from_flattened(
+    flattened_to_show: dict[str, Any],
+) -> dict[str, Any] | list[Any] | str | None:
+    """Rebuild a stored ``to_show`` payload from a fully flattened mapping."""
+    if not flattened_to_show:
+        return {}
+    if set(flattened_to_show.keys()) == {"value"}:
+        return flattened_to_show["value"]
+    nested = unflatten_list(flattened_to_show, ".")
+    return flatten_to_show(nested)
+
+
 def should_exclude_key(key: str) -> bool:
     """Check if a flattened key should be excluded based on regex patterns."""
     for pattern in EDIT_IO_EXCLUDE_PATTERNS:

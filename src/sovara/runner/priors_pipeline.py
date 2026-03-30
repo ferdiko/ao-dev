@@ -6,23 +6,21 @@ import json
 import re
 from typing import Any
 
-from flatten_json import flatten, unflatten_list
-
-from sovara.runner.monkey_patching.api_parser import flatten_to_show, unflatten_to_show
+from sovara.runner.monkey_patching.api_parser import (
+    flatten_complete_to_show,
+)
 
 _PRIORS_BLOCK_RE = re.compile(r"<sovara-priors>.*?</sovara-priors>", re.DOTALL)
 _MANIFEST_RE = re.compile(r"<!--\s*(\{.*?\})\s*-->", re.DOTALL)
 _PRIORS_BLOCK_WITH_SEPARATOR_RE = re.compile(r"<sovara-priors>.*?</sovara-priors>\n\n", re.DOTALL)
 
-_PREFERRED_EXACT_ANCHORS = [
-    "body.system",
-    "system",
-    "body.instructions",
-    "instructions",
-    "body.input",
-    "input",
-]
 _PROMPT_BEARING_PATTERNS = [
+    re.compile(r"^body\.system$"),
+    re.compile(r"^system$"),
+    re.compile(r"^body\.instructions$"),
+    re.compile(r"^instructions$"),
+    re.compile(r"^body\.input$"),
+    re.compile(r"^input$"),
     re.compile(r"^body\.messages\.\d+\.content$"),
     re.compile(r"^messages\.\d+\.content$"),
     re.compile(r"^body\.input\.\d+\.content\.\d+\.text$"),
@@ -31,29 +29,6 @@ _PROMPT_BEARING_PATTERNS = [
     re.compile(r"^systemInstruction\.parts\.\d+\.text$"),
     re.compile(r"^contents\.\d+\.parts\.\d+\.text$"),
 ]
-
-
-def flatten_complete_to_show(to_show: dict[str, Any] | list[Any] | str | None) -> dict[str, Any]:
-    """Fully flatten a stored ``to_show`` payload, including list indices."""
-    if to_show is None:
-        return {}
-    if isinstance(to_show, dict):
-        nested = unflatten_to_show(to_show)
-        return flatten(nested, ".")
-    if isinstance(to_show, list):
-        return flatten(to_show, ".")
-    return {"value": to_show}
-
-
-def restore_to_show_from_flattened(flattened_to_show: dict[str, Any]) -> dict[str, Any] | list[Any] | str | None:
-    """Rebuild the stored ``to_show`` representation from a fully flattened mapping."""
-    if not flattened_to_show:
-        return {}
-    if set(flattened_to_show.keys()) == {"value"}:
-        return flattened_to_show["value"]
-    nested = unflatten_list(flattened_to_show, ".")
-    return flatten_to_show(nested)
-
 
 def parse_inherited_prior_ids(value: str) -> tuple[list[str], list[str]]:
     """Extract inherited prior ids from a rendered priors block."""
@@ -154,27 +129,22 @@ def extract_prompt_bearing_keys(flattened_to_show: dict[str, Any], api_type: str
     """Return the ordered prompt-bearing keys for a flattened ``to_show`` payload."""
     del api_type  # keyed off normalized ``to_show`` keys in v1.
 
-    ordered_keys: list[str] = []
-    seen: set[str] = set()
-
-    for key in _PREFERRED_EXACT_ANCHORS:
-        value = flattened_to_show.get(key)
-        if isinstance(value, str):
-            ordered_keys.append(key)
-            seen.add(key)
-
     string_keys = sorted(
         (
             key
             for key, value in flattened_to_show.items()
-            if isinstance(value, str) and key not in seen
+            if isinstance(value, str)
         ),
         key=_flattened_key_sort_key,
     )
-    for key in string_keys:
-        if any(pattern.match(key) for pattern in _PROMPT_BEARING_PATTERNS):
-            ordered_keys.append(key)
-            seen.add(key)
+
+    ordered_keys: list[str] = []
+    seen: set[str] = set()
+    for pattern in _PROMPT_BEARING_PATTERNS:
+        for key in string_keys:
+            if key not in seen and pattern.match(key):
+                ordered_keys.append(key)
+                seen.add(key)
 
     return ordered_keys
 

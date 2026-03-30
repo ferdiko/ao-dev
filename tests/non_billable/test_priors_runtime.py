@@ -3,8 +3,10 @@ import json
 import httpx
 
 from sovara.runner import priors as priors_runtime
-from sovara.runner.monkey_patching.api_parser import func_kwargs_to_json_str
-from sovara.runner.priors_pipeline import flatten_complete_to_show
+from sovara.runner.monkey_patching.api_parser import (
+    flatten_complete_to_show,
+    func_kwargs_to_json_str,
+)
 
 
 def _make_responses_input(instructions: str) -> dict:

@@ -13,17 +13,17 @@ from sovara.common.logger import logger
 from sovara.common.utils import http_post
 from sovara.runner.context_manager import get_run_id
 from sovara.runner.monkey_patching.api_parser import (
+    flatten_complete_to_show,
     func_kwargs_to_json_str,
     replace_to_show_in_input_dict,
+    restore_complete_to_show_from_flattened,
 )
 from sovara.runner.priors_pipeline import (
     detect_manual_priors_reason,
     extract_prompt_bearing_pairs,
-    flatten_complete_to_show,
     inject_priors_block,
     replay_injected_prefix,
     render_retrieval_context,
-    restore_to_show_from_flattened,
     strip_priors_from_flattened,
 )
 from sovara.server.database_manager import DB
@@ -189,7 +189,7 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
     cleaned_input_dict = replace_to_show_in_input_dict(
         input_dict,
         api_type,
-        restore_to_show_from_flattened(cleaned_flattened),
+        restore_complete_to_show_from_flattened(cleaned_flattened),
     )
     clean_prompt_pairs = extract_prompt_bearing_pairs(cleaned_flattened, api_type)
 
@@ -257,7 +257,7 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
         executed_input_dict = replace_to_show_in_input_dict(
             cleaned_input_dict,
             api_type,
-            restore_to_show_from_flattened(executed_flattened),
+            restore_complete_to_show_from_flattened(executed_flattened),
         )
         _store_prefix_cache_entry(
             run_id,
@@ -282,7 +282,7 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
         executed_input_dict = replace_to_show_in_input_dict(
             cleaned_input_dict,
             api_type,
-            restore_to_show_from_flattened(executed_flattened),
+            restore_complete_to_show_from_flattened(executed_flattened),
         )
         _store_prefix_cache_entry(
             run_id,
@@ -316,7 +316,7 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
             executed_input_dict=replace_to_show_in_input_dict(
                 cleaned_input_dict,
                 api_type,
-                restore_to_show_from_flattened(executed_flattened),
+                restore_complete_to_show_from_flattened(executed_flattened),
             ),
             prompt_suffix_json=prompt_suffix_json,
             metadata=metadata,
@@ -356,7 +356,7 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
         executed_input_dict = replace_to_show_in_input_dict(
             cleaned_input_dict,
             api_type,
-            restore_to_show_from_flattened(executed_flattened),
+            restore_complete_to_show_from_flattened(executed_flattened),
         )
         if metadata.rendered_priors_block:
             injected_flattened = inject_priors_block(
@@ -368,7 +368,7 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
             executed_input_dict = replace_to_show_in_input_dict(
                 cleaned_input_dict,
                 api_type,
-                restore_to_show_from_flattened(injected_flattened),
+                restore_complete_to_show_from_flattened(injected_flattened),
             )
         effective_prior_ids = _unique_prior_ids(
             inherited_prior_ids + [
@@ -415,7 +415,7 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
     executed_input_dict = replace_to_show_in_input_dict(
         cleaned_input_dict,
         api_type,
-        restore_to_show_from_flattened(executed_flattened),
+        restore_complete_to_show_from_flattened(executed_flattened),
     )
     _store_prefix_cache_entry(
         run_id,

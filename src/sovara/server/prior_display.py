@@ -7,7 +7,7 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from sovara.runner.priors_pipeline import flatten_complete_to_show
+from sovara.runner.monkey_patching.api_parser import flatten_complete_to_show
 from sovara.server.graph_models import RunGraph
 
 _PRIORS_BLOCK_RE = re.compile(r"<sovara-priors\b[^>]*>[\s\S]*?<\/sovara-priors>", re.IGNORECASE)

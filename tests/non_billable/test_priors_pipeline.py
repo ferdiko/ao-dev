@@ -1,11 +1,13 @@
+from sovara.runner.monkey_patching.api_parser import (
+    flatten_complete_to_show,
+    restore_complete_to_show_from_flattened,
+)
 from sovara.runner.priors_pipeline import (
     extract_prompt_bearing_keys,
     extract_prompt_bearing_pairs,
-    flatten_complete_to_show,
     inject_priors_block,
     render_retrieval_context,
     replay_injected_prefix,
-    restore_to_show_from_flattened,
     strip_priors_from_flattened,
 )
 
@@ -24,7 +26,7 @@ def test_flatten_complete_to_show_and_restore_round_trip_lists():
     assert flattened["body.system"] == "You are helpful."
     assert flattened["body.messages.0.role"] == "user"
     assert flattened["body.messages.1.content"] == "Okay"
-    assert restore_to_show_from_flattened(flattened) == to_show
+    assert restore_complete_to_show_from_flattened(flattened) == to_show
 
 
 def test_strip_priors_from_flattened_extracts_manifest_ids_and_warns_on_manual_blocks():
