@@ -1,6 +1,7 @@
 """ask_step tool — answers a specific question about a step without injecting full content."""
 
 from ....llm_backend import NO_THINKING_EXTRA_BODY, infer_text
+from ..cancel import raise_if_cancelled
 from ..utils.step_ids import resolve_step_index
 from ..utils.trace import Trace, render_record_markdown
 
@@ -12,11 +13,12 @@ ASK_STEP_SYSTEM = (
 )
 
 
-def ask_step(trace: Trace, question, step_id=None) -> str:
+def ask_step(trace: Trace, question, step_id=None, cancel_event=None) -> str:
     index, err = resolve_step_index(trace, step_id)
     if err:
         return err
 
+    raise_if_cancelled(cancel_event)
     record = trace.get(index)
 
     snapshot = render_record_markdown(record, trace.get_diffed(index), view="full")
@@ -26,6 +28,7 @@ def ask_step(trace: Trace, question, step_id=None) -> str:
         [{"role": "system", "content": ASK_STEP_SYSTEM},
          {"role": "user", "content": content}],
         tier="cheap",
+        cancel_event=cancel_event,
         extra_body=NO_THINKING_EXTRA_BODY,
         max_tokens=512,
     )

@@ -5,6 +5,10 @@ from typing import Callable, Sequence, TypeVar
 
 import litellm
 from sovara.common.constants import TRACE_CHAT_SCATTER_BUDGET_SECONDS
+from sovara.common.user import read_user_id
+from sovara.server.database_manager import DB
+from sovara.server.llm_settings import build_litellm_request_config
+from sovara.server.graph_analysis.trace_chat.cancel import TraceChatCancelled, raise_if_cancelled
 
 logger = logging.getLogger("sovara_agent")
 T = TypeVar("T")
@@ -17,17 +21,6 @@ RETRY_BASE_DELAY = 2  # seconds, doubles each retry
 litellm.suppress_debug_info = True
 
 
-# --- Model settings ---
-# TODO: Get from settings in UI
-# MODEL = "anthropic/claude-sonnet-4-6"
-# CHEAP_MODEL = "anthropic/claude-haiku-4-5-20251001"
-MODEL = "together_ai/Qwen/Qwen3.5-397B-A17B"
-CHEAP_MODEL = "together_ai/Qwen/Qwen3.5-9B"
-
-_TIER_MODELS = {
-    "expensive": MODEL,
-    "cheap": CHEAP_MODEL,
-}
 NO_THINKING_EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": False}}
 
 
@@ -41,10 +34,31 @@ def _log_preview(value, max_len: int = 800) -> str:
 # --- Inference ---
 
 
+def _resolve_request_config(tier: str) -> tuple[dict[str, str], str]:
+    user_id = read_user_id()
+    row = DB.get_user(user_id) if user_id else None
+    request_config, provider = build_litellm_request_config(row, tier)
+    return request_config, provider
+
+
+def _sanitize_provider_kwargs(kwargs: dict, provider: str) -> dict:
+    sanitized = dict(kwargs)
+    # Anthropic does not understand the Qwen/vLLM-specific no-thinking payload.
+    if provider == "anthropic" and sanitized.get("extra_body") == NO_THINKING_EXTRA_BODY:
+        sanitized.pop("extra_body", None)
+    return sanitized
+
+
 def infer(messages, tier="expensive", **kwargs):
     """Sync LLM call via litellm. Returns the full response object."""
+    cancel_event = kwargs.pop("cancel_event", None)
+    request_config, provider = _resolve_request_config(tier)
+    kwargs = _sanitize_provider_kwargs(kwargs, provider)
     kwargs.setdefault("temperature", 0)
-    resolved = _TIER_MODELS.get(tier, MODEL)
+    kwargs.setdefault("model", request_config["model"])
+    if "api_base" in request_config:
+        kwargs.setdefault("api_base", request_config["api_base"])
+    resolved = kwargs["model"]
 
     # Normalize system= kwarg into a system message for cross-provider compat
     system = kwargs.pop("system", None)
@@ -52,13 +66,14 @@ def infer(messages, tier="expensive", **kwargs):
         messages = [{"role": "system", "content": system}] + list(messages)
 
     for attempt in range(MAX_RETRIES):
+        raise_if_cancelled(cancel_event)
         try:
             return litellm.completion(
-                model=resolved,
                 messages=messages,
                 **kwargs,
             )
         except Exception:
+            raise_if_cancelled(cancel_event)
             delay = RETRY_BASE_DELAY * (2 ** attempt)
             logger.exception(
                 "infer error attempt=%d/%d model=%s tier=%s messages=%d kwargs=%s",
@@ -77,13 +92,17 @@ def infer(messages, tier="expensive", **kwargs):
                 resolved,
                 tier,
             )
-            time.sleep(delay)
+            if cancel_event is None:
+                time.sleep(delay)
+            elif cancel_event.wait(delay):
+                raise_if_cancelled(cancel_event)
 
 
 def infer_text(messages, tier="expensive", **kwargs) -> str:
     """Sync LLM call that returns just the text content. Used by tools."""
     response = infer(messages, tier=tier, **kwargs)
-    resolved = _TIER_MODELS.get(tier, MODEL)
+    request_config, _provider = _resolve_request_config(tier)
+    resolved = request_config["model"]
     choices = getattr(response, "choices", None) or []
     choice = choices[0] if choices else None
     message = getattr(choice, "message", None) if choice is not None else None
@@ -116,6 +135,7 @@ def scatter_execute(
     on_result: Callable[[T, R], None] | None = None,
     on_exception: Callable[[T, Exception], None] | None = None,
     on_timeout: Callable[[list[T]], None] | None = None,
+    cancel_event=None,
 ) -> list[R | None]:
     """Run independent jobs in parallel until a shared deadline.
 
@@ -134,6 +154,7 @@ def scatter_execute(
     executor = None
 
     try:
+        raise_if_cancelled(cancel_event)
         executor = ThreadPoolExecutor(max_workers=worker_count)
         future_to_index = {
             executor.submit(run_one, item): idx
@@ -142,14 +163,17 @@ def scatter_execute(
         deadline = time.monotonic() + budget_seconds
 
         while future_to_index:
+            raise_if_cancelled(cancel_event)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
+            wait_timeout = remaining if cancel_event is None else min(remaining, 0.25)
             done, _ = wait(
                 tuple(future_to_index),
-                timeout=remaining,
+                timeout=wait_timeout,
                 return_when=FIRST_COMPLETED,
             )
+            raise_if_cancelled(cancel_event)
             if not done:
                 break
             for future in done:
@@ -157,6 +181,8 @@ def scatter_execute(
                 item = items[idx]
                 try:
                     result = future.result()
+                except TraceChatCancelled:
+                    raise
                 except Exception as exc:
                     finished.add(idx)
                     if on_exception:

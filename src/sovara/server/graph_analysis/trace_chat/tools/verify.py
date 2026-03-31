@@ -5,6 +5,7 @@ import time
 from sovara.common.constants import TRACE_CHAT_SCATTER_BUDGET_SECONDS
 
 from ....llm_backend import NO_THINKING_EXTRA_BODY, infer, scatter_execute
+from ..cancel import raise_if_cancelled
 from ..logger import get_logger
 from ..utils.step_ids import resolve_step_index
 from ..utils.trace import Trace, extract_tag, render_record_markdown
@@ -58,7 +59,7 @@ def _parse_verdict(raw: str) -> tuple:
     return verdict, summary
 
 
-def _verify_one(trace: Trace, index: int, record):
+def _verify_one(trace: Trace, index: int, record, cancel_event=None):
     """Verify a single step via LLM. Returns (index, verdict, justification)."""
     if index in trace.verdict_cache:
         return (index, *trace.verdict_cache[index])
@@ -69,10 +70,12 @@ def _verify_one(trace: Trace, index: int, record):
     user_msg = render_record_markdown(record, trace.get_diffed(index), view="full")
 
     try:
+        raise_if_cancelled(cancel_event)
         response = infer(
             [{"role": "system", "content": VERIFY_STEP_SYSTEM},
              {"role": "user", "content": user_msg}],
             tier="cheap",
+            cancel_event=cancel_event,
             extra_body=NO_THINKING_EXTRA_BODY,
             max_tokens=_VERIFY_STEP_MAX_TOKENS,
         )
@@ -123,8 +126,9 @@ def _format_verification_line(step_id: int, verdict: str, justification: str) ->
     return f"Step {step_id}: {phrase} {justification}"
 
 
-def verify(trace: Trace, step_id=None) -> str:
+def verify(trace: Trace, step_id=None, cancel_event=None) -> str:
     t0 = time.monotonic()
+    raise_if_cancelled(cancel_event)
 
     # Single-step mode
     if step_id is not None:
@@ -138,7 +142,7 @@ def verify(trace: Trace, step_id=None) -> str:
             verdict, justification = cached
             logger.info("VERIFY step %d cache hit verdict=%s", step_id, verdict)
         else:
-            _, verdict, justification = _verify_one(trace, index, record)
+            _, verdict, justification = _verify_one(trace, index, record, cancel_event=cancel_event)
 
         logger.info("VERIFY single-step done in %.1fs step=%d verdict=%s",
                     time.monotonic() - t0, step_id, verdict)
@@ -166,7 +170,7 @@ def verify(trace: Trace, step_id=None) -> str:
     if to_verify:
         completed = len(results)
         def _run_one(idx: int):
-            return _verify_one(trace, idx, trace.get(idx))
+            return _verify_one(trace, idx, trace.get(idx), cancel_event=cancel_event)
 
         def _on_verify_result(_idx: int, result) -> None:
             nonlocal completed
@@ -198,6 +202,7 @@ def verify(trace: Trace, step_id=None) -> str:
             to_verify,
             _run_one,
             budget_seconds=TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+            cancel_event=cancel_event,
             on_result=_on_verify_result,
             on_exception=_on_verify_exception,
             on_timeout=_on_verify_timeout,

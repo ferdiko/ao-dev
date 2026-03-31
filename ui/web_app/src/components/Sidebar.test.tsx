@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Sidebar } from "./Sidebar";
@@ -19,6 +19,11 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+  function LocationProbe() {
+    const location = useLocation();
+    return <div data-testid="location">{location.pathname}</div>;
+  }
+
   it("hides unsupported optimization entries", async () => {
     vi.mocked(fetchProjects).mockResolvedValue([
       {
@@ -75,5 +80,30 @@ describe("Sidebar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Support" }));
 
     expect(onSupport).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes user settings through the bottom navigation", async () => {
+    vi.mocked(fetchProjects).mockResolvedValue([]);
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route
+            path="*"
+            element={(
+              <>
+                <Sidebar />
+                <LocationProbe />
+              </>
+            )}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByText("User Settings")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "User Settings" }));
+
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings");
   });
 });

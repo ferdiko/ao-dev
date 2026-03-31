@@ -5,6 +5,9 @@ Provides both:
 - execute_tool(): dispatch by name to Python functions
 """
 
+import inspect
+
+from ..cancel import TraceChatCancelled
 from ..logger import get_logger
 
 server_logger = get_logger()
@@ -263,7 +266,14 @@ TOOLS_SCHEMA = [
 ]
 
 
-def execute_tool(tool_name: str, trace, params: dict = None, *, log_tag: str = "") -> str:
+def execute_tool(
+    tool_name: str,
+    trace,
+    params: dict = None,
+    *,
+    log_tag: str = "",
+    cancel_event=None,
+) -> str:
     """Look up and execute a tool by name. Returns the result string or an error message."""
     func = TOOL_FUNCTIONS.get(tool_name)
     if func is None:
@@ -271,7 +281,12 @@ def execute_tool(tool_name: str, trace, params: dict = None, *, log_tag: str = "
         return f"Unknown tool: '{tool_name}'. Available tools: {available}"
     params = params or {}
     try:
+        signature = inspect.signature(func)
+        if cancel_event is not None and "cancel_event" in signature.parameters:
+            return func(trace, cancel_event=cancel_event, **params)
         return func(trace, **params)
+    except TraceChatCancelled:
+        raise
     except Exception as e:
         if log_tag:
             server_logger.exception("%s Trace chat tool failed: %s params=%s", log_tag, tool_name, params)

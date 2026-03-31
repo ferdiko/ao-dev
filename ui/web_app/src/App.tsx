@@ -6,8 +6,8 @@ import { ProjectPage } from "./pages/ProjectPage";
 import { RunView } from "./pages/RunView";
 import { PriorsPage } from "./pages/PriorsPage";
 import { SovaraPage } from "./pages/SovaraPage";
+import { UserSettingsPage } from "./pages/UserSettingsPage";
 import { SetupProfileModal } from "./components/SetupProfileModal";
-import { UserSettingsModal } from "./components/UserSettingsModal";
 import { ProjectSettingsModal } from "./components/ProjectSettingsModal";
 import { SupportModal } from "./components/SupportModal";
 import { useResize } from "./hooks/useResize";
@@ -32,7 +32,6 @@ function AppLayout({ projectId, defaultCollapsed, children }: { projectId?: stri
   const { user, refreshUser } = useUser();
   const navigate = useNavigate();
   const [showSetupProfile, setShowSetupProfile] = useState(false);
-  const [showUserSettings, setShowUserSettings] = useState(false);
   const [showProjectSettings, setShowProjectSettings] = useState(false);
   const [showSupport, setShowSupport] = useState(false);
   const [project, setProject] = useState<{ project_id: string; name: string; description: string } | null>(null);
@@ -60,7 +59,6 @@ function AppLayout({ projectId, defaultCollapsed, children }: { projectId?: stri
         onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
         user={user}
         onSetupProfile={() => setShowSetupProfile(true)}
-        onUserSettings={() => setShowUserSettings(true)}
         onProjectSettings={() => setShowProjectSettings(true)}
         onSupport={() => setShowSupport(true)}
       >
@@ -89,20 +87,6 @@ function AppLayout({ projectId, defaultCollapsed, children }: { projectId?: stri
           onClose={() => setShowSetupProfile(false)}
           onCreated={() => {
             setShowSetupProfile(false);
-            refreshUser();
-          }}
-        />
-      )}
-      {showUserSettings && user && (
-        <UserSettingsModal
-          user={user}
-          onClose={() => setShowUserSettings(false)}
-          onUpdated={() => {
-            setShowUserSettings(false);
-            refreshUser();
-          }}
-          onDeleted={() => {
-            setShowUserSettings(false);
             refreshUser();
           }}
         />
@@ -177,6 +161,14 @@ function PriorsRoute() {
   );
 }
 
+function UserSettingsRoute() {
+  return (
+    <AppLayout>
+      <UserSettingsPage />
+    </AppLayout>
+  );
+}
+
 function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
 
@@ -199,6 +191,7 @@ function App() {
           <Route path="/project/:projectId/run/:runId" element={<RunRoute />} />
           <Route path="/project/:projectId/sovara" element={<SovaraRoute />} />
           <Route path="/project/:projectId/priors" element={<PriorsRoute />} />
+          <Route path="/settings" element={<UserSettingsRoute />} />
         </Routes>
       </BrowserRouter>
     </UserContext.Provider>

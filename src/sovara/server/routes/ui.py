@@ -5,7 +5,7 @@ import uuid
 from typing import Literal
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from sovara.common.constants import PRIORS_SERVER_URL, SOVARA_CONFIG
 from sovara.common.custom_metrics import MetricFilter
@@ -13,6 +13,7 @@ from sovara.server.app import get_state
 from sovara.server.state import ServerState, logger
 from sovara.server.database_manager import DB, BadRequestError, ResourceNotFoundError
 from sovara.server.graph_models import RunGraph
+from sovara.server.llm_settings import normalize_user_llm_settings_row
 from sovara.common.user import read_user_id, write_user_id
 from sovara.common.project import find_project_root, read_project_id, write_project_id, delete_project_configs
 from sovara.server.handlers.ui_handlers import (
@@ -31,6 +32,7 @@ from sovara.server.handlers.cli_handlers import (
 )
 
 router = APIRouter(prefix="/ui")
+TRACE_CHAT_CANCELED_DETAIL = "Trace chat canceled"
 
 TAG_COLORS = {
     "#0969da",
@@ -74,6 +76,37 @@ def _notify_user_state_changed(state: ServerState) -> None:
     state.notify_user_changed()
     state.notify_project_list_changed()
     state.notify_run_list_changed()
+
+
+def _serialize_user(row) -> dict:
+    return {
+        "user_id": row["user_id"],
+        "full_name": row["full_name"],
+        "email": row["email"],
+        "llm_settings": normalize_user_llm_settings_row(row),
+    }
+
+
+def _normalize_user_llm_settings_request(req) -> dict:
+    normalized = {}
+    for tier in ("primary", "helper"):
+        tier_req = getattr(req, tier)
+        model_name = tier_req.model_name.strip()
+        if not model_name:
+            raise BadRequestError(f"{tier.title()} model name is required.")
+
+        api_base = tier_req.api_base.strip() if isinstance(tier_req.api_base, str) else None
+        if tier_req.provider == "hosted_vllm" and not api_base:
+            raise BadRequestError(f"{tier.title()} API base is required for hosted vLLM.")
+        if tier_req.provider != "hosted_vllm":
+            api_base = None
+
+        normalized[tier] = {
+            "provider": tier_req.provider,
+            "model_name": model_name,
+            "api_base": api_base,
+        }
+    return normalized
 
 
 # ============================================================
@@ -136,6 +169,17 @@ class SetupUserRequest(BaseModel):
 class UpdateUserRequest(BaseModel):
     full_name: str
     email: str
+
+
+class UpdateUserLlmTierSettingsRequest(BaseModel):
+    provider: Literal["anthropic", "together", "hosted_vllm"]
+    model_name: str
+    api_base: str | None = None
+
+
+class UpdateUserLlmSettingsRequest(BaseModel):
+    primary: UpdateUserLlmTierSettingsRequest
+    helper: UpdateUserLlmTierSettingsRequest
 
 
 class DeleteUserRequest(BaseModel):
@@ -212,7 +256,7 @@ def get_user():
     row = DB.get_user(user_id)
     if not row:
         return {"user": None}
-    return {"user": {"user_id": row["user_id"], "full_name": row["full_name"], "email": row["email"]}}
+    return {"user": _serialize_user(row)}
 
 
 @router.post("/setup-user")
@@ -229,8 +273,9 @@ def setup_user(req: SetupUserRequest, state: ServerState = Depends(get_state)):
         write_user_id(user_id)
 
     DB.upsert_user(user_id, req.full_name.strip(), req.email.strip())
+    row = DB.get_user(user_id)
     _notify_user_state_changed(state)
-    return {"user": {"user_id": user_id, "full_name": req.full_name.strip(), "email": req.email.strip()}}
+    return {"user": _serialize_user(row)}
 
 
 @router.post("/update-user")
@@ -244,8 +289,30 @@ def update_user(req: UpdateUserRequest, state: ServerState = Depends(get_state))
     if not req.email.strip():
         return JSONResponse(status_code=400, content={"error": "Email is required."})
     DB.upsert_user(user_id, req.full_name.strip(), req.email.strip())
+    row = DB.get_user(user_id)
     _notify_user_state_changed(state)
-    return {"user": {"user_id": user_id, "full_name": req.full_name.strip(), "email": req.email.strip()}}
+    return {"user": _serialize_user(row)}
+
+
+@router.post("/update-user-llm-settings")
+def update_user_llm_settings(req: UpdateUserLlmSettingsRequest, state: ServerState = Depends(get_state)):
+    """Update the local user's persisted trace-chat model settings."""
+    user_id = read_user_id()
+    if not user_id:
+        return JSONResponse(status_code=404, content={"error": "No user configured."})
+    row = DB.get_user(user_id)
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "User not found."})
+
+    try:
+        normalized = _normalize_user_llm_settings_request(req)
+    except BadRequestError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+    DB.update_user_llm_settings(user_id, normalized)
+    updated_row = DB.get_user(user_id)
+    _notify_user_state_changed(state)
+    return {"user": _serialize_user(updated_row)}
 
 
 @router.post("/delete-user")
@@ -875,14 +942,14 @@ def clear(state: ServerState = Depends(get_state)):
 # Trace Chat proxy
 # ============================================================
 
-class ChatMessageRequest(BaseModel):
-    message: str
-    history: list = []
-
-
 class PersistedTraceChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str
+
+
+class ChatMessageRequest(BaseModel):
+    message: str
+    history: list[PersistedTraceChatMessage] = Field(default_factory=list)
 
 
 class PersistedTraceChatHistoryRequest(BaseModel):
@@ -942,15 +1009,24 @@ async def prefetch_trace(
 
 
 @router.post("/chat/{run_id}")
-async def chat(run_id: str, req: ChatMessageRequest):
+async def chat(run_id: str, req: ChatMessageRequest, state: ServerState = Depends(get_state)):
     import httpx
     from fastapi import HTTPException
     from sovara.common.constants import HOST, INFERENCE_PORT
 
+    generation = state.begin_trace_chat_request(run_id)
     persisted_history = list(req.history) + [{"role": "user", "content": req.message}]
+
+    def _is_cancelled_or_stale() -> bool:
+        return (
+            state.is_trace_chat_request_cancelled(run_id, generation)
+            or not state.is_trace_chat_request_current(run_id, generation)
+        )
+
     try:
         DB.update_trace_chat_history(run_id, persisted_history)
     except (BadRequestError, ResourceNotFoundError) as exc:
+        state.finish_trace_chat_request(run_id, generation)
         return _request_error_response(exc)
 
     timeout_seconds = 120.0
@@ -962,18 +1038,36 @@ async def chat(run_id: str, req: ChatMessageRequest):
                 timeout=timeout_seconds,
             )
     except httpx.TimeoutException:
+        if _is_cancelled_or_stale():
+            state.finish_trace_chat_request(run_id, generation)
+            raise HTTPException(409, TRACE_CHAT_CANCELED_DETAIL)
         logger.error("Trace chat proxy timed out after %.1fs for run %s", timeout_seconds, run_id)
+        state.finish_trace_chat_request(run_id, generation)
         raise HTTPException(504, f"Trace chat timed out after {int(timeout_seconds)} seconds")
     except httpx.HTTPError as e:
+        if _is_cancelled_or_stale():
+            state.finish_trace_chat_request(run_id, generation)
+            raise HTTPException(409, TRACE_CHAT_CANCELED_DETAIL)
         logger.error("Trace chat proxy failed for run %s: %s", run_id, e)
+        state.finish_trace_chat_request(run_id, generation)
         raise HTTPException(502, "Could not reach inference server")
     if resp.status_code != 200:
-        raise HTTPException(resp.status_code, _extract_http_error_detail(resp))
+        detail = _extract_http_error_detail(resp)
+        was_cancelled_or_stale = _is_cancelled_or_stale()
+        state.finish_trace_chat_request(run_id, generation)
+        if was_cancelled_or_stale or detail == TRACE_CHAT_CANCELED_DETAIL:
+            raise HTTPException(409, TRACE_CHAT_CANCELED_DETAIL)
+        raise HTTPException(resp.status_code, detail)
     try:
         data = resp.json()
     except ValueError:
         logger.error("Inference server returned invalid JSON for run %s", run_id)
+        state.finish_trace_chat_request(run_id, generation)
         raise HTTPException(502, "Invalid response from inference server")
+
+    if _is_cancelled_or_stale():
+        state.finish_trace_chat_request(run_id, generation)
+        raise HTTPException(409, TRACE_CHAT_CANCELED_DETAIL)
 
     answer = data.get("answer")
     if isinstance(answer, str):
@@ -983,5 +1077,30 @@ async def chat(run_id: str, req: ChatMessageRequest):
                 persisted_history + [{"role": "assistant", "content": answer}],
             )
         except (BadRequestError, ResourceNotFoundError) as exc:
+            state.finish_trace_chat_request(run_id, generation)
             return _request_error_response(exc)
-    return data
+    try:
+        history = DB.get_trace_chat_history(run_id)
+    except (BadRequestError, ResourceNotFoundError) as exc:
+        state.finish_trace_chat_request(run_id, generation)
+        return _request_error_response(exc)
+
+    state.finish_trace_chat_request(run_id, generation)
+    return {**data, "history": history}
+
+
+@router.post("/chat/{run_id}/abort", status_code=202)
+async def abort_trace_chat(run_id: str, state: ServerState = Depends(get_state)):
+    import httpx
+    from sovara.common.constants import HOST, INFERENCE_PORT
+
+    generation = state.cancel_trace_chat_request(run_id)
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"http://{HOST}:{INFERENCE_PORT}/chat/{run_id}/abort",
+                timeout=5.0,
+            )
+    except Exception as exc:
+        logger.warning("Trace chat abort proxy failed for run %s: %s", run_id, exc)
+    return {"status": "cancelling" if generation is not None else "idle"}

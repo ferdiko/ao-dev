@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TraceChat } from "./TraceChat";
 import {
+  abortTraceChat,
   chatWithTrace,
   clearTraceChatHistory,
   fetchTraceChatHistory,
@@ -10,6 +11,7 @@ import {
 } from "../api";
 
 vi.mock("../api", () => ({
+  abortTraceChat: vi.fn(),
   chatWithTrace: vi.fn(),
   clearTraceChatHistory: vi.fn(),
   fetchTraceChatHistory: vi.fn(),
@@ -26,9 +28,13 @@ describe("TraceChat", () => {
   it("links ampersand-separated step references", async () => {
     vi.mocked(fetchTraceChatHistory).mockResolvedValue([]);
     vi.mocked(chatWithTrace).mockResolvedValue({
-      answer: "Review Steps 2 & 3 before continuing.",
+      history: [
+        { role: "user", content: "Which steps matter?" },
+        { role: "assistant", content: "Review Steps 2 & 3 before continuing." },
+      ],
       edits_applied: false,
     });
+    vi.mocked(abortTraceChat).mockResolvedValue();
     vi.mocked(clearTraceChatHistory).mockResolvedValue([]);
     vi.mocked(restartRun).mockResolvedValue();
     const onStepLabelClick = vi.fn();
@@ -44,7 +50,7 @@ describe("TraceChat", () => {
     fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
 
     await waitFor(() => {
-      expect(chatWithTrace).toHaveBeenCalledWith("run-1", "Which steps matter?", []);
+      expect(chatWithTrace).toHaveBeenCalledWith("run-1", "Which steps matter?", [], expect.anything());
     });
 
     const stepReference = await screen.findByText("Steps 2 & 3");
@@ -56,9 +62,13 @@ describe("TraceChat", () => {
   it("links comma-separated step references with a final conjunction", async () => {
     vi.mocked(fetchTraceChatHistory).mockResolvedValue([]);
     vi.mocked(chatWithTrace).mockResolvedValue({
-      answer: "Compare steps 2, 8, and 14 before deciding.",
+      history: [
+        { role: "user", content: "Which steps should I compare?" },
+        { role: "assistant", content: "Compare steps 2, 8, and 14 before deciding." },
+      ],
       edits_applied: false,
     });
+    vi.mocked(abortTraceChat).mockResolvedValue();
     vi.mocked(clearTraceChatHistory).mockResolvedValue([]);
     vi.mocked(restartRun).mockResolvedValue();
     const onStepLabelClick = vi.fn();
@@ -74,7 +84,7 @@ describe("TraceChat", () => {
     fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
 
     await waitFor(() => {
-      expect(chatWithTrace).toHaveBeenCalledWith("run-1", "Which steps should I compare?", []);
+      expect(chatWithTrace).toHaveBeenCalledWith("run-1", "Which steps should I compare?", [], expect.anything());
     });
 
     const stepReference = await screen.findByText("steps 2, 8, and 14");
@@ -86,6 +96,7 @@ describe("TraceChat", () => {
   it("shows backend error detail when chat fails", async () => {
     vi.mocked(fetchTraceChatHistory).mockResolvedValue([]);
     vi.mocked(chatWithTrace).mockRejectedValue(new Error("Trace chat timed out after 120 seconds"));
+    vi.mocked(abortTraceChat).mockResolvedValue();
     vi.mocked(clearTraceChatHistory).mockResolvedValue([]);
     vi.mocked(restartRun).mockResolvedValue();
 
@@ -102,11 +113,41 @@ describe("TraceChat", () => {
     expect(await screen.findByText("Error: Trace chat timed out after 120 seconds")).toBeInTheDocument();
   });
 
+  it("hides the thinking bubble when an answer arrives", async () => {
+    vi.mocked(fetchTraceChatHistory).mockResolvedValue([]);
+    vi.mocked(chatWithTrace).mockResolvedValue({
+      history: [
+        { role: "user", content: "What happened?" },
+        { role: "assistant", content: "Here is the answer." },
+      ],
+      edits_applied: false,
+    });
+    vi.mocked(abortTraceChat).mockResolvedValue();
+    vi.mocked(clearTraceChatHistory).mockResolvedValue([]);
+    vi.mocked(restartRun).mockResolvedValue();
+
+    render(<TraceChat runId="run-1" />);
+
+    await waitFor(() => {
+      expect(fetchTraceChatHistory).toHaveBeenCalledWith("run-1");
+    });
+
+    const input = screen.getByPlaceholderText("Ask about this trace…");
+    fireEvent.change(input, { target: { value: "What happened?" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    expect(screen.getByText("Thinking…")).toBeInTheDocument();
+    expect(await screen.findByText("Here is the answer.")).toBeInTheDocument();
+    expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Ask about this trace…")).toBeEnabled();
+  });
+
   it("hydrates persisted chat history without rerun buttons", async () => {
     vi.mocked(fetchTraceChatHistory).mockResolvedValue([
       { role: "user", content: "What happened?" },
       { role: "assistant", content: "The agent retried twice." },
     ]);
+    vi.mocked(abortTraceChat).mockResolvedValue();
     vi.mocked(clearTraceChatHistory).mockResolvedValue([]);
     vi.mocked(restartRun).mockResolvedValue();
 
@@ -122,6 +163,7 @@ describe("TraceChat", () => {
       { role: "user", content: "Keep me around" },
       { role: "assistant", content: "I was persisted." },
     ]);
+    vi.mocked(abortTraceChat).mockResolvedValue();
     vi.mocked(clearTraceChatHistory).mockResolvedValue([]);
     vi.mocked(restartRun).mockResolvedValue();
 
@@ -145,6 +187,7 @@ describe("TraceChat", () => {
         { role: "user", content: "Will this finish?" },
         { role: "assistant", content: "Yes, it finished in the background." },
       ]);
+    vi.mocked(abortTraceChat).mockResolvedValue();
     vi.mocked(clearTraceChatHistory).mockResolvedValue([]);
     vi.mocked(restartRun).mockResolvedValue();
 
@@ -154,5 +197,77 @@ describe("TraceChat", () => {
     expect(
       await screen.findByText("Yes, it finished in the background.", {}, { timeout: 3000 }),
     ).toBeInTheDocument();
+  }, 10000);
+
+  it("hydrates persisted history if the direct chat request never settles", async () => {
+    vi.mocked(fetchTraceChatHistory)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { role: "user", content: "Did it finish?" },
+        { role: "assistant", content: "Yes, it finished in the background." },
+      ]);
+    vi.mocked(chatWithTrace).mockImplementation(
+      () => new Promise(() => {}) as Promise<{ history: { role: "user" | "assistant"; content: string }[] }>
+    );
+    vi.mocked(abortTraceChat).mockResolvedValue();
+    vi.mocked(clearTraceChatHistory).mockResolvedValue([]);
+    vi.mocked(restartRun).mockResolvedValue();
+
+    render(<TraceChat runId="run-1" />);
+
+    await waitFor(() => {
+      expect(fetchTraceChatHistory).toHaveBeenCalledWith("run-1");
+    });
+
+    const input = screen.getByPlaceholderText("Ask about this trace…");
+    fireEvent.change(input, { target: { value: "Did it finish?" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    expect(screen.getByText("Thinking…")).toBeInTheDocument();
+
+    expect(
+      await screen.findByText("Yes, it finished in the background.", {}, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Ask about this trace…")).toBeEnabled();
+  }, 10000);
+
+  it("stops an in-flight chat request without rendering an error", async () => {
+    vi.mocked(fetchTraceChatHistory).mockResolvedValue([]);
+    vi.mocked(abortTraceChat).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(clearTraceChatHistory).mockResolvedValue([]);
+    vi.mocked(restartRun).mockResolvedValue();
+    vi.mocked(chatWithTrace).mockImplementation((_runId, _message, _history, signal) => (
+      new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => {
+          reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+        });
+      }) as Promise<{ history: { role: "user" | "assistant"; content: string }[]; edits_applied?: boolean }>
+    ));
+
+    render(<TraceChat runId="run-1" />);
+
+    await waitFor(() => {
+      expect(fetchTraceChatHistory).toHaveBeenCalledWith("run-1");
+    });
+
+    const input = screen.getByPlaceholderText("Ask about this trace…");
+    fireEvent.change(input, { target: { value: "Please take a while" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    expect(screen.getByText("Please take a while")).toBeInTheDocument();
+    expect(screen.getByText("Thinking…")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Stop trace chat"));
+
+    expect(abortTraceChat).toHaveBeenCalledWith("run-1");
+    expect(screen.getByPlaceholderText("Ask about this trace…")).toBeEnabled();
+    expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
+    await new Promise((resolve) => {
+      setTimeout(resolve, 1500);
+    });
+    expect(fetchTraceChatHistory).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTitle("Stop trace chat")).not.toBeInTheDocument();
+    expect(screen.getByText("Please take a while")).toBeInTheDocument();
+    expect(screen.queryByText(/^Error:/)).not.toBeInTheDocument();
   }, 10000);
 });

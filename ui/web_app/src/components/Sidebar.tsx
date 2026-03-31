@@ -25,6 +25,11 @@ const observabilityItems: NavItem[] = [
 
 const settingsItems: NavItem[] = [
   {
+    label: "User Settings",
+    icon: <Settings size={16} />,
+    id: "user-settings",
+  },
+  {
     label: "Project Settings",
     icon: <Settings size={16} />,
     id: "project-settings",
@@ -32,7 +37,7 @@ const settingsItems: NavItem[] = [
   { label: "Support", icon: <HelpCircle size={16} />, id: "support" },
 ];
 
-export function Sidebar({ projectId, style, children, user, collapsed, onToggleCollapse, onSetupProfile, onUserSettings, onProjectSettings, onSupport }: {
+export function Sidebar({ projectId, style, children, user, collapsed, onToggleCollapse, onSetupProfile, onProjectSettings, onSupport }: {
   projectId?: string;
   style?: React.CSSProperties;
   children?: React.ReactNode;
@@ -40,7 +45,6 @@ export function Sidebar({ projectId, style, children, user, collapsed, onToggleC
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   onSetupProfile?: () => void;
-  onUserSettings?: () => void;
   onProjectSettings?: () => void;
   onSupport?: () => void;
 }) {
@@ -79,6 +83,7 @@ export function Sidebar({ projectId, style, children, user, collapsed, onToggleC
 
   const navRoutes: Record<string, string> = {
     runs: `/project/${projectId}`,
+    "user-settings": "/settings",
   };
 
   const callbackItems: Record<string, (() => void) | undefined> = {
@@ -89,6 +94,9 @@ export function Sidebar({ projectId, style, children, user, collapsed, onToggleC
   function renderNavItem(item: NavItem) {
     const callback = callbackItems[item.id];
     const route = navRoutes[item.id];
+    if (item.id === "project-settings" && !project) {
+      return null;
+    }
     return (
       <button
         key={item.id}
@@ -177,23 +185,16 @@ export function Sidebar({ projectId, style, children, user, collapsed, onToggleC
 
       {/* Bottom section: Settings + User */}
       <div className="sidebar-bottom">
-        {project && (
-          <div className="sidebar-bottom-nav">
-            {!collapsed && <div className="sidebar-section">Settings</div>}
-            {settingsItems.map(renderNavItem)}
-          </div>
-        )}
+        <div className="sidebar-bottom-nav">
+          {!collapsed && <div className="sidebar-section">Settings</div>}
+          {settingsItems.map(renderNavItem)}
+        </div>
         <div className="sidebar-footer">
           {user ? (
             collapsed ? (
-              <button
-                className="sidebar-avatar"
-                onClick={onUserSettings}
-                title="User settings"
-                style={{ cursor: "pointer" }}
-              >
+              <div className="sidebar-avatar" title={user.full_name}>
                 {((parts) => parts.length === 1 ? parts[0][0] : parts[0][0] + parts[parts.length - 1][0])(user.full_name.split(" ")).toUpperCase()}
-              </button>
+              </div>
             ) : (
               <div className="sidebar-user">
                 <div className="sidebar-avatar">
@@ -203,9 +204,6 @@ export function Sidebar({ projectId, style, children, user, collapsed, onToggleC
                   <div className="sidebar-user-name">{user.full_name}</div>
                   <div className="sidebar-user-email">{user.email}</div>
                 </div>
-                <button className="sidebar-user-settings" onClick={onUserSettings} title="User settings">
-                  <Settings size={16} />
-                </button>
               </div>
             )
           ) : user === null && onSetupProfile ? (

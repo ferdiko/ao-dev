@@ -5,6 +5,7 @@ import re
 from sovara.common.constants import TRACE_CHAT_SCATTER_BUDGET_SECONDS
 
 from ....llm_backend import infer_text, scatter_execute
+from ..cancel import raise_if_cancelled
 from ..utils.content_items import StepContentItem, build_step_content_items
 from ..logger import format_log_tags, get_logger
 from ..utils.step_ids import resolve_step_index
@@ -97,7 +98,9 @@ def _summarize_one_content_item(
     item_index: int,
     total: int,
     phase_tag: str,
+    cancel_event=None,
 ) -> str | None:
+    raise_if_cancelled(cancel_event)
     raw = infer_text(
         [{"role": "system", "content": SEGMENT_SUMMARIZE_SYSTEM},
          {"role": "user", "content": "\n".join([
@@ -107,6 +110,7 @@ def _summarize_one_content_item(
              item.text or "(empty)",
          ]).strip()}],
         tier=_SUMMARY_TIER,
+        cancel_event=cancel_event,
         extra_body=_SUMMARY_EXTRA_BODY,
         max_tokens=_SEGMENT_SUMMARY_MAX_TOKENS,
     )
@@ -130,7 +134,13 @@ def _summarize_one_content_item(
     return label
 
 
-def _summarize_content_items(trace: Trace, step_id: int, items: list[StepContentItem]) -> dict[str, str]:
+def _summarize_content_items(
+    trace: Trace,
+    step_id: int,
+    items: list[StepContentItem],
+    *,
+    cancel_event=None,
+) -> dict[str, str]:
     pending_items = [item for item in items if item.summarized]
     phase_tag = _content_tag(trace, step=step_id, phase="segment_summaries")
 
@@ -158,6 +168,7 @@ def _summarize_content_items(trace: Trace, step_id: int, items: list[StepContent
             item_index=item_index,
             total=total,
             phase_tag=phase_tag,
+            cancel_event=cancel_event,
         )
 
     def _on_summary_exception(indexed_item: tuple[int, StepContentItem], _exc: Exception) -> None:
@@ -178,6 +189,7 @@ def _summarize_content_items(trace: Trace, step_id: int, items: list[StepContent
         _run_one,
         max_workers=max_workers,
         budget_seconds=TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+        cancel_event=cancel_event,
         on_exception=_on_summary_exception,
         on_timeout=_on_summary_timeout,
     )
@@ -247,7 +259,7 @@ def _render_content_items(
         lines.append("")
 
 
-def _build_step_content(trace: Trace, index: int) -> str:
+def _build_step_content(trace: Trace, index: int, *, cancel_event=None) -> str:
     step_id = index + 1
     semantic_summary = get_cached_step_semantic_summary(trace, step_id)
     path_content = list(_get_editable_content_state(trace, index).paths)
@@ -259,7 +271,12 @@ def _build_step_content(trace: Trace, index: int) -> str:
         len(content_items),
         sum(1 for item in content_items if item.summarized),
     )
-    item_summaries = _summarize_content_items(trace, step_id, content_items)
+    item_summaries = _summarize_content_items(
+        trace,
+        step_id,
+        content_items,
+        cancel_event=cancel_event,
+    )
     input_path_content = [path_entry for path_entry in path_content if path_entry.branch == "input"]
     output_path_content = [path_entry for path_entry in path_content if path_entry.branch == "output"]
     items_by_path: dict[tuple[str, str], list[StepContentItem]] = {}
@@ -297,7 +314,7 @@ def get_cached_step_semantic_summary(trace: Trace, step_id: int) -> str | None:
     return None
 
 
-def get_or_compute_step_semantic_summary(trace: Trace, step_id: int) -> str:
+def get_or_compute_step_semantic_summary(trace: Trace, step_id: int, *, cancel_event=None) -> str:
     cached_summary = get_cached_step_semantic_summary(trace, step_id)
     if cached_summary is not None:
         return cached_summary
@@ -308,6 +325,7 @@ def get_or_compute_step_semantic_summary(trace: Trace, step_id: int) -> str:
 
     record = trace.get(index)
     log_tag = _content_tag(trace, step=step_id, phase="semantic_summary")
+    raise_if_cancelled(cancel_event)
 
     rendered = render_record_markdown(record, trace.get_diffed(index), view="full")
     structured_summary = build_step_summary(record, rendered_chars=len(rendered))
@@ -315,6 +333,7 @@ def get_or_compute_step_semantic_summary(trace: Trace, step_id: int) -> str:
         [{"role": "system", "content": STEP_SUMMARIZE_SYSTEM},
          {"role": "user", "content": structured_summary}],
         tier=_SUMMARY_TIER,
+        cancel_event=cancel_event,
         extra_body=_SUMMARY_EXTRA_BODY,
         max_tokens=_STEP_SUMMARY_MAX_TOKENS,
     ).strip()
@@ -323,10 +342,11 @@ def get_or_compute_step_semantic_summary(trace: Trace, step_id: int) -> str:
     return semantic_summary
 
 
-def get_step_overview(trace: Trace, step_id=None) -> str:
+def get_step_overview(trace: Trace, step_id=None, cancel_event=None) -> str:
     index, err = resolve_step_index(trace, step_id)
     if err:
         return err
+    raise_if_cancelled(cancel_event)
 
     cached_summary = get_cached_step_semantic_summary(trace, index + 1)
     if index in trace.step_overview_cache:
@@ -335,6 +355,6 @@ def get_step_overview(trace: Trace, step_id=None) -> str:
             logger.info("%s cache hit", _content_tag(trace, step=index + 1))
             return cached_result
 
-    result = _build_step_content(trace, index)
+    result = _build_step_content(trace, index, cancel_event=cancel_event)
     trace.step_overview_cache[index] = result
     return result

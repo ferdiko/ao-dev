@@ -16,12 +16,13 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sovara.server.graph_models import RunGraph
 from sovara.server.graph_analysis.trace_chat.logger import (
     configure_inference_process_logging,
@@ -29,6 +30,7 @@ from sovara.server.graph_analysis.trace_chat.logger import (
     format_log_tags,
     get_logger,
 )
+from sovara.server.graph_analysis.trace_chat.cancel import TraceChatCancelled
 
 # ============================================================
 # Sub-server app
@@ -52,6 +54,7 @@ def health():
 # is invalidated on edits and reruns (which rebuild the graph).
 _trace_cache: dict = {}
 _prefetch_futures: dict[str, Future] = {}
+_chat_cancel_events: dict[str, threading.Event] = {}
 _pool = ThreadPoolExecutor(max_workers=4)
 
 
@@ -228,7 +231,18 @@ def _ensure_prefetch_future(run_id: str, trace, *, is_new: bool) -> Future:
 
 class ChatRequest(BaseModel):
     message: str
-    history: list = []
+    history: list = Field(default_factory=list)
+
+
+@app.post("/chat/{run_id}/abort", status_code=202)
+def abort_chat(run_id: str):
+    cancel_event = _chat_cancel_events.get(run_id)
+    if cancel_event is None:
+        logger.info("Trace chat abort requested for idle run_id=%s", run_id)
+        return {"status": "idle"}
+    cancel_event.set()
+    logger.info("Trace chat abort requested for run_id=%s", run_id)
+    return {"status": "cancelling"}
 
 
 @app.post("/prefetch/{run_id}", status_code=202)
@@ -264,28 +278,44 @@ async def chat(run_id: str, req: ChatRequest):
         _log_preview(req.message),
     )
 
+    cancel_event = threading.Event()
+    _chat_cancel_events[run_id] = cancel_event
     try:
-        trace, is_new = await asyncio.to_thread(_get_trace_for_run, run_id)
-    except Exception:
-        logger.exception("Failed to load trace for run_id=%s", run_id)
-        raise
+        try:
+            trace, is_new = await asyncio.to_thread(_get_trace_for_run, run_id)
+        except TraceChatCancelled as exc:
+            logger.info("Trace chat request cancelled for run_id=%s", run_id)
+            raise HTTPException(409, str(exc))
+        except Exception:
+            logger.exception("Failed to load trace for run_id=%s", run_id)
+            raise
 
-    if trace is None:
-        logger.warning("Trace chat rejected for run_id=%s: no LLM calls found", run_id)
-        raise HTTPException(400, "No LLM calls found for this run")
+        if trace is None:
+            logger.warning("Trace chat rejected for run_id=%s: no LLM calls found", run_id)
+            raise HTTPException(400, "No LLM calls found for this run")
 
-    # (Re-)prefetch summary on first request or when the trace changed after a rerun/edit
-    prefetch_future = _ensure_prefetch_future(run_id, trace, is_new=is_new)
+        # (Re-)prefetch summary on first request or when the trace changed after a rerun/edit
+        prefetch_future = _ensure_prefetch_future(run_id, trace, is_new=is_new)
 
-    from sovara.server.graph_analysis.trace_chat.main import handle_question
-    try:
-        result = await asyncio.to_thread(
-            handle_question, req.message, trace, req.history,
-            prefetch_future,
-        )
-    except Exception:
-        logger.exception("Trace chat request failed for run_id=%s", run_id)
-        raise
+        from sovara.server.graph_analysis.trace_chat.main import handle_question
+        try:
+            result = await asyncio.to_thread(
+                handle_question,
+                req.message,
+                trace,
+                req.history,
+                prefetch_future,
+                cancel_event,
+            )
+        except TraceChatCancelled as exc:
+            logger.info("Trace chat request cancelled for run_id=%s", run_id)
+            raise HTTPException(409, str(exc))
+        except Exception:
+            logger.exception("Trace chat request failed for run_id=%s", run_id)
+            raise
+    finally:
+        if _chat_cancel_events.get(run_id) is cancel_event:
+            _chat_cancel_events.pop(run_id, None)
 
     logger.info(
         "Trace chat response ready: run_id=%s answer_chars=%d edits_applied=%s",

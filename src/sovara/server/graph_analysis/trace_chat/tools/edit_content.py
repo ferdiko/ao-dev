@@ -5,6 +5,7 @@ import re
 from typing import Optional, Tuple
 
 from ....llm_backend import NO_THINKING_EXTRA_BODY, infer_text
+from ..cancel import raise_if_cancelled
 from ..logger import format_log_tags, get_logger
 from ..utils.content_items import StepContentItem, build_step_content_items
 from ..utils.edit_persist import (
@@ -262,7 +263,7 @@ def get_content_unit(trace, step_id=None, content_id=None) -> str:
     return f"[content_id={item.content_id}] `{path_entry.display_path}`:\n{path_entry.paragraphs[item.paragraph_index or 0]}"
 
 
-def edit_content(trace, instruction, step_id=None, content_id=None) -> str:
+def edit_content(trace, instruction, step_id=None, content_id=None, cancel_event=None) -> str:
     idx, err = _resolve_step_id(trace, step_id)
     if err:
         return err
@@ -288,10 +289,12 @@ def edit_content(trace, instruction, step_id=None, content_id=None) -> str:
     )
     logger.debug("%s system:\n%s", prompt_tag, system_prompt)
     logger.debug("%s user:\n%s", prompt_tag, source_text)
+    raise_if_cancelled(cancel_event)
     new_text = infer_text(
         [{"role": "user", "content": source_text}],
         system=system_prompt,
         tier="expensive",
+        cancel_event=cancel_event,
         extra_body=NO_THINKING_EXTRA_BODY,
         max_tokens=1024,
     ).strip()
@@ -307,6 +310,7 @@ def edit_content(trace, instruction, step_id=None, content_id=None) -> str:
     )
 
     preview = new_text[:300] + ("..." if len(new_text) > 300 else "")
+    raise_if_cancelled(cancel_event)
     outcome = _write_back(trace, idx, state, modified_branches={path_entry.branch})
     if not outcome.ok:
         return outcome.message.strip() or "Error: failed to write to database."

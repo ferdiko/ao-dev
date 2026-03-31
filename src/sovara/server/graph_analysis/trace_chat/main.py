@@ -1,4 +1,5 @@
 import argparse
+import inspect
 import json
 import re
 import sys
@@ -18,6 +19,7 @@ if __package__ in (None, ""):
         format_log_tags,
         get_logger,
     )
+    from sovara.server.graph_analysis.trace_chat.cancel import TraceChatCancelled, raise_if_cancelled
     from sovara.server.graph_analysis.trace_chat.tools import TOOLS_SCHEMA, execute_tool
     from sovara.server.graph_analysis.trace_chat.tools.summarize_trace import _generate_summary
     from sovara.server.graph_analysis.trace_chat.utils.edit_persist import RERUN_MSG
@@ -25,6 +27,7 @@ if __package__ in (None, ""):
     from sovara.server.graph_analysis.trace_chat.utils.trace import Trace
     from sovara.server.llm_backend import infer
 else:
+    from .cancel import TraceChatCancelled, raise_if_cancelled
     from .logger import ensure_standalone_logger, format_log_event_banner, format_log_tags, get_logger
     from .tools import TOOLS_SCHEMA, execute_tool
     from .tools.summarize_trace import _generate_summary
@@ -89,8 +92,16 @@ def _prefetch_tag(trace: Trace, **fields) -> str:
     return format_log_tags("prefetch", run_id=trace.run_id or "-", **fields)
 
 
+def _supports_kwarg(fn, name: str) -> bool:
+    signature = inspect.signature(fn)
+    return (
+        name in signature.parameters
+        or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
+    )
+
+
 def handle_question(question: str, trace: Trace, history: list,
-                     prefetch_future=None) -> dict:
+                     prefetch_future=None, cancel_event=None) -> dict:
     """ReAct loop with native tool use via litellm.
 
     Returns {"answer": str, "edits_applied": bool}.
@@ -115,6 +126,7 @@ def handle_question(question: str, trace: Trace, history: list,
         len(trace),
         len(history),
     )
+    raise_if_cancelled(cancel_event)
 
     trace_summary = trace.prefetched_summary or ""
     if prefetch_future is not None and not trace_summary:
@@ -156,6 +168,7 @@ def handle_question(question: str, trace: Trace, history: list,
     messages = list(history) + [{"role": "user", "content": question}]
 
     for iteration in range(MAX_REACT_ITERATIONS):
+        raise_if_cancelled(cancel_event)
         iteration_num = iteration + 1
         iteration_tag = format_log_tags(
             "trace_chat",
@@ -166,16 +179,30 @@ def handle_question(question: str, trace: Trace, history: list,
         logger.info("%s ReAct iteration start", iteration_tag)
 
         try:
+            infer_kwargs = {
+                "system": system,
+                "tools": TOOLS_SCHEMA,
+                "max_tokens": 2048,
+            }
+            if _supports_kwarg(infer, "cancel_event"):
+                infer_kwargs["cancel_event"] = cancel_event
             response = infer(
                 messages,
-                system=system,
-                tools=TOOLS_SCHEMA,
-                max_tokens=2048,
+                **infer_kwargs,
             )
+        except TraceChatCancelled:
+            logger.info(
+                "%s CANCELLED during planner call on iteration %d after %.1fs",
+                question_tag,
+                iteration_num,
+                time.monotonic() - t0,
+            )
+            raise
         except Exception:
             logger.exception("LLM call failed on iteration %d", iteration_num)
             raise
         msg = response.choices[0].message
+        raise_if_cancelled(cancel_event)
 
         # Log reasoning if present
         if msg.content:
@@ -184,6 +211,7 @@ def handle_question(question: str, trace: Trace, history: list,
         # No tool calls → final answer
         if not msg.tool_calls:
             answer = msg.content or ""
+            raise_if_cancelled(cancel_event)
             logger.info(
                 "%s ANSWER after %d iteration(s), %d chars, total %.1fs",
                 question_tag,
@@ -220,9 +248,14 @@ def handle_question(question: str, trace: Trace, history: list,
             parsed_calls.append((tc, params, tool_tag))
 
         def _run_one(tc, params, tool_tag):
+            raise_if_cancelled(cancel_event)
             t_tool = time.monotonic()
             logger.info("%s start params=%s", tool_tag, params)
-            result = execute_tool(tc.function.name, trace, params, log_tag=tool_tag)
+            execute_tool_kwargs = {"log_tag": tool_tag}
+            if _supports_kwarg(execute_tool, "cancel_event"):
+                execute_tool_kwargs["cancel_event"] = cancel_event
+            result = execute_tool(tc.function.name, trace, params, **execute_tool_kwargs)
+            raise_if_cancelled(cancel_event)
             logger.info(
                 "%s done in %.1fs result_chars=%d preview=%s",
                 tool_tag,
@@ -232,8 +265,17 @@ def handle_question(question: str, trace: Trace, history: list,
             )
             return tc, result
 
-        with ThreadPoolExecutor() as pool:
-            results = list(pool.map(lambda args: _run_one(*args), parsed_calls))
+        try:
+            with ThreadPoolExecutor() as pool:
+                results = list(pool.map(lambda args: _run_one(*args), parsed_calls))
+        except TraceChatCancelled:
+            logger.info(
+                "%s CANCELLED during tool execution on iteration %d after %.1fs",
+                question_tag,
+                iteration_num,
+                time.monotonic() - t0,
+            )
+            raise
 
         edit_results = [
             result for tc, result in results
@@ -242,6 +284,7 @@ def handle_question(question: str, trace: Trace, history: list,
         if edit_results:
             edits_applied = any(RERUN_MSG.strip() in result for result in edit_results)
             answer = "\n\n".join(result.strip() for result in edit_results if result.strip())
+            raise_if_cancelled(cancel_event)
             logger.info(
                 "%s EDIT RESULT after %d iteration(s), %d chars, total %.1fs",
                 question_tag,
@@ -262,6 +305,7 @@ def handle_question(question: str, trace: Trace, history: list,
 
         compact_tool_results(messages)
 
+    raise_if_cancelled(cancel_event)
     fallback = "Reached maximum iterations without a final answer."
     logger.warning("%s FALLBACK after %.1fs: %s", question_tag, time.monotonic() - t0, fallback)
     return {"answer": fallback, "edits_applied": edits_applied}

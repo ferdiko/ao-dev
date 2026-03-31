@@ -2,19 +2,26 @@ import asyncio
 import importlib
 import json
 import logging
+import os
 import sys
+import threading
 import types
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi import HTTPException
 
 from sovara.common.logger import create_file_logger
+from sovara.server.database_manager import DB
 from sovara.server.graph_analysis.inference_server import (
     _ensure_prefetch_future,
     _graph_fingerprint,
     prefetch,
 )
+from sovara.server.graph_analysis.trace_chat.cancel import TraceChatCancelled
 from sovara.server.graph_analysis.trace_chat.logger import (
     LOGGER_NAME,
     configure_inference_process_logging,
@@ -26,6 +33,24 @@ from sovara.server.graph_analysis.trace_chat.tools import execute_tool
 from sovara.server.graph_analysis.trace_chat.utils.edit_persist import DISPLAY_ONLY_MSG
 from sovara.server.graph_analysis.trace_chat.utils.trace import Trace
 from sovara.server.routes.ui import ChatMessageRequest, chat
+from sovara.server.state import ServerState
+
+
+def _create_trace_chat_run() -> tuple[str, str]:
+    project_id = str(uuid.uuid4())
+    run_id = str(uuid.uuid4())
+    DB.upsert_project(project_id, "trace-chat-project", "")
+    DB.add_run(
+        run_id=run_id,
+        name="Trace Chat Run",
+        timestamp=datetime.now(timezone.utc),
+        cwd=os.getcwd(),
+        command="test",
+        environment={},
+        parent_run_id=run_id,
+        project_id=project_id,
+    )
+    return project_id, run_id
 
 
 def test_graph_fingerprint_accepts_uuid_shaped_nodes():
@@ -107,6 +132,25 @@ def test_handle_question_does_not_block_on_running_prefetch(monkeypatch):
 
     assert result == {"answer": "answer", "edits_applied": False}
     assert trace.prefetched_summary == ""
+
+
+def test_handle_question_raises_when_cancelled_before_iteration(monkeypatch):
+    infer_called = [False]
+
+    def fake_infer(messages, system, tools, max_tokens):
+        infer_called[0] = True
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="answer", tool_calls=[]))]
+        )
+
+    cancel_event = threading.Event()
+    cancel_event.set()
+    monkeypatch.setattr("sovara.server.graph_analysis.trace_chat.main.infer", fake_infer)
+
+    with pytest.raises(TraceChatCancelled):
+        handle_question("hello", Trace(raw="", records=[], run_id="run-1"), [], cancel_event=cancel_event)
+
+    assert infer_called == [False]
 
 
 def test_format_log_event_banner_is_single_line_and_parseable():
@@ -318,6 +362,15 @@ def test_scatter_execute_returns_none_for_exception_and_timeout(monkeypatch):
     assert pool_state["shutdown_calls"] == [(False, True)]
 
 
+def test_scatter_execute_raises_when_cancelled():
+    llm_backend = importlib.import_module("sovara.server.llm_backend")
+    cancel_event = threading.Event()
+    cancel_event.set()
+
+    with pytest.raises(TraceChatCancelled):
+        llm_backend.scatter_execute([1], lambda item: item, cancel_event=cancel_event)
+
+
 def test_create_file_logger_can_rebind_named_logger(tmp_path):
     log_a = tmp_path / "a.log"
     log_b = tmp_path / "b.log"
@@ -512,12 +565,15 @@ def test_chat_returns_plain_text_upstream_errors_without_crashing(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(AsyncClient=FakeAsyncClient))
 
+    project_id, run_id = _create_trace_chat_run()
     try:
-        asyncio.run(chat("run-1", ChatMessageRequest(message="hello")))
+        asyncio.run(chat(run_id, ChatMessageRequest(message="hello"), ServerState()))
         assert False, "Expected HTTPException"
     except HTTPException as exc:
         assert exc.status_code == 500
         assert exc.detail == "upstream exploded"
+    finally:
+        DB.delete_project(project_id)
 
 
 def test_chat_rejects_invalid_json_success_payload(monkeypatch):
@@ -540,12 +596,15 @@ def test_chat_rejects_invalid_json_success_payload(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(AsyncClient=FakeAsyncClient))
 
+    project_id, run_id = _create_trace_chat_run()
     try:
-        asyncio.run(chat("run-1", ChatMessageRequest(message="hello")))
+        asyncio.run(chat(run_id, ChatMessageRequest(message="hello"), ServerState()))
         assert False, "Expected HTTPException"
     except HTTPException as exc:
         assert exc.status_code == 502
         assert exc.detail == "Invalid response from inference server"
+    finally:
+        DB.delete_project(project_id)
 
 
 def test_chat_returns_gateway_timeout_when_inference_proxy_times_out(monkeypatch):
@@ -569,12 +628,15 @@ def test_chat_returns_gateway_timeout_when_inference_proxy_times_out(monkeypatch
         ),
     )
 
+    project_id, run_id = _create_trace_chat_run()
     try:
-        asyncio.run(chat("run-1", ChatMessageRequest(message="hello")))
+        asyncio.run(chat(run_id, ChatMessageRequest(message="hello"), ServerState()))
         assert False, "Expected HTTPException"
     except HTTPException as exc:
         assert exc.status_code == 504
         assert exc.detail == "Trace chat timed out after 120 seconds"
+    finally:
+        DB.delete_project(project_id)
 
 
 def test_execute_tool_logs_exceptions(monkeypatch):

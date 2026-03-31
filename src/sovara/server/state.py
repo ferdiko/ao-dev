@@ -83,6 +83,11 @@ class ServerState:
         self._git_base_dir = os.path.abspath(SOVARA_GIT_DIR)
         self._git_executor = ThreadPoolExecutor(max_workers=1)
 
+        # Trace chat request tracking
+        self._trace_chat_generation_by_run: dict[str, int] = {}
+        self._trace_chat_active_generation: dict[str, int] = {}
+        self._trace_chat_cancelled_generations: set[tuple[str, int]] = set()
+
     def touch_activity(self):
         """Reset inactivity timer."""
         self._last_activity_time = time.time()
@@ -217,6 +222,36 @@ class ServerState:
     # ============================================================
     # Helpers
     # ============================================================
+
+    def begin_trace_chat_request(self, run_id: str) -> int:
+        with self.lock:
+            generation = self._trace_chat_generation_by_run.get(run_id, 0) + 1
+            self._trace_chat_generation_by_run[run_id] = generation
+            self._trace_chat_active_generation[run_id] = generation
+            self._trace_chat_cancelled_generations.discard((run_id, generation))
+            return generation
+
+    def cancel_trace_chat_request(self, run_id: str) -> int | None:
+        with self.lock:
+            generation = self._trace_chat_active_generation.get(run_id)
+            if generation is None:
+                return None
+            self._trace_chat_cancelled_generations.add((run_id, generation))
+            return generation
+
+    def is_trace_chat_request_current(self, run_id: str, generation: int) -> bool:
+        with self.lock:
+            return self._trace_chat_active_generation.get(run_id) == generation
+
+    def is_trace_chat_request_cancelled(self, run_id: str, generation: int) -> bool:
+        with self.lock:
+            return (run_id, generation) in self._trace_chat_cancelled_generations
+
+    def finish_trace_chat_request(self, run_id: str, generation: int) -> None:
+        with self.lock:
+            if self._trace_chat_active_generation.get(run_id) == generation:
+                self._trace_chat_active_generation.pop(run_id, None)
+            self._trace_chat_cancelled_generations.discard((run_id, generation))
 
     def _clear_run_ui(self, run_id: str) -> None:
         """Clear UI state for a run (graphs and color previews)."""

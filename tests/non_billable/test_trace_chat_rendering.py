@@ -1,8 +1,10 @@
 import importlib
+import threading
 from types import SimpleNamespace
 
 import pytest
 
+from sovara.server.graph_analysis.trace_chat.cancel import TraceChatCancelled
 from sovara.server.graph_analysis.trace_chat.tools.ask_step import ask_step
 from sovara.server.graph_analysis.trace_chat.tools.get_trace_overview import get_trace_overview
 from sovara.server.graph_analysis.trace_chat.tools.get_step_snapshot import get_step_snapshot
@@ -619,6 +621,53 @@ def test_edit_content_accepts_content_id(monkeypatch):
 
     assert "content_id=c2" in result
     assert updated.endswith("Edited second paragraph.")
+
+
+def test_edit_content_does_not_write_back_after_cancellation(monkeypatch):
+    trace = Trace.from_records([
+        build_trace_record_from_to_show(
+            {
+                "body": {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "First paragraph.\n\nSecond paragraph that should be edited.",
+                        }
+                    ]
+                }
+            },
+            {"output": "ok"},
+            index=0,
+            name="demo",
+        )
+    ])
+    cancel_event = threading.Event()
+    write_calls: list[tuple[object, ...]] = []
+    edit_content_module = importlib.import_module(
+        "sovara.server.graph_analysis.trace_chat.tools.edit_content"
+    )
+
+    def fake_infer_text(*args, **kwargs):
+        cancel_event.set()
+        return "Edited second paragraph."
+
+    monkeypatch.setattr(edit_content_module, "infer_text", fake_infer_text)
+    monkeypatch.setattr(
+        edit_content_module,
+        "_write_back",
+        lambda *args, **kwargs: write_calls.append(args) or PersistOutcome(ok=True),
+    )
+
+    with pytest.raises(TraceChatCancelled):
+        edit_content(
+            trace,
+            step_id=1,
+            content_id="c2",
+            instruction="Rewrite this paragraph.",
+            cancel_event=cancel_event,
+        )
+
+    assert write_calls == []
 
 
 def test_edit_content_persists_against_the_actual_run_id(monkeypatch):

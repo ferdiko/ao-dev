@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  abortTraceChat,
   chatWithTrace,
   clearTraceChatHistory,
   fetchProjectRuns,
   fetchTraceChatHistory,
   post,
   saveTraceChatHistory,
+  updateUserLlmSettings,
   updateRunTags,
 } from "./api";
 
@@ -78,6 +80,61 @@ describe("api", () => {
     expect(url).toBe("/ui/update-run-tags");
     expect(options.method).toBe("POST");
     expect(options.body).toBe(JSON.stringify({ run_id: "run-1", tag_ids: ["tag-a", "tag-b"] }));
+  });
+
+  it("posts nested user LLM settings", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        user: {
+          user_id: "user-1",
+          full_name: "User One",
+          email: "user@example.com",
+          llm_settings: {
+            primary: {
+              provider: "hosted_vllm",
+              model_name: "Meta-Llama-3.1-70B-Instruct",
+              api_base: "http://192.168.1.50:8000/v1",
+            },
+            helper: {
+              provider: "anthropic",
+              model_name: "claude-haiku-4-5",
+              api_base: null,
+            },
+          },
+        },
+      }),
+    });
+
+    await updateUserLlmSettings({
+      primary: {
+        provider: "hosted_vllm",
+        model_name: "Meta-Llama-3.1-70B-Instruct",
+        api_base: "http://192.168.1.50:8000/v1",
+      },
+      helper: {
+        provider: "anthropic",
+        model_name: "claude-haiku-4-5",
+        api_base: null,
+      },
+    });
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    expect(url).toBe("/ui/update-user-llm-settings");
+    expect(options.method).toBe("POST");
+    expect(options.body).toBe(JSON.stringify({
+      primary: {
+        provider: "hosted_vllm",
+        model_name: "Meta-Llama-3.1-70B-Instruct",
+        api_base: "http://192.168.1.50:8000/v1",
+      },
+      helper: {
+        provider: "anthropic",
+        model_name: "claude-haiku-4-5",
+        api_base: null,
+      },
+    }));
   });
 
   it("retries failed posts after starting the backend", async () => {
@@ -180,12 +237,22 @@ describe("api", () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ answer: "ready" }),
+        json: async () => ({
+          history: [
+            { role: "user", content: "hello" },
+            { role: "assistant", content: "ready" },
+          ],
+        }),
       });
 
     const result = await chatWithTrace("run-1", "hello", []);
 
-    expect(result).toEqual({ answer: "ready" });
+    expect(result).toEqual({
+      history: [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "ready" },
+      ],
+    });
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "/ui/chat/run-1",
       "/_sovara/health",
@@ -193,6 +260,36 @@ describe("api", () => {
       "/_sovara/health",
       "/ui/chat/run-1",
     ]);
+  });
+
+  it("passes an AbortSignal through trace chat requests", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ history: [] }),
+    });
+    const controller = new AbortController();
+
+    await chatWithTrace("run-1", "hello", [], controller.signal);
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/ui/chat/run-1");
+    expect(options.signal).toBe(controller.signal);
+  });
+
+  it("posts a trace chat abort request for a run", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: async () => ({ status: "cancelling" }),
+    });
+
+    await abortTraceChat("run-1");
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/ui/chat/run-1/abort");
+    expect(options.method).toBe("POST");
+    expect(options.body).toBe("{}");
   });
 
   it("fetches persisted trace chat history for a run", async () => {

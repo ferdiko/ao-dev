@@ -251,7 +251,28 @@ def _init_db(conn):
     )
 
     conn.commit()
+    _ensure_user_schema(conn)
     _ensure_run_schema(conn)
+
+
+def _ensure_user_schema(conn):
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(users)").fetchall()
+    }
+    if "llm_primary_provider" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN llm_primary_provider TEXT")
+    if "llm_primary_model_name" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN llm_primary_model_name TEXT")
+    if "llm_primary_api_base" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN llm_primary_api_base TEXT")
+    if "llm_helper_provider" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN llm_helper_provider TEXT")
+    if "llm_helper_model_name" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN llm_helper_model_name TEXT")
+    if "llm_helper_api_base" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN llm_helper_api_base TEXT")
+    conn.commit()
 
 
 def _ensure_run_schema(conn):
@@ -371,7 +392,48 @@ def upsert_user_query(user_id, full_name, email):
 
 def get_user_query(user_id):
     """Get user by user_id."""
-    return query_one("SELECT user_id, full_name, email FROM users WHERE user_id=?", (user_id,))
+    return query_one(
+        """
+        SELECT
+            user_id,
+            full_name,
+            email,
+            llm_primary_provider,
+            llm_primary_model_name,
+            llm_primary_api_base,
+            llm_helper_provider,
+            llm_helper_model_name,
+            llm_helper_api_base
+        FROM users
+        WHERE user_id=?
+        """,
+        (user_id,),
+    )
+
+
+def update_user_llm_settings_query(user_id, llm_settings):
+    """Update persisted LLM settings for a user."""
+    execute(
+        """
+        UPDATE users
+        SET llm_primary_provider=?,
+            llm_primary_model_name=?,
+            llm_primary_api_base=?,
+            llm_helper_provider=?,
+            llm_helper_model_name=?,
+            llm_helper_api_base=?
+        WHERE user_id=?
+        """,
+        (
+            llm_settings["llm_primary_provider"],
+            llm_settings["llm_primary_model_name"],
+            llm_settings["llm_primary_api_base"],
+            llm_settings["llm_helper_provider"],
+            llm_settings["llm_helper_model_name"],
+            llm_settings["llm_helper_api_base"],
+            user_id,
+        ),
+    )
 
 
 def add_run_query(
