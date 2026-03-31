@@ -44,3 +44,13 @@ def test_open_weight_families_preserve_vendor_casing():
     assert _sanitize_for_display("tiny-aya-earth") == "Tiny Aya Earth"
     assert _sanitize_for_display("granite-4.0-h-1b") == "Granite 4.0 H 1B"
     assert _sanitize_for_display("devstral-small-2505") == "Devstral Small 2505"
+
+
+def test_recent_vendor_specific_model_ids_format_cleanly():
+    assert _sanitize_for_display("grok-4-fast-reasoning") == "Grok 4 Fast Reasoning"
+    assert _sanitize_for_display("grok-code-fast-1") == "Grok Code Fast 1"
+    assert _sanitize_for_display("Doubao-1.5-UI-TARS") == "Doubao 1.5 UI TARS"
+    assert _sanitize_for_display("Doubao-Seed-1.6-thinking") == "Doubao Seed 1.6 Thinking"
+    assert _sanitize_for_display("MiniMax-M1-80k") == "MiniMax M1 80K"
+    assert _sanitize_for_display("amazon.nova-premier-v1:0") == "Amazon Nova Premier"
+    assert _sanitize_for_display("us.amazon.nova-pro-v1:0") == "Amazon Nova Pro"

@@ -353,6 +353,7 @@ MODEL_TOKEN_OVERRIDES = {
     "llama": "Llama",
     "magistral": "Magistral",
     "medgemma": "MedGemma",
+    "minimax": "MiniMax",
     "mistral": "Mistral",
     "mixtral": "Mixtral",
     "ministral": "Ministral",
@@ -369,7 +370,9 @@ MODEL_TOKEN_OVERRIDES = {
     "qwen": "Qwen",
     "qwq": "QwQ",
     "sonnet": "Sonnet",
+    "tars": "TARS",
     "tts": "TTS",
+    "ui": "UI",
     "vl": "VL",
     "vlm": "VLM",
     "voxtral": "Voxtral",
@@ -459,6 +462,11 @@ def _format_gemini(match: re.Match[str]) -> str:
     return f"Gemini {version}{_format_tail(tail, strip_gemini_preview_date=True)}"
 
 
+def _format_amazon_nova(match: re.Match[str]) -> str:
+    (family,) = match.groups()
+    return f"Amazon Nova {_format_model_token(family)}"
+
+
 def _format_prefixed_family(match: re.Match[str], display_family: str) -> str:
     tail = match.group(1)
     return f"{display_family}{_format_tail(tail)}"
@@ -504,6 +512,11 @@ MODEL_NAME_FORMATTERS = [
     # Google
     (r"^gemini-(\d+(?:\.\d+)?)(?:-([a-z0-9]+(?:-[a-z0-9]+)*))?$", _format_gemini),
     # Hugging Face / open-weight families
+    (r"^grok(?:-(.+))?$", lambda m: _format_prefixed_family(m, "Grok")),
+    (r"^(?i:amazon\.nova-(premier|pro|lite|micro)-v\d+(?::\d+)?)$", _format_amazon_nova),
+    (r"^(?i:us\.amazon\.nova-(premier|pro|lite|micro)-v\d+(?::\d+)?)$", _format_amazon_nova),
+    (r"^(?i:doubao(?:-(.+))?)$", lambda m: _format_prefixed_family(m, "Doubao")),
+    (r"^(?i:minimax(?:-(.+))?)$", lambda m: _format_prefixed_family(m, "MiniMax")),
     (r"^(qwen[\w.]*|qwq)(?:-(.+))?$", _format_captured_family),
     (r"^llama(?:-(.+))?$", lambda m: _format_prefixed_family(m, "Llama")),
     (r"^(glm[\w.]*|chatglm[\w.]*)(?:-(.+))?$", _format_captured_family),
