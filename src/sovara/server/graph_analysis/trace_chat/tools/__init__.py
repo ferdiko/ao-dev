@@ -10,17 +10,15 @@ from ..logger import get_logger
 server_logger = get_logger()
 
 from .get_trace_overview import get_trace_overview
-from .get_step import get_step
+from .get_step_snapshot import get_step_snapshot
 from .get_step_overview import get_step_overview
 from .verify import verify
 from .ask_step import ask_step
 from .search import search
-from .prompt_edit import (
-    delete_content_paragraph,
+from .edit_content import (
+    delete_content_unit,
     edit_content,
-    get_content,
-    insert_content_paragraph,
-    move_content_paragraph,
+    get_content_unit,
     undo,
 )
 
@@ -28,16 +26,14 @@ from .prompt_edit import (
 # function signature: f(trace: Trace, ...) -> str
 TOOL_FUNCTIONS = {
     "get_trace_overview": get_trace_overview,
-    "get_step": get_step,
+    "get_step_snapshot": get_step_snapshot,
     "get_step_overview": get_step_overview,
     "verify": verify,
     "ask_step": ask_step,
     "search": search,
-    "get_content": get_content,
+    "get_content_unit": get_content_unit,
     "edit_content": edit_content,
-    "insert_content_paragraph": insert_content_paragraph,
-    "delete_content_paragraph": delete_content_paragraph,
-    "move_content_paragraph": move_content_paragraph,
+    "delete_content_unit": delete_content_unit,
     "undo": undo,
 }
 
@@ -49,9 +45,8 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "get_trace_overview",
             "description": (
-                "Returns a high-level overview: step count, conversation structure "
-                "(which steps share system prompts and how message history grows), "
-                "and per-step metadata (name, diff input size, output size, optional cached summary)."
+                "Returns a high-level overview of the trace: step count, conversation structure, "
+                "and per-step metadata."
             ),
             "parameters": {
                 "type": "object",
@@ -63,12 +58,11 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
-            "name": "get_step",
+            "name": "get_step_snapshot",
             "description": (
-                "Returns content for a specific step. Use view='diff' to see only "
-                "new messages since the last step in the same conversation — much "
-                "shorter for later steps. Large full-step requests may return a "
-                "compact preview instead of raw content."
+                "Returns a raw snapshot of one step. scope='full' returns full input "
+                "and output. scope='new_input' returns only new input plus full output. "
+                "Large requests may return a compact preview instead of raw content."
             ),
             "parameters": {
                 "type": "object",
@@ -77,10 +71,10 @@ TOOLS_SCHEMA = [
                         "type": "integer",
                         "description": "The 1-based index of the step to inspect.",
                     },
-                    "view": {
+                    "scope": {
                         "type": "string",
-                        "enum": ["full", "diff", "output"],
-                        "description": "Level of detail. Default: 'full'.",
+                        "enum": ["full", "new_input"],
+                        "description": "Which slice of the step to load. Default: 'full'.",
                     },
                 },
                 "required": ["step_id"],
@@ -92,10 +86,9 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "get_step_overview",
             "description": (
-                "Returns the cached step summary for a step when available plus "
-                "explicit input and output path sections. Longer content is summarized into "
-                "expandable entries with step-global content_id handles. Every visible "
-                "input and output content unit gets a content_id."
+                "Best first look at a step: returns the cached step summary when available "
+                "plus visible input and output content units with step-global content_id handles. "
+                "Longer content is summarized and can be expanded with get_content_unit."
             ),
             "parameters": {
                 "type": "object",
@@ -115,7 +108,8 @@ TOOLS_SCHEMA = [
             "name": "verify",
             "description": (
                 "Checks whether a step's output is correct given its instructions. "
-                "Returns CORRECT/WRONG/UNCERTAIN, or UNKNOWN when the verifier response is malformed. "
+                "Returns a plain-language judgment saying the step looks correct, wrong, uncertain, "
+                "or was not evaluated when the verifier response is malformed. "
                 "If step_id is omitted, verifies ALL steps (may be slow)."
             ),
             "parameters": {
@@ -136,7 +130,7 @@ TOOLS_SCHEMA = [
             "name": "ask_step",
             "description": (
                 "Asks a specific question about a step and returns only the answer. "
-                "More context-efficient than get_step for targeted questions."
+                "Prefer this over get_step_snapshot for targeted questions."
             ),
             "parameters": {
                 "type": "object",
@@ -159,8 +153,8 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "search",
             "description": (
-                "Searches rendered trace content across input/output fields for a "
-                "substring. Returns matching steps, flattened paths, and context snippets."
+                "Searches rendered trace content for a substring. Returns matching steps, "
+                "locations, and context snippets."
             ),
             "parameters": {
                 "type": "object",
@@ -174,15 +168,13 @@ TOOLS_SCHEMA = [
             },
         },
     },
-    # -- Section editing tools --
+    # -- Content editing tools --
     {
         "type": "function",
         "function": {
-            "name": "get_content",
+            "name": "get_content_unit",
             "description": (
-                "Returns one content unit from get_step_overview by step-global "
-                "content_id, optionally validating path when provided. Path and "
-                "paragraph refs remain supported for compatibility."
+                "Returns one content unit from get_step_overview for a specific step by content_id."
             ),
             "parameters": {
                 "type": "object",
@@ -191,20 +183,12 @@ TOOLS_SCHEMA = [
                         "type": "integer",
                         "description": "1-based step ID.",
                     },
-                    "path": {
-                        "type": "string",
-                        "description": "Optional flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
-                    },
                     "content_id": {
                         "type": "string",
-                        "description": "Optional content handle from get_step_overview, like c0 or c1. Use this to load one specific content unit.",
-                    },
-                    "paragraph": {
-                        "type": "integer",
-                        "description": "Optional 0-based paragraph index within the selected path. Omit when path already includes ::pN.",
+                        "description": "Content handle from get_step_overview, like c0 or c1.",
                     },
                 },
-                "required": [],
+                "required": ["step_id", "content_id"],
             },
         },
     },
@@ -213,9 +197,7 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "edit_content",
             "description": (
-                "Rewrites one content unit from get_step_overview by "
-                "step-global content_id, optionally validating path when provided. "
-                "Paragraph refs like body.system::p2 remain supported."
+                "Rewrites one editable content unit from get_step_overview for a specific step by content_id."
             ),
             "parameters": {
                 "type": "object",
@@ -224,36 +206,26 @@ TOOLS_SCHEMA = [
                         "type": "integer",
                         "description": "1-based step ID.",
                     },
-                    "path": {
-                        "type": "string",
-                        "description": "Optional flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
-                    },
                     "content_id": {
                         "type": "string",
-                        "description": "Optional content handle from get_step_overview, like c0 or c1. Use this to edit one specific content unit.",
-                    },
-                    "paragraph": {
-                        "type": "integer",
-                        "description": "Optional 0-based paragraph index within the selected path. Omit when path already includes ::pN.",
+                        "description": "Content handle from get_step_overview, like c0 or c1.",
                     },
                     "instruction": {
                         "type": "string",
                         "description": "What to change (e.g. 'make it more concise', 'add a rule about JSON output').",
                     },
                 },
-                "required": ["instruction"],
+                "required": ["step_id", "content_id", "instruction"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "insert_content_paragraph",
+            "name": "delete_content_unit",
             "description": (
-                "Inserts a new paragraph inside one visible path. Use "
-                "after_paragraph=-1 to insert at the start. You may also use "
-                "after_content_id from get_step_overview; path becomes optional when "
-                "that content_id is provided."
+                "Removes one content unit for a specific step identified by content_id from "
+                "get_step_overview."
             ),
             "parameters": {
                 "type": "object",
@@ -261,95 +233,13 @@ TOOLS_SCHEMA = [
                     "step_id": {
                         "type": "integer",
                         "description": "1-based step ID.",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Optional flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
-                    },
-                    "after_content_id": {
-                        "type": "string",
-                        "description": "Optional content handle from get_step_overview. Insert after that content unit.",
-                    },
-                    "after_paragraph": {
-                        "type": "integer",
-                        "description": "Insert after this paragraph. -1 = insert at start. Omit when path already includes ::pN.",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "The text for the new paragraph.",
-                    },
-                },
-                "required": ["content"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_content_paragraph",
-            "description": (
-                "Removes one paragraph from a visible path. Use a step-global "
-                "content_id from get_step_overview, paragraph, or a paragraph ref "
-                "like body.system::p2."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "step_id": {
-                        "type": "integer",
-                        "description": "1-based step ID.",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Optional flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
                     },
                     "content_id": {
                         "type": "string",
-                        "description": "Optional content handle from get_step_overview.",
-                    },
-                    "paragraph": {
-                        "type": "integer",
-                        "description": "0-based paragraph index to delete. Omit when path already includes ::pN.",
+                        "description": "Content handle from get_step_overview.",
                     },
                 },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "move_content_paragraph",
-            "description": (
-                "Moves a paragraph to another position within one visible path. "
-                "Use step-global from_content_id from get_step_overview, "
-                "from_paragraph, or a paragraph ref like body.system::p2."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "step_id": {
-                        "type": "integer",
-                        "description": "1-based step ID.",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Optional flattened JSON path from get_step_overview, optionally with a ::pN paragraph suffix.",
-                    },
-                    "from_content_id": {
-                        "type": "string",
-                        "description": "Optional content handle from get_step_overview.",
-                    },
-                    "from_paragraph": {
-                        "type": "integer",
-                        "description": "Current paragraph index. Omit when path already includes ::pN.",
-                    },
-                    "to_paragraph": {
-                        "type": "integer",
-                        "description": "Target paragraph index.",
-                    },
-                },
-                "required": ["to_paragraph"],
+                "required": ["step_id", "content_id"],
             },
         },
     },
@@ -357,7 +247,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "undo",
-            "description": "Reverts the last edit to a step's sections. Can be called repeatedly.",
+            "description": "Reverts the last edit to a step. Can be called repeatedly.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -366,7 +256,7 @@ TOOLS_SCHEMA = [
                         "description": "1-based step ID.",
                     },
                 },
-                "required": [],
+                "required": ["step_id"],
             },
         },
     },

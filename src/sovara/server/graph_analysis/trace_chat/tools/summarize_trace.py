@@ -1,9 +1,10 @@
 """summarize_trace tool — one-shot full trace summary, avoiding extra ReAct rounds."""
 
 import time
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
-from ....llm_backend import NO_THINKING_EXTRA_BODY, infer_text
+from sovara.common.constants import TRACE_CHAT_SCATTER_BUDGET_SECONDS
+
+from ....llm_backend import NO_THINKING_EXTRA_BODY, infer_text, scatter_execute
 from ..logger import format_log_tags, get_logger
 from ..utils.trace import Trace, blocks_char_count, stringify_field
 from .get_step_overview import (
@@ -13,7 +14,6 @@ from .get_step_overview import (
 )
 from .get_trace_overview import get_trace_overview
 
-_STEP_SUMMARY_BUDGET_SECONDS = 5.0
 _STEP_SUMMARY_MAX_WORKERS = 8
 _STEP_SUMMARY_PREVIEW_CHARS = 140
 _SYNTHESIS_MAX_TOKENS = 1024
@@ -87,6 +87,19 @@ def _fallback_step_summary(trace: Trace, step_id: int) -> str:
     )
 
 
+def _prefix_structural_header(summary: str, overview: str) -> str:
+    header = next((line.strip() for line in overview.splitlines() if line.strip()), "")
+    if not header:
+        return summary
+
+    stripped_summary = summary.lstrip()
+    if stripped_summary.startswith(header):
+        return summary
+    if not stripped_summary:
+        return header
+    return f"{header}\n{summary}"
+
+
 def _generate_summary(trace: Trace) -> str:
     """Do the actual work: overview + per-step summaries + synthesis."""
     t0 = time.monotonic()
@@ -114,69 +127,55 @@ def _generate_summary(trace: Trace) -> str:
         logger.info(
             "%s budget=%.1fs cached=%d pending=%d",
             _prefetch_tag(trace, phase="steps_budget"),
-            _STEP_SUMMARY_BUDGET_SECONDS,
+            TRACE_CHAT_SCATTER_BUDGET_SECONDS,
             len(summaries_by_step),
             len(pending_steps),
         )
 
         completed = len(summaries_by_step)
-        future_to_step = {}
-        pool = None
-        try:
-            if pending_steps:
-                max_workers = min(len(pending_steps), _STEP_SUMMARY_MAX_WORKERS)
-                pool = ThreadPoolExecutor(max_workers=max_workers)
-                future_to_step = {
-                    pool.submit(_summarize_step_semantically, trace, step_id): step_id
-                    for step_id in pending_steps
-                }
-                deadline = time.monotonic() + _STEP_SUMMARY_BUDGET_SECONDS
+        if pending_steps:
+            def _on_summary_result(step_id: int, _summary: str) -> None:
+                nonlocal completed
+                completed += 1
+                logger.info(
+                    "%s completed=%d/%d latest_step=%d elapsed=%.1fs",
+                    _prefetch_tag(trace, phase="steps_progress"),
+                    completed,
+                    len(trace),
+                    step_id,
+                    time.monotonic() - t0,
+                )
 
-                while future_to_step:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        break
-                    done, _ = wait(
-                        tuple(future_to_step),
-                        timeout=remaining,
-                        return_when=FIRST_COMPLETED,
-                    )
-                    if not done:
-                        break
-                    for future in done:
-                        step_id = future_to_step.pop(future)
-                        try:
-                            summaries_by_step[step_id] = future.result()
-                        except Exception:
-                            logger.exception(
-                                "%s semantic summary failed; using fallback",
-                                _prefetch_tag(trace, phase="step", step=step_id),
-                            )
-                            summaries_by_step[step_id] = _fallback_step_summary(trace, step_id)
-                        completed += 1
-                        logger.info(
-                            "%s completed=%d/%d latest_step=%d elapsed=%.1fs",
-                            _prefetch_tag(trace, phase="steps_progress"),
-                            completed,
-                            len(trace),
-                            step_id,
-                            time.monotonic() - t0,
-                        )
-        finally:
-            if pool is not None:
-                pool.shutdown(wait=False, cancel_futures=True)
+            def _on_summary_exception(step_id: int, _exc: Exception) -> None:
+                logger.exception(
+                    "%s semantic summary failed; using fallback",
+                    _prefetch_tag(trace, phase="step", step=step_id),
+                )
 
-        if future_to_step:
-            fallback_steps = sorted(future_to_step.values())
-            logger.warning(
-                "%s deadline reached after %.1fs fallback=%d steps=%s",
-                _prefetch_tag(trace, phase="steps_budget"),
-                _STEP_SUMMARY_BUDGET_SECONDS,
-                len(fallback_steps),
-                fallback_steps,
+            def _on_summary_timeout(fallback_steps: list[int]) -> None:
+                logger.warning(
+                    "%s deadline reached after %.1fs fallback=%d steps=%s",
+                    _prefetch_tag(trace, phase="steps_budget"),
+                    TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+                    len(fallback_steps),
+                    sorted(fallback_steps),
+                )
+
+            step_summaries = scatter_execute(
+                pending_steps,
+                lambda step_id: _summarize_step_semantically(trace, step_id),
+                max_workers=min(len(pending_steps), _STEP_SUMMARY_MAX_WORKERS),
+                budget_seconds=TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+                on_result=_on_summary_result,
+                on_exception=_on_summary_exception,
+                on_timeout=_on_summary_timeout,
             )
-            for step_id in fallback_steps:
-                summaries_by_step[step_id] = _fallback_step_summary(trace, step_id)
+            for step_id, semantic_summary in zip(pending_steps, step_summaries):
+                summaries_by_step[step_id] = (
+                    semantic_summary
+                    if semantic_summary is not None
+                    else _fallback_step_summary(trace, step_id)
+                )
 
         t_summaries = time.monotonic()
 
@@ -196,6 +195,7 @@ def _generate_summary(trace: Trace) -> str:
             extra_body=NO_THINKING_EXTRA_BODY,
             max_tokens=_SYNTHESIS_MAX_TOKENS,
         )
+        result = _prefix_structural_header(result, overview)
         t_synth = time.monotonic()
 
         logger.info(

@@ -1,12 +1,12 @@
-"""get_step tool — returns content for a specific step with view options."""
+"""get_step_snapshot tool — returns raw content for one step."""
 
 from ..logger import format_log_tags, get_logger
-from ..utils.prompt_sections import format_paragraph_ref, format_path
+from ..utils.editable_content import format_path
 from ..utils.step_ids import resolve_step_index
 from ..utils.trace import Trace, blocks_char_count, stringify_field
 
 logger = get_logger()
-MAX_FULL_STEP_CHARS = 1 # 5000
+MAX_FULL_STEP_CHARS = 5000
 MAX_PREVIEW_PARAGRAPHS_PER_BLOCK = 4
 
 
@@ -23,7 +23,7 @@ def _preview_text(text: str, max_len: int = 120) -> str:
     return compact[: max_len - 3].rstrip() + "..."
 
 
-def render_block_preview(block, *, include_refs: bool) -> list[str]:
+def render_block_preview(block) -> list[str]:
     display_path = format_path(block.path)
     lines = [f"### `{display_path}`"]
     if block.role and not display_path.endswith(".role"):
@@ -35,16 +35,6 @@ def render_block_preview(block, *, include_refs: bool) -> list[str]:
 
     char_count = len(block.text)
     lines.append(f"{len(block.paragraphs)} paragraph(s), {char_count} chars")
-
-    if include_refs and block.path and block.paragraphs:
-        if len(block.paragraphs) == 1:
-            refs = format_paragraph_ref(block.path, 0)
-        else:
-            refs = (
-                f"{format_paragraph_ref(block.path, 0)}.."
-                f"{format_paragraph_ref(block.path, len(block.paragraphs) - 1)}"
-            )
-            lines.append(f"Refs: `{refs}`")
 
     for idx, paragraph in enumerate(block.paragraphs[:MAX_PREVIEW_PARAGRAPHS_PER_BLOCK]):
         summary = block.paragraph_summaries[idx] if idx < len(block.paragraph_summaries) else ""
@@ -86,7 +76,7 @@ def build_step_summary(
     lines.extend(["", "## Input Text Sections", ""])
     if text_blocks:
         for block in text_blocks:
-            lines.extend(render_block_preview(block, include_refs=block.editable))
+            lines.extend(render_block_preview(block))
             lines.append("")
     else:
         lines.append("(none)")
@@ -94,7 +84,7 @@ def build_step_summary(
     lines.extend(["", "## Other Input Fields", ""])
     if other_input_blocks:
         for block in other_input_blocks:
-            lines.extend(render_block_preview(block, include_refs=False))
+            lines.extend(render_block_preview(block))
             lines.append("")
     else:
         lines.append("(none)")
@@ -102,7 +92,7 @@ def build_step_summary(
     lines.extend(["", "## Output Summary", ""])
     if record.output_blocks:
         for block in record.output_blocks:
-            lines.extend(render_block_preview(block, include_refs=False))
+            lines.extend(render_block_preview(block))
             lines.append("")
     else:
         lines.append("(empty)")
@@ -135,20 +125,12 @@ def _render_raw_blocks(blocks: list) -> str:
     return "\n".join(rendered).strip()
 
 
-def _render_record_raw(record, diffed=None, *, view: str = "full") -> str:
+def _render_record_raw(record, diffed=None, *, scope: str = "full") -> str:
     lines = [f"# Step {record.index + 1}"]
     if record.name:
         lines.append(f"Name: {record.name}")
 
-    if view == "output":
-        output_blocks = record.output_blocks
-        if output_blocks:
-            lines.extend(["", "## Output", "", _render_raw_blocks(output_blocks)])
-        else:
-            lines.extend(["", "## Output", "", "(empty)"])
-        return "\n".join(lines).strip()
-
-    if view == "diff" and diffed is not None:
+    if scope == "new_input" and diffed is not None:
         lines.extend(["", "## Input"])
         if diffed.prompt_id and not diffed.prompt_is_new:
             lines.extend(["", f"Prompt `{diffed.prompt_id}` is reused from an earlier step."])
@@ -172,23 +154,23 @@ def _render_record_raw(record, diffed=None, *, view: str = "full") -> str:
     return "\n".join(lines).strip()
 
 
-def get_step(trace: Trace, step_id, view="full") -> str:
+def get_step_snapshot(trace: Trace, step_id, scope="full") -> str:
     index, err = resolve_step_index(trace, step_id)
     if err:
         return err
 
-    if view not in ("full", "diff", "output"):
-        return f"Error: view must be 'full', 'diff', or 'output', got '{view}'."
+    if scope not in ("full", "new_input"):
+        return f"Error: scope must be 'full' or 'new_input', got '{scope}'."
 
     record = trace.get(index)
     diffed = trace.get_diffed(index)
-    rendered = _render_record_raw(record, diffed, view=view)
+    rendered = _render_record_raw(record, diffed, scope=scope)
     log_tag = format_log_tags(
         "trace_tool",
         run_id=trace.run_id or "-",
-        tool="get_step",
+        tool="get_step_snapshot",
         step=index + 1,
-        view=view,
+        snapshot_scope=scope,
     )
 
     if should_withhold_raw_view(len(rendered)):
@@ -205,7 +187,7 @@ def get_step(trace: Trace, step_id, view="full") -> str:
         output_chars = blocks_char_count(record.output_blocks)
         return "\n".join([
             (
-                f"Step {index + 1} is too long to load inline in requested `{view}` view "
+                f"Step {index + 1} is too long to load inline in requested `{scope}` scope "
                 f"({input_chars} input chars, {output_chars} output chars)."
             ),
             "",
@@ -214,9 +196,8 @@ def get_step(trace: Trace, step_id, view="full") -> str:
             overview,
             "",
             "Inspect specific parts with:",
-            f"- `get_content(step_id={index + 1}, content_id=\"c0\")` for one content unit from the overview",
-            f"- `get_step(step_id={index + 1}, view=\"diff\")` for only the new raw input content in this step",
-            f"- `get_step(step_id={index + 1}, view=\"output\")` for the raw output only",
+            f"- `get_content_unit(step_id={index + 1}, content_id=\"c0\")` for one content unit from the overview",
+            f"- `get_step_snapshot(step_id={index + 1}, scope=\"new_input\")` for the new raw input plus full output in this step",
             f"- `ask_step(step_id={index + 1}, question=\"...\")` for a targeted question about the step",
         ])
 

@@ -20,6 +20,7 @@ if __package__ in (None, ""):
     )
     from sovara.server.graph_analysis.trace_chat.tools import TOOLS_SCHEMA, execute_tool
     from sovara.server.graph_analysis.trace_chat.tools.summarize_trace import _generate_summary
+    from sovara.server.graph_analysis.trace_chat.utils.edit_persist import RERUN_MSG
     from sovara.server.graph_analysis.trace_chat.utils.context import compact_tool_results
     from sovara.server.graph_analysis.trace_chat.utils.trace import Trace
     from sovara.server.llm_backend import infer
@@ -27,6 +28,7 @@ else:
     from .logger import ensure_standalone_logger, format_log_event_banner, format_log_tags, get_logger
     from .tools import TOOLS_SCHEMA, execute_tool
     from .tools.summarize_trace import _generate_summary
+    from .utils.edit_persist import RERUN_MSG
     from .utils.context import compact_tool_results
     from .utils.trace import Trace
     from ...llm_backend import infer
@@ -48,10 +50,11 @@ best-effort convenience views rather than exact parsing.
 ## Guidelines
 - For broad, high-level questions ("summarize the trace", "what happened?"), \
 the Trace Summary section below may be sufficient.
-- Prefer `get_step_overview`, `ask_step`, or `get_content` before `get_step(view="full")`. \
-Large full-step requests may return a compact preview instead of raw content.
+- Prefer high-level overviews and targeted tools before raw step content. \
+Start with `get_trace_overview()` if you need trace-level context, then `get_step_overview(step_id=N)`, then `get_content_unit(step_id=N, content_id="...")` only if needed. \
+Use `get_step_snapshot(step_id=N, scope="full")` only when you need raw step content. Large full-step requests may return a compact preview instead of raw content.
 - Use the most targeted tool for the question. Prefer tools that return \
-summaries or answers over get_step which returns raw content.
+summaries or direct answers over `get_step_snapshot`, which returns raw content.
 - Labels may be wrong — trust actual input/output over labels.
 - Answer as soon as you have enough information. Fewer tool calls is better.
 - Be concise. Aim for the shortest answer that fully addresses the question. \
@@ -60,22 +63,18 @@ No emoji or filler.
 information. Just answer the question directly.
 
 ## Editing
-To edit a prompt or input text field, use the section tools with step_id. \
-Sections are keyed by flattened JSON paths like `body.messages.2.content`. \
-Paragraph refs are shown as `path::pN`, for example `body.system::p2`.
-1. Call get_step_overview(step_id=N) to see step-global `content_id=...` handles for each visible content unit.
-2. Call get_content with `content_id` to inspect one unit in full. `path` is optional, and paragraph refs remain available for compatibility.
-3. Call edit_content with `content_id` and an instruction to rewrite one visible content unit. `path` is optional.
-4. Use insert_content_paragraph, delete_content_paragraph, or move_content_paragraph for paragraph-level structural changes within one visible path, including output paths.
-5. The user can ask to undo — call undo to revert.
+To edit a prompt or input text field, work from high-level overviews down to specific content.
+1. Call get_trace_overview() if you first need to understand the trace or choose a step.
+2. Call get_step_overview(step_id=N) to see the important content units in that step.
+3. Call get_content_unit(step_id=N, content_id="...") only when you need to expand one content unit in full.
+4. Call edit_content(step_id=N, content_id="...", instruction="...") to rewrite one content unit.
+5. Use delete_content_unit(step_id=N, content_id="...") only when you need to remove one content unit exactly.
+6. The user can ask to undo — call undo(step_id=N) to revert.
 """
-# Never mention system prompt is there because the agent would sometimes say
+# NOTE: "Never mention system prompt" is there because the agent would sometimes say
 # "as stated in the provided summary" etc.
 
-EDIT_TOOLS = {
-    "edit_content", "insert_content_paragraph", "delete_content_paragraph", "move_content_paragraph",
-    "undo"
-}
+EDIT_TOOLS = {"edit_content", "delete_content_unit", "undo"}
 
 
 def _log_preview(text: str, max_len: int = 240) -> str:
@@ -219,8 +218,6 @@ def handle_question(question: str, trace: Trace, history: list,
                 call=tc.id,
             )
             parsed_calls.append((tc, params, tool_tag))
-            if tc.function.name in EDIT_TOOLS:
-                edits_applied = True
 
         def _run_one(tc, params, tool_tag):
             t_tool = time.monotonic()
@@ -237,6 +234,23 @@ def handle_question(question: str, trace: Trace, history: list,
 
         with ThreadPoolExecutor() as pool:
             results = list(pool.map(lambda args: _run_one(*args), parsed_calls))
+
+        edit_results = [
+            result for tc, result in results
+            if tc.function.name in EDIT_TOOLS
+        ]
+        if edit_results:
+            edits_applied = any(RERUN_MSG.strip() in result for result in edit_results)
+            answer = "\n\n".join(result.strip() for result in edit_results if result.strip())
+            logger.info(
+                "%s EDIT RESULT after %d iteration(s), %d chars, total %.1fs",
+                question_tag,
+                iteration_num,
+                len(answer),
+                time.monotonic() - t0,
+            )
+            logger.info("%s EDIT RESULT content:\n%s", question_tag, answer)
+            return {"answer": answer, "edits_applied": edits_applied}
 
         for tc, result in results:
             messages.append({
@@ -294,6 +308,7 @@ def _load_trace(trace_path: str) -> tuple[Trace, Path]:
     if not resolved_path.is_absolute():
         resolved_path = TRACE_CHAT_DIR / resolved_path
     resolved_path = resolved_path.resolve()
+
     raw = resolved_path.read_text(encoding="utf-8")
     trace = Trace.from_string(raw)
     if not trace.run_id:
@@ -367,7 +382,7 @@ def main(argv: Sequence[str] | None = None, *, default_trace_path: str | None = 
     logger.info(format_log_event_banner("Trace Opened", resolved_path.name))
     logger.info(
         "%s trace_opened path=%s steps=%d prefetch=%s",
-        format_log_tags("trace_chat", run_id=trace.run_id or "-"),
+        format_log_tags("trace_chat", run_id=trace.run_id or "1ace86e8-9c34-4672-9235-45f7871895ce"),
         resolved_path,
         len(trace),
         "off" if args.no_prefetch else "on",
@@ -378,7 +393,7 @@ def main(argv: Sequence[str] | None = None, *, default_trace_path: str | None = 
 
 if __name__ == "__main__":
     # DEFAULT_STANDALONE_TRACE = "example_traces/miroflow.jsonl"
-    DEFAULT_STANDALONE_TRACE = "example_traces/weather_agent.jsonl"
+    DEFAULT_STANDALONE_TRACE = "example_traces/miroflow.jsonl"
 
     # Quick-and-dirty local debugging examples. Uncomment whatever you want.
     #
@@ -390,10 +405,9 @@ if __name__ == "__main__":
     #
     # Read-only tool calls:
     # This prints the tool response while the summary prefetch is already running.
-    print(execute_tool("get_trace_overview", trace, {}))
-    # print(execute_tool("get_step", trace, {"step_id": 1, "view": "full"}))
-    # print(execute_tool("get_step", trace, {"step_id": 1, "view": "diff"}))
-    # print(execute_tool("get_step", trace, {"step_id": 1, "view": "output"}))
+    # print(execute_tool("get_trace_overview", trace, {}))
+    # print(execute_tool("get_step_snapshot", trace, {"step_id": 1, "scope": "full"}))
+    # print(execute_tool("get_step_snapshot", trace, {"step_id": 1, "scope": "new_input"}))
     # print(execute_tool("get_step_overview", trace, {"step_id": 1}))
     # print(execute_tool("search", trace, {"query": "weather"}))
     # print(execute_tool("ask_step", trace, {
@@ -409,7 +423,13 @@ if __name__ == "__main__":
         SEGMENT_SUMMARIZE_SYSTEM,
         STEP_SUMMARIZE_SYSTEM,
     )
-    # from sovara.server.graph_analysis.trace_chat.tools.prompt_edit import _edit_system
+    from sovara.server.graph_analysis.trace_chat.tools.edit_content import _edit_system
+    from sovara.server.graph_analysis.trace_chat.tools.edit_content import (
+        delete_content_unit,
+        edit_content,
+        get_content_unit,
+        undo,
+    )
     # from sovara.server.graph_analysis.trace_chat.tools.summarize_trace import (
     #     SYNTHESIZE_SYSTEM,
     #     summarize_trace,
@@ -420,41 +440,29 @@ if __name__ == "__main__":
     # print("STEP_SUMMARIZE_SYSTEM:\\n", STEP_SUMMARIZE_SYSTEM)
     # print("SEGMENT_SUMMARIZE_SYSTEM:\\n", SEGMENT_SUMMARIZE_SYSTEM)
     # print("VERIFY_STEP_SYSTEM:\\n", VERIFY_STEP_SYSTEM)
-    # print("PROMPT_EDIT_SYSTEM:\\n", _edit_system("Make this more concise."))
+    # print("edit_content_SYSTEM:\\n", _edit_system("Make this more concise."))
     # print("SYNTHESIZE_SYSTEM:\\n", SYNTHESIZE_SYSTEM)
     # print(summarize_trace(trace))
     #
     # Content/edit tool calls. Start with get_step_overview() to discover valid
-    # `path=` and `content_id=` values for the loaded trace, then plug them in here.
-    # print(execute_tool("get_content", trace, {
-    #     "step_id": 1,
-    #     "path": "body.messages.0.content",
-    #     "content_id": "c0",
-    # }))
-    # print(execute_tool("edit_content", trace, {
-    #     "step_id": 1,
-    #     "path": "body.messages.0.content",
-    #     "content_id": "c0",
-    #     "instruction": "Make it shorter and more direct.",
-    # }))
-    # print(execute_tool("insert_content_paragraph", trace, {
-    #     "step_id": 1,
-    #     "path": "body.messages.0.content",
-    #     "after_content_id": "c0",
-    #     "content": "New paragraph inserted for debugging.",
-    # }))
-    # print(execute_tool("delete_content_paragraph", trace, {
-    #     "step_id": 1,
-    #     "path": "body.messages.0.content",
-    #     "content_id": "c0",
-    # }))
-    # print(execute_tool("move_content_paragraph", trace, {
-    #     "step_id": 1,
-    #     "path": "body.messages.0.content",
-    #     "from_content_id": "c1",
-    #     "to_paragraph": 0,
-    # }))
-    # print(execute_tool("undo", trace, {"step_id": 1}))
+    # `content_id=` values for reads and edits.
+    # print(get_content_unit(
+    #     trace,
+    #     step_id=1,
+    #     content_id="c0",
+    # ))
+    # print(edit_content(
+    #     trace,
+    #     instruction="Make it shorter and more direct.",
+    #     step_id=1,
+    #     content_id="c0",
+    # ))
+    # print(delete_content_unit(
+    #     trace,
+    #     step_id=1,
+    #     content_id="c0",
+    # ))
+    # print(undo(trace, step_id=1))
     #
     # if pool is not None:
     #     pool.shutdown(wait=False)

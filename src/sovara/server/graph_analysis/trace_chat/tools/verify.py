@@ -1,15 +1,22 @@
 """verify tool — checks whether steps have correct output."""
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ....llm_backend import NO_THINKING_EXTRA_BODY, infer
+from sovara.common.constants import TRACE_CHAT_SCATTER_BUDGET_SECONDS
+
+from ....llm_backend import NO_THINKING_EXTRA_BODY, infer, scatter_execute
 from ..logger import get_logger
 from ..utils.step_ids import resolve_step_index
 from ..utils.trace import Trace, extract_tag, render_record_markdown
 
 logger = get_logger()
 _VERIFY_STEP_MAX_TOKENS = 512
+_VERDICT_PHRASES = {
+    "CORRECT": "I think this is correct.",
+    "WRONG": "I think this is wrong.",
+    "UNCERTAIN": "I'm uncertain if this is correct.",
+    "UNKNOWN": "I didn't evaluate if this step is correct.",
+}
 
 VERIFY_STEP_SYSTEM = """\
 You verify whether a single step's output is correct given its instructions and input.
@@ -107,6 +114,15 @@ def _resolve_cached(trace: Trace, record, idx: int):
     return None
 
 
+def _format_verification_line(step_id: int, verdict: str, justification: str) -> str:
+    phrase = _VERDICT_PHRASES.get(verdict, _VERDICT_PHRASES["UNKNOWN"])
+    if not justification:
+        return f"Step {step_id}: {phrase}"
+    if verdict == "UNKNOWN":
+        return f"Step {step_id}: {phrase.rstrip('.')} because {justification[:1].lower()}{justification[1:]}"
+    return f"Step {step_id}: {phrase} {justification}"
+
+
 def verify(trace: Trace, step_id=None) -> str:
     t0 = time.monotonic()
 
@@ -126,7 +142,7 @@ def verify(trace: Trace, step_id=None) -> str:
 
         logger.info("VERIFY single-step done in %.1fs step=%d verdict=%s",
                     time.monotonic() - t0, step_id, verdict)
-        return f"Step {step_id}: {verdict}\n  {justification}"
+        return _format_verification_line(step_id, verdict, justification)
 
     # All-steps mode
     results = []
@@ -138,7 +154,7 @@ def verify(trace: Trace, step_id=None) -> str:
         if cached:
             results.append((idx, cached[0], cached[1]))
         else:
-            to_verify.append((idx, record))
+            to_verify.append(idx)
 
     logger.info(
         "VERIFY all start: total_steps=%d cached=%d llm_calls=%d",
@@ -148,23 +164,54 @@ def verify(trace: Trace, step_id=None) -> str:
     )
 
     if to_verify:
-        with ThreadPoolExecutor() as pool:
-            futures = {
-                pool.submit(_verify_one, trace, idx, record): idx + 1
-                for idx, record in to_verify
-            }
-            completed = len(results)
-            for future in as_completed(futures):
-                result = future.result()
-                results.append(result)
-                completed += 1
-                logger.info(
-                    "VERIFY all progress: %d/%d complete (latest step=%d verdict=%s)",
-                    completed,
-                    len(trace),
-                    result[0] + 1,
-                    result[1],
+        completed = len(results)
+        def _run_one(idx: int):
+            return _verify_one(trace, idx, trace.get(idx))
+
+        def _on_verify_result(_idx: int, result) -> None:
+            nonlocal completed
+            completed += 1
+            logger.info(
+                "VERIFY all progress: %d/%d complete (latest step=%d verdict=%s)",
+                completed,
+                len(trace),
+                result[0] + 1,
+                result[1],
+            )
+
+        def _on_verify_exception(idx: int, _exc: Exception) -> None:
+            logger.exception(
+                "VERIFY all future failed; using UNKNOWN fallback for step %d",
+                idx + 1,
+            )
+
+        def _on_verify_timeout(timeout_indices: list[int]) -> None:
+            timeout_steps = sorted(idx + 1 for idx in timeout_indices)
+            logger.warning(
+                "VERIFY all deadline reached after %.1fs fallback=%d steps=%s",
+                TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+                len(timeout_steps),
+                timeout_steps,
+            )
+
+        verified = scatter_execute(
+            to_verify,
+            _run_one,
+            budget_seconds=TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+            on_result=_on_verify_result,
+            on_exception=_on_verify_exception,
+            on_timeout=_on_verify_timeout,
+        )
+        for idx, result in zip(to_verify, verified):
+            results.append(
+                result
+                if result is not None
+                else (
+                    idx,
+                    "UNKNOWN",
+                    "Verification did not complete before fallback was applied.",
                 )
+            )
 
     results.sort(key=lambda x: x[0])
 
@@ -180,9 +227,7 @@ def verify(trace: Trace, step_id=None) -> str:
             uncertain.append(idx + 1)
         elif verdict == "UNKNOWN":
             unknown.append(idx + 1)
-        lines.append(f"Step {idx + 1}: {verdict}")
-        if justification:
-            lines.append(f"  {justification}")
+        lines.append(_format_verification_line(idx + 1, verdict, justification))
 
     header_parts = [f"{len(trace)} steps verified"]
     if wrong:

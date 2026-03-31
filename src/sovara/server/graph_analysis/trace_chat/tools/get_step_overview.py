@@ -1,15 +1,16 @@
 """get_step_overview tool — compact step overview with content IDs."""
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 
-from ....llm_backend import infer_text
+from sovara.common.constants import TRACE_CHAT_SCATTER_BUDGET_SECONDS
+
+from ....llm_backend import infer_text, scatter_execute
 from ..utils.content_items import StepContentItem, build_step_content_items
 from ..logger import format_log_tags, get_logger
 from ..utils.step_ids import resolve_step_index
 from ..utils.trace import Trace, render_record_markdown
-from .get_step import build_step_summary
-from .prompt_edit import _get_sections
+from .get_step_snapshot import build_step_summary
+from .edit_content import _get_editable_content_state
 
 logger = get_logger()
 _SUMMARY_LINE_RE = re.compile(
@@ -148,30 +149,44 @@ def _summarize_content_items(trace: Trace, step_id: int, items: list[StepContent
     summaries: dict[str, str] = {}
     fallback_count = 0
     total = len(pending_items)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_item = {
-            executor.submit(
-                _summarize_one_content_item,
-                item,
-                item_index=item_index,
-                total=total,
-                phase_tag=phase_tag,
-            ): item
-            for item_index, item in enumerate(pending_items, start=1)
-        }
-        for future in as_completed(future_to_item):
-            item = future_to_item[future]
-            try:
-                label = future.result()
-            except Exception:
-                logger.exception("%s item content_id=%s summary call failed", phase_tag, item.content_id)
-                label = None
+    indexed_items = list(enumerate(pending_items, start=1))
 
-            if label:
-                summaries[item.content_id] = label
-                continue
-            summaries[item.content_id] = _fallback_segment_summary(item.text)
-            fallback_count += 1
+    def _run_one(indexed_item: tuple[int, StepContentItem]) -> str | None:
+        item_index, item = indexed_item
+        return _summarize_one_content_item(
+            item,
+            item_index=item_index,
+            total=total,
+            phase_tag=phase_tag,
+        )
+
+    def _on_summary_exception(indexed_item: tuple[int, StepContentItem], _exc: Exception) -> None:
+        logger.exception("%s item content_id=%s summary call failed", phase_tag, indexed_item[1].content_id)
+
+    def _on_summary_timeout(timed_out_items: list[tuple[int, StepContentItem]]) -> None:
+        fallback_items = sorted(item.content_id for _idx, item in timed_out_items)
+        logger.warning(
+            "%s deadline reached after %.1fs fallback=%d items=%s",
+            phase_tag,
+            TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+            len(fallback_items),
+            fallback_items,
+        )
+
+    labels = scatter_execute(
+        indexed_items,
+        _run_one,
+        max_workers=max_workers,
+        budget_seconds=TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+        on_exception=_on_summary_exception,
+        on_timeout=_on_summary_timeout,
+    )
+    for (_item_index, item), label in zip(indexed_items, labels):
+        if label:
+            summaries[item.content_id] = label
+            continue
+        summaries[item.content_id] = _fallback_segment_summary(item.text)
+        fallback_count += 1
 
     if fallback_count:
         logger.warning(
@@ -185,34 +200,31 @@ def _summarize_content_items(trace: Trace, step_id: int, items: list[StepContent
 
 
 def _render_get_content_call(step_id: int, item: StepContentItem) -> str:
-    return (
-        f"`get_content(step_id={step_id}, path=\"{item.display_path}\", "
-        f"content_id=\"{item.content_id}\")`"
-    )
+    return f"`get_content_unit(step_id={step_id}, content_id=\"{item.content_id}\")`"
 
 
 def _render_edit_content_call(step_id: int, item: StepContentItem) -> str:
     return (
-        f"`edit_content(step_id={step_id}, path=\"{item.display_path}\", "
+        f"`edit_content(step_id={step_id}, "
         f"content_id=\"{item.content_id}\", instruction=\"...\")`"
     )
 
 
 def _render_content_items(
     lines: list[str],
-    sections,
+    path_content,
     items_by_path: dict[tuple[str, str], list[StepContentItem]],
     item_summaries: dict[str, str],
     *,
     step_id: int,
 ) -> None:
-    if not sections:
+    if not path_content:
         lines.append("(empty)")
         return
 
-    for section in sections:
-        lines.append(f"### `{section.display_path}`")
-        for item in items_by_path.get((section.branch, section.path), []):
+    for path_entry in path_content:
+        lines.append(f"### `{path_entry.display_path}`")
+        for item in items_by_path.get((path_entry.branch, path_entry.path), []):
             if item.summarized:
                 rendered_text = item_summaries.get(item.content_id)
                 if rendered_text:
@@ -238,9 +250,9 @@ def _render_content_items(
 def _build_step_content(trace: Trace, index: int) -> str:
     step_id = index + 1
     semantic_summary = get_cached_step_semantic_summary(trace, step_id)
-    sections = list(_get_sections(trace, index).sections)
+    path_content = list(_get_editable_content_state(trace, index).paths)
     record = trace.get(index)
-    content_items = build_step_content_items(sections)
+    content_items = build_step_content_items(path_content)
     logger.info(
         "%s content_items total=%d summarized=%d",
         _content_tag(trace, step=step_id, phase="content_items"),
@@ -248,8 +260,8 @@ def _build_step_content(trace: Trace, index: int) -> str:
         sum(1 for item in content_items if item.summarized),
     )
     item_summaries = _summarize_content_items(trace, step_id, content_items)
-    input_sections = [section for section in sections if section.branch == "input"]
-    output_sections = [section for section in sections if section.branch == "output"]
+    input_path_content = [path_entry for path_entry in path_content if path_entry.branch == "input"]
+    output_path_content = [path_entry for path_entry in path_content if path_entry.branch == "output"]
     items_by_path: dict[tuple[str, str], list[StepContentItem]] = {}
     for item in content_items:
         items_by_path.setdefault((item.branch, item.path), []).append(item)
@@ -261,10 +273,10 @@ def _build_step_content(trace: Trace, index: int) -> str:
         lines.extend(["", "## Summary", "", semantic_summary])
 
     lines.extend(["", "## Input Content", ""])
-    _render_content_items(lines, input_sections, items_by_path, item_summaries, step_id=step_id)
+    _render_content_items(lines, input_path_content, items_by_path, item_summaries, step_id=step_id)
 
     lines.extend(["", "## Output Content", ""])
-    _render_content_items(lines, output_sections, items_by_path, item_summaries, step_id=step_id)
+    _render_content_items(lines, output_path_content, items_by_path, item_summaries, step_id=step_id)
 
     return "\n".join(lines).strip()
 

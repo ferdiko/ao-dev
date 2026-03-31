@@ -42,13 +42,13 @@ def search(trace: Trace, query) -> str:
         if len(results) >= MAX_RESULTS:
             break
 
-    # Search prompt sections (if any have been indexed)
-    for pid, ps in getattr(trace, "prompt_sections_cache", {}).items():
-        for idx, section in enumerate(ps.sections):
-            if query_lower in section.text.lower():
+    # Search cached editable content when it has already been materialized.
+    for cache_key, state in getattr(trace, "editable_content_cache", {}).items():
+        for idx, path_entry in enumerate(state.paths):
+            if query_lower in path_entry.text.lower():
                 results.append(
-                    f"Prompt [{pid}] path {idx} ({section.path}): "
-                    f"{_snippet(section.text, query_lower)}"
+                    f"Editable content [{cache_key}] path {idx} ({path_entry.path}): "
+                    f"{_snippet(path_entry.text, query_lower)}"
                 )
             if len(results) >= MAX_RESULTS:
                 break

@@ -26,19 +26,19 @@ def _should_summarize(text: str) -> bool:
     return len(text) >= INLINE_CONTENT_CHAR_LIMIT
 
 
-def build_step_content_items(sections: Sequence) -> list[StepContentItem]:
+def build_step_content_items(path_content: Sequence) -> list[StepContentItem]:
     """Enumerate all visible input/output content units for one step."""
     items: list[StepContentItem] = []
 
-    for section in sections:
-        paragraphs = list(section.paragraphs) or [section.text]
+    for path_entry in path_content:
+        paragraphs = list(path_entry.paragraphs) or [path_entry.text]
         for paragraph_index, text in enumerate(paragraphs):
             items.append(StepContentItem(
                 content_id=_next_content_id(items),
-                branch=section.branch,
-                path=section.path,
-                display_path=section.display_path,
-                codec=section.codec,
+                branch=path_entry.branch,
+                path=path_entry.path,
+                display_path=path_entry.display_path,
+                codec=path_entry.codec,
                 text=text,
                 summarized=_should_summarize(text),
                 paragraph_index=paragraph_index,

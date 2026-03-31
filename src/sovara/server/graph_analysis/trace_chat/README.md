@@ -1,6 +1,6 @@
 # Sovara Agent
 
-ReAct agent for analyzing AI agent execution traces and editing the system prompts within them.
+ReAct agent for analyzing AI agent execution traces and editing prompts or input text within them.
 
 ## Architecture
 
@@ -9,17 +9,17 @@ main.py                     ReAct loop, prefetch, chat interface
 tools/
   __init__.py               Tool registry + OpenAI-format schemas + dispatch
   get_trace_overview.py     Structural summary (no LLM)
-  get_turn.py               Turn content with full/diff/output views (no LLM)
-  search.py                 Substring search across trace + prompt sections (no LLM)
-  get_step_overview.py      Per-step 3-sentence summary + expandable input-content overview
+  get_step_snapshot.py      Raw step snapshot with full/new_input scopes (no LLM)
+  search.py                 Substring search across rendered trace content (no LLM)
+  get_step_overview.py      Per-step summary + expandable content-unit overview
   summarize_trace.py        Full trace narrative via parallel summaries + synthesis (LLM)
-  verify.py                 Correctness verdict per turn (LLM, cached)
-  ask_turn.py               Targeted Q&A about a single turn (LLM)
-  prompt_edit.py            Section-level prompt editing with undo (LLM)
+  verify.py                 Correctness verdict per step (LLM, cached)
+  ask_step.py               Targeted Q&A about a single step (LLM)
+  prompt_edit.py            Content-unit editing + structural edits with undo (LLM)
 utils/
   trace.py                  Trace/TraceRecord/DiffedRecord parsing and diffing
   context.py                Message history compaction
-  prompt_sections.py        Section/PromptSections splitting and labeling
+  editable_content.py       Editable content extraction and labeling
 ```
 
 Shared server module:
@@ -60,30 +60,29 @@ A trace is JSONL — one record per LLM call or tool invocation. Each record has
 User asks a question about the trace. The agent picks tools based on specificity:
 
 - Broad questions ("what happened?") — the **prefetched trace summary** (injected into the system prompt) may suffice with zero tool calls.
-- Structural questions ("how many turns?") — `get_trace_overview` returns turn count, conversation grouping, and per-turn size/name metadata. No LLM cost.
-- Targeted questions ("what did turn 3 do?") — `ask_turn` sends the turn's content to an LLM and returns just the answer. More context-efficient than `get_turn` + reasoning.
-- Content search ("which turn mentions retry?") — `search` does case-insensitive substring matching across all prompts, inputs, and outputs.
-- Verification ("is turn 5 correct?") — `verify` uses an LLM judge. Can verify a single turn or all turns in parallel.
+- Structural questions ("how many steps?") — `get_trace_overview` returns step count, conversation grouping, and per-step size/name metadata. No LLM cost.
+- Targeted questions ("what did step 3 do?") — `ask_step` sends the step's content to an LLM and returns just the answer. More context-efficient than `get_step_snapshot` + reasoning.
+- Content search ("which step mentions retry?") — `search` does case-insensitive substring matching across all prompts, inputs, and outputs.
+- Verification ("is step 5 correct?") — `verify` uses an LLM judge. Can verify a single step or all steps in parallel.
 
 ### Prompt editing
 
-User asks to change a system prompt. The agent follows a section-based workflow:
+User asks to change prompt or input text. The agent follows an overview-first workflow:
 
-1. **`get_step_overview(step_id)`** — shows the cached step summary plus step-global `content_id` handles for every visible input and output content unit; longer content is summarized.
-2. **`get_content(content_id)`** — retrieves the full text behind one visible content unit. `path` is optional for validation, and paragraph refs remain available for compatibility.
-3. **`edit_content(content_id, instruction)`** — rewrites one visible input content unit. `path` is optional for validation, and the edit LLM handles faithful rewriting.
-4. **`insert_content_paragraph`**, **`delete_content_paragraph`**, **`move_content_paragraph`** — structural paragraph changes.
-5. **`undo`** — reverts the last edit. Can be called repeatedly.
-
-If `prompt_id` is omitted and the trace has exactly one prompt, it's used automatically.
+1. **`get_trace_overview()`** — optional first pass when you need to understand the trace or choose a step.
+2. **`get_step_overview(step_id)`** — shows the cached step summary plus `content_id` handles for the visible content units in that step; longer content is summarized.
+3. **`get_content_unit(step_id, content_id)`** — retrieves the full text behind one visible content unit when needed.
+4. **`edit_content(step_id, content_id, instruction)`** — rewrites one visible input content unit.
+5. **`delete_content_unit(step_id, content_id)`** — exact structural removal of one content unit.
+6. **`undo(step_id)`** — reverts the last edit. Can be called repeatedly.
 
 ## Key design choices
 
-### Path-level content view with expandable summaries
+### Content-unit view with expandable summaries
 
 Editable input text and visible output content are exposed as step-global content units. Every visible content unit receives a `content_id`. Short content is shown inline under that `content_id`; longer content is summarized into 4-5 word labels. The same `content_id` can be used for drill-down, and input content IDs can also be used for editing.
 
-The flattened section view is cached on the `Trace` object (`prompt_sections_cache`) and created lazily on first access to any prompt-aware tool.
+This editable content view is cached on the `Trace` object (`editable_content_cache`) and created lazily on first access to any prompt-aware tool.
 
 ### Edit at first occurrence
 
@@ -91,11 +90,11 @@ The `prompt_registry` stores each unique prompt once. Edits modify the canonical
 
 ### Undo via snapshots
 
-Every mutating tool (`edit_content`, `insert_content_paragraph`, `delete_content_paragraph`, `move_content_paragraph`) deep-copies the sections list before modifying. `undo` pops the last snapshot. Cheap because sections are small strings.
+Every mutating tool (`edit_content`, `delete_content_unit`) deep-copies the cached editable content state before modifying. `undo` pops the last snapshot. Cheap because the editable units are small strings.
 
 ### Prefetched trace summary
 
-On startup, a background thread generates a full trace summary (overview + parallel per-turn summaries + synthesis). When the user asks their first question, the summary is injected into the system prompt. For broad questions, the agent can answer directly without tool calls.
+On startup, a background thread generates a full trace summary (overview + parallel per-step summaries + synthesis). When the user asks their first question, the summary is injected into the system prompt. For broad questions, the agent can answer directly without tool calls.
 
 ### Context compaction (`utils/context.py`)
 
@@ -103,7 +102,7 @@ As the ReAct loop accumulates tool results, total message size grows. After each
 
 ### Two-tier model routing (`../../llm_backend.py`)
 
-`infer()` accepts a `tier` parameter. `tier="expensive"` uses the configured model; `tier="cheap"` routes to a smaller model (e.g., Haiku instead of Sonnet). Helper operations (labeling, summarization, verification, compaction) use the cheap tier. Only the ReAct planner and direct Q&A use the expensive model.
+`infer()` accepts a `tier` parameter. `tier="expensive"` uses the user's configured primary model, while `tier="cheap"` uses the user's configured lower-cost helper model. Helper operations (labeling, summarization, verification, compaction) use the cheap tier. The ReAct planner and edit operations use the expensive tier.
 
 ### Caching
 
@@ -111,7 +110,7 @@ Four independent caches live on the `Trace` object:
 - `step_semantic_summary_cache` — cached 3-sentence per-step summaries
 - `step_overview_cache` — rendered `get_step_overview` outputs
 - `summary_cache` — compatibility cache for older per-step summary callers
-- `verdict_cache` — per-turn correctness verdicts
-- `prompt_sections_cache` — sectioned/labeled prompts with undo stacks
+- `verdict_cache` — per-step correctness verdicts
+- `editable_content_cache` — editable content view with undo stacks
 
 All are lazily populated and persist for the session lifetime.
