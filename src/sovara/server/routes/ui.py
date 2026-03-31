@@ -2,6 +2,7 @@
 
 import os
 import uuid
+from typing import Literal
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -879,6 +880,46 @@ class ChatMessageRequest(BaseModel):
     history: list = []
 
 
+class PersistedTraceChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class PersistedTraceChatHistoryRequest(BaseModel):
+    history: list[PersistedTraceChatMessage]
+
+
+@router.get("/trace-chat/{run_id}")
+def get_trace_chat_history(run_id: str):
+    try:
+        history = DB.get_trace_chat_history(run_id)
+    except (BadRequestError, ResourceNotFoundError) as exc:
+        return _request_error_response(exc)
+    return {"history": history}
+
+
+@router.post("/trace-chat/{run_id}")
+def update_trace_chat_history(run_id: str, req: PersistedTraceChatHistoryRequest):
+    try:
+        DB.update_trace_chat_history(
+            run_id,
+            [message.model_dump() for message in req.history],
+        )
+        history = DB.get_trace_chat_history(run_id)
+    except (BadRequestError, ResourceNotFoundError) as exc:
+        return _request_error_response(exc)
+    return {"history": history}
+
+
+@router.post("/trace-chat/{run_id}/clear")
+def clear_trace_chat_history(run_id: str):
+    try:
+        DB.clear_trace_chat_history(run_id)
+    except (BadRequestError, ResourceNotFoundError) as exc:
+        return _request_error_response(exc)
+    return {"history": []}
+
+
 @router.post("/prefetch/{run_id}", status_code=202)
 async def prefetch_trace(
     run_id: str,
@@ -905,6 +946,13 @@ async def chat(run_id: str, req: ChatMessageRequest):
     import httpx
     from fastapi import HTTPException
     from sovara.common.constants import HOST, INFERENCE_PORT
+
+    persisted_history = list(req.history) + [{"role": "user", "content": req.message}]
+    try:
+        DB.update_trace_chat_history(run_id, persisted_history)
+    except (BadRequestError, ResourceNotFoundError) as exc:
+        return _request_error_response(exc)
+
     timeout_seconds = 120.0
     try:
         async with httpx.AsyncClient() as client:
@@ -922,7 +970,18 @@ async def chat(run_id: str, req: ChatMessageRequest):
     if resp.status_code != 200:
         raise HTTPException(resp.status_code, _extract_http_error_detail(resp))
     try:
-        return resp.json()
+        data = resp.json()
     except ValueError:
         logger.error("Inference server returned invalid JSON for run %s", run_id)
         raise HTTPException(502, "Invalid response from inference server")
+
+    answer = data.get("answer")
+    if isinstance(answer, str):
+        try:
+            DB.update_trace_chat_history(
+                run_id,
+                persisted_history + [{"role": "assistant", "content": answer}],
+            )
+        except (BadRequestError, ResourceNotFoundError) as exc:
+            return _request_error_response(exc)
+    return data

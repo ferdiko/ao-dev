@@ -32,9 +32,7 @@ def _add_node_to_run(state, run_id: str, node: dict, incoming_edges: list) -> No
                 f"Skipping edge from non-existent node {source_uuid} to {incoming_node.uuid}"
             )
             continue
-        edge_id = f"e{source_uuid}-{added_node.uuid}"
-        logger.info(f"Added edge {edge_id} in run {run_id}")
-
+    
     state.checkpoint_run_runtime(run_id)
 
     # Update color preview in database

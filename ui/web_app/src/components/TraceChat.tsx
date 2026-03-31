@@ -2,7 +2,13 @@ import { cloneElement, isValidElement, useEffect, useRef, useState, type ReactNo
 import { Sparkles, Send, PanelRight, Loader2, RotateCcw } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { chatWithTrace, restartRun } from "../api";
+import {
+  chatWithTrace,
+  clearTraceChatHistory,
+  fetchTraceChatHistory,
+  restartRun,
+  type TraceChatHistoryMessage,
+} from "../api";
 
 interface ChatMessage {
   id: string;
@@ -57,6 +63,31 @@ function highlightStepLabels(node: ReactNode, onStepLabelClick?: (nodeId: string
   return node;
 }
 
+function buildPersistedHistory(messages: ChatMessage[]): TraceChatHistoryMessage[] {
+  return messages.map(({ role, content }) => ({ role, content }));
+}
+
+function hydrateMessages(history: TraceChatHistoryMessage[]): ChatMessage[] {
+  return history.map((message, index) => ({
+    id: `h-${index}-${message.role}`,
+    role: message.role,
+    content: message.content,
+  }));
+}
+
+function historiesMatch(messages: ChatMessage[], history: TraceChatHistoryMessage[]): boolean {
+  if (messages.length !== history.length) {
+    return false;
+  }
+  return messages.every((message, index) => (
+    message.role === history[index]?.role
+    && message.content === history[index]?.content
+  ));
+}
+
+const PENDING_HISTORY_POLL_MS = 1000;
+const PENDING_HISTORY_POLL_TIMEOUT_MS = 120000;
+
 export function TraceChat({
   runId,
   onCollapse,
@@ -69,8 +100,17 @@ export function TraceChat({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -88,24 +128,122 @@ export function TraceChat({
     textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
   }, [input]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setMessages([]);
+    setInput("");
+    setIsHistoryLoading(true);
+
+    fetchTraceChatHistory(runId)
+      .then((history) => {
+        if (!cancelled) {
+          setMessages(hydrateMessages(history));
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error("Failed to load trace chat history:", error);
+          setMessages([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsHistoryLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [runId]);
+
+  useEffect(() => {
+    if (isLoading || isHistoryLoading || isClearing) {
+      return;
+    }
+    if (messages.length === 0 || messages[messages.length - 1]?.role !== "user") {
+      return;
+    }
+
+    let cancelled = false;
+    const deadline = Date.now() + PENDING_HISTORY_POLL_TIMEOUT_MS;
+
+    const poll = async () => {
+      while (!cancelled && Date.now() < deadline) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, PENDING_HISTORY_POLL_MS);
+        });
+        if (cancelled) {
+          return;
+        }
+        try {
+          const history = await fetchTraceChatHistory(runId);
+          if (cancelled) {
+            return;
+          }
+          if (!historiesMatch(messages, history)) {
+            setMessages(hydrateMessages(history));
+            return;
+          }
+        } catch (error) {
+          if (!cancelled) {
+            console.error("Failed to refresh pending trace chat history:", error);
+          }
+        }
+      }
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+    };
+  }, [isClearing, isHistoryLoading, isLoading, messages, runId]);
+
   const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || isHistoryLoading || isClearing) return;
     const userMsg: ChatMessage = { id: `u-${Date.now()}`, role: "user", content: input.trim() };
-    const history = messages.map((m) => ({ role: m.role, content: m.content }));
-    setMessages((prev) => [...prev, userMsg]);
+    const history = buildPersistedHistory(messages);
+    const messagesWithUser = [...messages, userMsg];
+    setMessages(messagesWithUser);
     setInput("");
     setIsLoading(true);
     try {
       const { answer, edits_applied } = await chatWithTrace(runId, userMsg.content, history);
-      setMessages((prev) => [...prev, { id: `a-${Date.now()}`, role: "assistant", content: answer, editsApplied: edits_applied }]);
+      const nextMessages = [
+        ...messagesWithUser,
+        { id: `a-${Date.now()}`, role: "assistant" as const, content: answer, editsApplied: edits_applied },
+      ];
+      if (isMountedRef.current) {
+        setMessages(nextMessages);
+      }
     } catch (error) {
       const detail = error instanceof Error && error.message
         ? error.message
         : "could not reach the chat backend.";
       const content = detail.startsWith("Error:") ? detail : `Error: ${detail}`;
-      setMessages((prev) => [...prev, { id: `e-${Date.now()}`, role: "assistant", content }]);
+      if (isMountedRef.current) {
+        setMessages([...messagesWithUser, { id: `e-${Date.now()}`, role: "assistant", content }]);
+      }
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  const handleClear = async () => {
+    if (isLoading || isHistoryLoading || isClearing) return;
+    const previousMessages = messages;
+    setMessages([]);
+    setInput("");
+    setIsClearing(true);
+    try {
+      await clearTraceChatHistory(runId);
+    } catch (error) {
+      console.error("Failed to clear trace chat history:", error);
+      setMessages(previousMessages);
+    } finally {
+      setIsClearing(false);
     }
   };
 
@@ -122,11 +260,21 @@ export function TraceChat({
             <Sparkles size={13} />
             <span>Trace Chat</span>
           </div>
-          {onCollapse && (
-            <button className="trace-chat-collapse" onClick={onCollapse} title="Collapse chat">
-              <PanelRight size={14} />
+          <div className="trace-chat-header-actions">
+            <button
+              className="run-rerun-btn run-reset-btn trace-chat-clear-btn"
+              onClick={() => void handleClear()}
+              disabled={isHistoryLoading || isLoading || isClearing || messages.length === 0}
+              title="Clear persisted chat history for this run"
+            >
+              {isClearing ? "Clearing…" : "Clear Chat"}
             </button>
-          )}
+            {onCollapse && (
+              <button className="trace-chat-collapse" onClick={onCollapse} title="Collapse chat">
+                <PanelRight size={14} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
       <div className="trace-chat-body">
@@ -159,6 +307,13 @@ export function TraceChat({
               </div>
             );
           })}
+          {isHistoryLoading && (
+            <div className="trace-chat-msg trace-chat-msg-assistant">
+              <div className="trace-chat-msg-content trace-chat-thinking">
+                <Loader2 size={12} className="fa-spinner" /> Loading chat…
+              </div>
+            </div>
+          )}
           {isLoading && (
             <div className="trace-chat-msg trace-chat-msg-assistant">
               <div className="trace-chat-msg-content trace-chat-thinking">
@@ -173,7 +328,7 @@ export function TraceChat({
             className="trace-chat-input"
             placeholder="Ask about this trace…"
             value={input}
-            disabled={isLoading}
+            disabled={isLoading || isHistoryLoading || isClearing}
             onChange={(e) => setInput(e.target.value)}
             rows={1}
             onKeyDown={(e) => {
@@ -183,7 +338,11 @@ export function TraceChat({
               }
             }}
           />
-          <button className="trace-chat-send" onClick={() => void handleSend()} disabled={!input.trim() || isLoading}>
+          <button
+            className="trace-chat-send"
+            onClick={() => void handleSend()}
+            disabled={!input.trim() || isLoading || isHistoryLoading || isClearing}
+          >
             {isLoading ? <Loader2 size={13} className="fa-spinner" /> : <Send size={13} />}
           </button>
         </div>

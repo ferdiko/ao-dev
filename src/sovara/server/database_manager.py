@@ -344,6 +344,73 @@ class DatabaseManager:
     def update_command(self, run_id, command):
         self.backend.update_run_command_query(command, run_id)
 
+    @staticmethod
+    def _normalize_trace_chat_history(raw_value):
+        if not raw_value:
+            return []
+
+        try:
+            parsed = json.loads(raw_value)
+        except (TypeError, json.JSONDecodeError):
+            return []
+
+        if not isinstance(parsed, list):
+            return []
+
+        normalized = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                return []
+            role = item.get("role")
+            content = item.get("content")
+            if role not in ("user", "assistant") or not isinstance(content, str):
+                return []
+            normalized.append({"role": role, "content": content})
+        return normalized
+
+    def _serialize_trace_chat_history(self, history):
+        if not isinstance(history, list):
+            raise BadRequestError("Trace chat history must be a list.")
+
+        normalized = []
+        for index, item in enumerate(history):
+            if not isinstance(item, dict):
+                raise BadRequestError(f"Trace chat message {index} must be an object.")
+            role = item.get("role")
+            content = item.get("content")
+            if role not in ("user", "assistant"):
+                raise BadRequestError(
+                    f"Trace chat message {index} has invalid role: {role!r}."
+                )
+            if not isinstance(content, str):
+                raise BadRequestError(
+                    f"Trace chat message {index} content must be a string."
+                )
+            normalized.append({"role": role, "content": content})
+
+        return json.dumps(normalized)
+
+    def get_trace_chat_history(self, run_id):
+        row = self.backend.get_run_trace_chat_history_query(run_id)
+        if row is None:
+            raise ResourceNotFoundError(f"Run not found: {run_id}")
+        return self._normalize_trace_chat_history(row["trace_chat_history"])
+
+    def update_trace_chat_history(self, run_id, history):
+        existing = self.backend.get_run_trace_chat_history_query(run_id)
+        if existing is None:
+            raise ResourceNotFoundError(f"Run not found: {run_id}")
+        self.backend.update_run_trace_chat_history_query(
+            self._serialize_trace_chat_history(history),
+            run_id,
+        )
+
+    def clear_trace_chat_history(self, run_id):
+        existing = self.backend.get_run_trace_chat_history_query(run_id)
+        if existing is None:
+            raise ResourceNotFoundError(f"Run not found: {run_id}")
+        self.backend.update_run_trace_chat_history_query("[]", run_id)
+
     def update_run_version_date(self, run_id, version_date):
         self.backend.update_run_version_date_query(
             self._serialize_timestamp(version_date),

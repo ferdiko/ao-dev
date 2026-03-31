@@ -614,25 +614,22 @@ function RunViewContent({
 
       {!chatCollapsed && <div className="resize-handle resize-handle-h" onMouseDown={chatHandleDown} />}
       <div ref={chatPanelRef} className={`run-chat-panel${chatCollapsed ? " collapsed" : ""}`} style={chatCollapsed ? undefined : { width: chatWidth, flex: "none" }}>
-        {chatCollapsed ? (
-          <div
-            className="run-chat-collapsed"
-            onClick={() => setLayoutState((prev) => ({ ...prev, chatCollapsed: false }))}
-            title="Open chat"
-          >
-            <PanelRight size={14} className="run-chat-collapsed-toggle" />
-            <Sparkles size={13} className="run-chat-collapsed-icon" />
-            <div className="run-chat-collapsed-arrow">
-              <ChevronRight size={11} style={{ transform: "rotate(180deg)" }} />
-            </div>
+        <div
+          className="run-chat-collapsed"
+          onClick={() => setLayoutState((prev) => ({ ...prev, chatCollapsed: false }))}
+          title="Open chat"
+        >
+          <PanelRight size={14} className="run-chat-collapsed-toggle" />
+          <Sparkles size={13} className="run-chat-collapsed-icon" />
+          <div className="run-chat-collapsed-arrow">
+            <ChevronRight size={11} style={{ transform: "rotate(180deg)" }} />
           </div>
-        ) : (
-          <TraceChat
-            runId={runId}
-            onCollapse={() => setLayoutState((prev) => ({ ...prev, chatCollapsed: true }))}
-            onStepLabelClick={onStepLabelClick}
-          />
-        )}
+        </div>
+        <TraceChat
+          runId={runId}
+          onCollapse={() => setLayoutState((prev) => ({ ...prev, chatCollapsed: true }))}
+          onStepLabelClick={onStepLabelClick}
+        />
       </div>
       </div>
       {tagPendingDelete && (

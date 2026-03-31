@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import json
 import logging
 import sys
@@ -22,6 +23,7 @@ from sovara.server.graph_analysis.trace_chat.logger import (
 )
 from sovara.server.graph_analysis.trace_chat.main import handle_question
 from sovara.server.graph_analysis.trace_chat.tools import execute_tool
+from sovara.server.graph_analysis.trace_chat.utils.edit_persist import DISPLAY_ONLY_MSG
 from sovara.server.graph_analysis.trace_chat.utils.trace import Trace
 from sovara.server.routes.ui import ChatMessageRequest, chat
 
@@ -176,6 +178,144 @@ def test_handle_question_logs_llm_exceptions(monkeypatch):
         assert str(exc) == "llm exploded"
 
     assert calls == [("LLM call failed on iteration %d", (1,))]
+
+
+def test_handle_question_returns_immediately_after_successful_edit_tool(monkeypatch):
+    infer_calls = [0]
+
+    def fake_infer(messages, system, tools, max_tokens):
+        infer_calls[0] += 1
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="",
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="call-1",
+                                function=SimpleNamespace(
+                                    name="edit_content",
+                                    arguments='{"step_id": 1, "content_id": "c0", "instruction": "rewrite"}',
+                                ),
+                            )
+                        ],
+                    )
+                )
+            ]
+        )
+
+    monkeypatch.setattr("sovara.server.graph_analysis.trace_chat.main.infer", fake_infer)
+    monkeypatch.setattr(
+        "sovara.server.graph_analysis.trace_chat.main.execute_tool",
+        lambda name, trace, params, log_tag=None: "Edited content.\n\nEdit applied and saved.",
+    )
+
+    result = handle_question("rewrite it", Trace(raw="", records=[], run_id="run-1"), [])
+
+    assert infer_calls == [1]
+    assert result == {
+        "answer": "Edited content.\n\nEdit applied and saved.",
+        "edits_applied": True,
+    }
+
+
+def test_handle_question_returns_immediately_after_display_only_edit_tool(monkeypatch):
+    infer_calls = [0]
+
+    def fake_infer(messages, system, tools, max_tokens):
+        infer_calls[0] += 1
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="",
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="call-1",
+                                function=SimpleNamespace(
+                                    name="edit_content",
+                                    arguments='{"step_id": 1, "content_id": "c5", "instruction": "rewrite"}',
+                                ),
+                            )
+                        ],
+                    )
+                )
+            ]
+        )
+
+    monkeypatch.setattr("sovara.server.graph_analysis.trace_chat.main.infer", fake_infer)
+    monkeypatch.setattr(
+        "sovara.server.graph_analysis.trace_chat.main.execute_tool",
+        lambda name, trace, params, log_tag=None: f"Edited content.{DISPLAY_ONLY_MSG}",
+    )
+
+    result = handle_question("rewrite it", Trace(raw="", records=[], run_id="run-1"), [])
+
+    assert infer_calls == [1]
+    assert result == {
+        "answer": f"Edited content.{DISPLAY_ONLY_MSG}",
+        "edits_applied": False,
+    }
+
+
+def test_scatter_execute_returns_none_for_exception_and_timeout(monkeypatch):
+    llm_backend = importlib.import_module("sovara.server.llm_backend")
+    pool_state: dict[str, object] = {}
+    wait_calls = [0]
+
+    class FakeFuture:
+        def __init__(self, *, value=None, error=None):
+            self._value = value
+            self._error = error
+
+        def result(self):
+            if self._error is not None:
+                raise self._error
+            return self._value
+
+    success_future = FakeFuture(value="ok")
+    failure_future = FakeFuture(error=RuntimeError("boom"))
+    timeout_future = FakeFuture(value="late")
+
+    class FakePool:
+        def __init__(self, max_workers):
+            pool_state["max_workers"] = max_workers
+            pool_state["shutdown_calls"] = []
+
+        def submit(self, fn, item):
+            return {1: success_future, 2: failure_future, 3: timeout_future}[item]
+
+        def shutdown(self, wait=False, cancel_futures=False):
+            pool_state["shutdown_calls"].append((wait, cancel_futures))
+
+    def fake_wait(futures, timeout, return_when):
+        wait_calls[0] += 1
+        if wait_calls[0] == 1:
+            return ({success_future, failure_future}, {timeout_future})
+        return (set(), set(futures))
+
+    seen_results: list[tuple[int, str]] = []
+    seen_exceptions: list[tuple[int, str]] = []
+    seen_timeouts: list[int] = []
+
+    monkeypatch.setattr(llm_backend, "ThreadPoolExecutor", FakePool)
+    monkeypatch.setattr(llm_backend, "wait", fake_wait)
+
+    results = llm_backend.scatter_execute(
+        [1, 2, 3],
+        lambda item: item,
+        max_workers=2,
+        on_result=lambda item, result: seen_results.append((item, result)),
+        on_exception=lambda item, exc: seen_exceptions.append((item, str(exc))),
+        on_timeout=lambda items: seen_timeouts.extend(items),
+    )
+
+    assert results == ["ok", None, None]
+    assert seen_results == [(1, "ok")]
+    assert seen_exceptions == [(2, "boom")]
+    assert seen_timeouts == [3]
+    assert pool_state["max_workers"] == 2
+    assert pool_state["shutdown_calls"] == [(False, True)]
 
 
 def test_create_file_logger_can_rebind_named_logger(tmp_path):

@@ -2,8 +2,6 @@ import sys
 import os
 import time as _time
 
-_import_start = _time.time()
-
 # Ensure the parent of the package is importable when running the module directly.
 package_parent = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if package_parent not in sys.path:
@@ -157,8 +155,6 @@ def execute_server_command(args):
         return
 
     elif args.command == "_serve":
-        _server_logger.info(f"Imports completed in {_time.time() - _import_start:.2f}s")
-
         # Save Python executable path to config for VS Code extension to use
         from sovara.common.constants import SOVARA_CONFIG
         from sovara.common.config import Config

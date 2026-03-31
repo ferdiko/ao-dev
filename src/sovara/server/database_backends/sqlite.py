@@ -51,7 +51,6 @@ def get_conn():
                 _schema_initialized = True
 
     _local.conn = conn
-    logger.debug(f"Created per-thread DB connection at {db_path}")
     return conn
 
 
@@ -106,6 +105,7 @@ def _init_db(conn):
             thumb_label INTEGER CHECK (thumb_label IN (0, 1)),
             notes TEXT,
             log TEXT,
+            trace_chat_history TEXT NOT NULL DEFAULT '[]',
             FOREIGN KEY (parent_run_id) REFERENCES runs (run_id),
             FOREIGN KEY (project_id) REFERENCES projects (project_id),
             FOREIGN KEY (user_id) REFERENCES users (user_id),
@@ -391,7 +391,7 @@ def add_run_query(
 ):
     """Execute SQLite-specific INSERT for runs table"""
     execute(
-        "INSERT OR REPLACE INTO runs (run_id, parent_run_id, project_id, user_id, name, graph_topology, timestamp, runtime_seconds, active_runtime_seconds, cwd, command, environment, version_date, custom_metrics, thumb_label, notes, log) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO runs (run_id, parent_run_id, project_id, user_id, name, graph_topology, timestamp, runtime_seconds, active_runtime_seconds, cwd, command, environment, version_date, custom_metrics, thumb_label, notes, log, trace_chat_history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             run_id,
             parent_run_id,
@@ -410,6 +410,7 @@ def add_run_query(
             None,
             default_note,
             default_log,
+            "[]",
         ),
     )
 
@@ -495,6 +496,22 @@ def update_run_notes_query(notes, run_id):
     execute(
         "UPDATE runs SET notes=? WHERE run_id=?",
         (notes, run_id),
+    )
+
+
+def get_run_trace_chat_history_query(run_id):
+    """Get persisted trace chat history for a single run."""
+    return query_one(
+        "SELECT trace_chat_history FROM runs WHERE run_id=?",
+        (run_id,),
+    )
+
+
+def update_run_trace_chat_history_query(trace_chat_history, run_id):
+    """Persist trace chat history for a single run."""
+    execute(
+        "UPDATE runs SET trace_chat_history=? WHERE run_id=?",
+        (trace_chat_history, run_id),
     )
 
 

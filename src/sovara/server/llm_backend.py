@@ -1,9 +1,14 @@
 import logging
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from typing import Callable, Sequence, TypeVar
 
 import litellm
+from sovara.common.constants import TRACE_CHAT_SCATTER_BUDGET_SECONDS
 
 logger = logging.getLogger("sovara_agent")
+T = TypeVar("T")
+R = TypeVar("R")
 
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 2  # seconds, doubles each retry
@@ -100,3 +105,73 @@ def infer_text(messages, tier="expensive", **kwargs) -> str:
         logger.warning("infer_text empty content full_response=%r", response)
 
     return content
+
+
+def scatter_execute(
+    items: Sequence[T],
+    run_one: Callable[[T], R],
+    *,
+    max_workers: int | None = None,
+    budget_seconds: float = TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+    on_result: Callable[[T, R], None] | None = None,
+    on_exception: Callable[[T, Exception], None] | None = None,
+    on_timeout: Callable[[list[T]], None] | None = None,
+) -> list[R | None]:
+    """Run independent jobs in parallel until a shared deadline.
+
+    Returns one entry per input item in the original order. Successful runs
+    contain their result; failed or timed-out runs contain None so callers can
+    apply their own domain-specific fallback.
+    """
+    if not items:
+        return []
+
+    worker_count = len(items) if max_workers is None else max_workers
+    worker_count = max(1, min(worker_count, len(items)))
+    results: list[R | None] = [None] * len(items)
+    finished: set[int] = set()
+    future_to_index: dict = {}
+    executor = None
+
+    try:
+        executor = ThreadPoolExecutor(max_workers=worker_count)
+        future_to_index = {
+            executor.submit(run_one, item): idx
+            for idx, item in enumerate(items)
+        }
+        deadline = time.monotonic() + budget_seconds
+
+        while future_to_index:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            done, _ = wait(
+                tuple(future_to_index),
+                timeout=remaining,
+                return_when=FIRST_COMPLETED,
+            )
+            if not done:
+                break
+            for future in done:
+                idx = future_to_index.pop(future)
+                item = items[idx]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    finished.add(idx)
+                    if on_exception:
+                        on_exception(item, exc)
+                else:
+                    results[idx] = result
+                    finished.add(idx)
+                    if on_result:
+                        on_result(item, result)
+    finally:
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    timed_out = [items[idx] for idx in range(len(items)) if idx not in finished]
+    if timed_out and on_timeout:
+        on_timeout(timed_out)
+
+    return results
