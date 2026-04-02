@@ -2,6 +2,8 @@ import sys
 import os
 import time as _time
 
+_import_start = _time.time()
+
 # Ensure the parent of the package is importable when running the module directly.
 package_parent = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if package_parent not in sys.path:
@@ -9,13 +11,16 @@ if package_parent not in sys.path:
 
 import time
 import subprocess
+import json
 from argparse import ArgumentParser
 
 from sovara.common.logger import logger, create_file_logger
 
 from sovara.common.constants import (
     MAIN_SERVER_LOG,
+    PRIORS_SERVER_LOG,
     INFERENCE_SERVER_LOG,
+    MAIN_SERVER_STARTUP_LOCK,
     HOST,
     PORT,
     SHUTDOWN_WAIT,
@@ -23,6 +28,60 @@ from sovara.common.constants import (
 
 # Create file logger for server startup timing (only used in _serve command)
 _server_logger = create_file_logger(MAIN_SERVER_LOG)
+_STARTUP_LOCK_MAX_AGE_SECONDS = 30
+
+
+def _truncate_log_file(path: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w"):
+        pass
+
+
+def _clear_server_logs() -> None:
+    for log_path in (MAIN_SERVER_LOG, PRIORS_SERVER_LOG, INFERENCE_SERVER_LOG):
+        _truncate_log_file(log_path)
+
+
+def _release_startup_lock() -> None:
+    try:
+        os.remove(MAIN_SERVER_STARTUP_LOCK)
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        logger.warning(f"Could not remove startup lock {MAIN_SERVER_STARTUP_LOCK}: {exc}")
+
+
+def _startup_lock_is_fresh(max_age_seconds: int = _STARTUP_LOCK_MAX_AGE_SECONDS) -> bool:
+    if not os.path.exists(MAIN_SERVER_STARTUP_LOCK):
+        return False
+    try:
+        age = time.time() - os.path.getmtime(MAIN_SERVER_STARTUP_LOCK)
+    except OSError:
+        return False
+    if age <= max_age_seconds:
+        return True
+    _release_startup_lock()
+    return False
+
+
+def _acquire_startup_lock() -> bool:
+    while True:
+        try:
+            fd = os.open(MAIN_SERVER_STARTUP_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            if _startup_lock_is_fresh():
+                return False
+            continue
+        try:
+            payload = {
+                "pid": os.getpid(),
+                "created_at": time.time(),
+                "python_executable": sys.executable,
+            }
+            os.write(fd, json.dumps(payload).encode("utf-8"))
+        finally:
+            os.close(fd)
+        return True
 
 
 def _server_http_request(method: str, path: str, timeout: float = 2.0) -> bool:
@@ -45,30 +104,32 @@ def _is_server_running() -> bool:
     return _server_http_request("GET", "/health")
 
 
-def launch_daemon_server() -> None:
+def launch_daemon_server() -> bool:
     """Launch the main server as a detached daemon process."""
+    if not _acquire_startup_lock():
+        logger.info("Main server startup already in progress.")
+        return False
     os.makedirs(os.path.dirname(MAIN_SERVER_LOG), exist_ok=True)
 
-    with open(MAIN_SERVER_LOG, "a+") as log_f:
-        subprocess.Popen(
-            [sys.executable, "-m", "sovara.cli.so_server", "_serve"],
-            close_fds=True,
-            start_new_session=True,
-            stdin=subprocess.DEVNULL,
-            stdout=log_f,
-            stderr=subprocess.STDOUT,
-        )
-
-
-def _clear_log_file(path: str) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w"):
-        pass
+    try:
+        with open(MAIN_SERVER_LOG, "a+") as log_f:
+            subprocess.Popen(
+                [sys.executable, "-m", "sovara.cli.so_server", "_serve"],
+                close_fds=True,
+                start_new_session=True,
+                stdin=subprocess.DEVNULL,
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+            )
+    except Exception:
+        _release_startup_lock()
+        raise
+    return True
 
 
 def server_command_parser():
     parser = ArgumentParser(
-        usage="so-server {start, stop, restart, clear, logs, infer-logs, clear-logs}",
+        usage="so-server {start, stop, restart, clear, logs, priors-logs, infer-logs, clear-logs}",
         description="Server utilities.",
         allow_abbrev=False,
     )
@@ -81,6 +142,7 @@ def server_command_parser():
             "restart",
             "clear",
             "logs",
+            "priors-logs",
             "infer-logs",
             "clear-logs",
             "_serve",
@@ -95,8 +157,9 @@ def execute_server_command(args):
         if _is_server_running():
             logger.info("Main server is already running.")
             return
-        launch_daemon_server()
-        logger.info("Main server started.")
+        if launch_daemon_server():
+            logger.info("Main server started.")
+        return
 
     elif args.command == "stop":
         if not _server_http_request("POST", "/ui/shutdown"):
@@ -107,14 +170,13 @@ def execute_server_command(args):
     elif args.command == "restart":
         _server_http_request("POST", "/ui/shutdown")
         time.sleep(SHUTDOWN_WAIT)
-        # Clear log file before starting fresh
         try:
-            with open(MAIN_SERVER_LOG, "w"):
-                pass
-        except Exception:
-            pass
-        launch_daemon_server()
-        logger.info("Main server restarted.")
+            _clear_server_logs()
+        except Exception as e:
+            logger.error(f"Error clearing server logs: {e}")
+        if launch_daemon_server():
+            logger.info("Main server restarted.")
+        return
 
     elif args.command == "clear":
         if not _server_http_request("POST", "/ui/clear"):
@@ -142,19 +204,27 @@ def execute_server_command(args):
             logger.error(f"Error reading log file: {e}")
         return
 
+    elif args.command == "priors-logs":
+        try:
+            with open(PRIORS_SERVER_LOG, "r") as log_file:
+                print(log_file.read(), end="")
+        except FileNotFoundError:
+            logger.error(f"Log file not found at {PRIORS_SERVER_LOG}")
+        except Exception as e:
+            logger.error(f"Error reading log file: {e}")
+        return
+
     elif args.command == "clear-logs":
         try:
-            _clear_log_file(MAIN_SERVER_LOG)
+            _clear_server_logs()
         except Exception as e:
-            logger.error(f"Error clearing log file {MAIN_SERVER_LOG}: {e}")
-        try:
-            _clear_log_file(INFERENCE_SERVER_LOG)
-        except Exception as e:
-            logger.error(f"Error clearing log file {INFERENCE_SERVER_LOG}: {e}")
+            logger.error(f"Error clearing server logs: {e}")
         logger.info("Server log files cleared.")
         return
 
     elif args.command == "_serve":
+        _server_logger.info(f"Imports completed in {_time.time() - _import_start:.2f}s")
+
         # Save Python executable path to config for VS Code extension to use
         from sovara.common.constants import SOVARA_CONFIG
         from sovara.common.config import Config
@@ -182,7 +252,10 @@ def execute_server_command(args):
 
         # Store reference on app so lifespan can wire it into ServerState.
         app.state.uvicorn_server = uv_server
-        uv_server.run()
+        try:
+            uv_server.run()
+        finally:
+            _release_startup_lock()
 
 
 def main():

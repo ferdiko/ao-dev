@@ -12,7 +12,7 @@ import { ProjectSettingsModal } from "./components/ProjectSettingsModal";
 import { SupportModal } from "./components/SupportModal";
 import { useResize } from "./hooks/useResize";
 import { useUserRefresh } from "./hooks/useUserRefresh";
-import { fetchUser, fetchProject, type User } from "./api";
+import { fetchUser, fetchProject, keepBackendAlive, type User } from "./api";
 import { UserContext, useUser } from "./userContext";
 import arrowImg from "./assets/arrow_spiral_tr_bl.png";
 import "./App.css";
@@ -25,6 +25,7 @@ const SIDEBAR_MIN = 140;
 const SIDEBAR_MAX = 500;
 const SIDEBAR_DEFAULT = 240;
 const SIDEBAR_COLLAPSED = 48;
+const WEBAPP_KEEPALIVE_MS = 4 * 60 * 1000;
 
 function AppLayout({ projectId, defaultCollapsed, children }: { projectId?: string; defaultCollapsed?: boolean; children: React.ReactNode }) {
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
@@ -187,6 +188,19 @@ function App() {
   useEffect(() => {
     refreshUser();
   }, [refreshUser]);
+
+  useEffect(() => {
+    const tick = () => {
+      void keepBackendAlive().catch(() => {
+        // The app already handles auto-start/retry on demand. Keepalive failures
+        // should stay silent here so they don't interrupt normal use.
+      });
+    };
+
+    tick();
+    const interval = window.setInterval(tick, WEBAPP_KEEPALIVE_MS);
+    return () => window.clearInterval(interval);
+  }, []);
 
   useUserRefresh(refreshUser);
 

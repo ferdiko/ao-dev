@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { JSONViewer, type ViewMode } from '../JSONViewer';
 import { DetectedDocument } from '../../utils/documentDetection';
+import { PriorRetrievalRecord } from '../../types';
 
 interface NodeEditorViewProps {
   inputData: any;
@@ -9,6 +10,9 @@ interface NodeEditorViewProps {
   hasUnsavedChanges: boolean;
   isDarkTheme: boolean;
   nodeLabel: string;
+  nodeKind?: string;
+  priorCount?: number;
+  priorRetrieval?: PriorRetrievalRecord | null;
   onTabChange: (tab: 'input' | 'output') => void;
   onInputChange: (newData: any) => void;
   onOutputChange: (newData: any) => void;
@@ -23,6 +27,9 @@ export const NodeEditorView: React.FC<NodeEditorViewProps> = ({
   hasUnsavedChanges,
   isDarkTheme,
   nodeLabel,
+  nodeKind,
+  priorCount,
+  priorRetrieval,
   onTabChange,
   onInputChange,
   onOutputChange,
@@ -104,6 +111,23 @@ export const NodeEditorView: React.FC<NodeEditorViewProps> = ({
 
   const currentData = activeTab === 'input' ? inputData : outputData;
   const handleChange = activeTab === 'input' ? onInputChange : onOutputChange;
+  const effectivePriorCount = typeof priorCount === 'number'
+    ? priorCount
+    : (priorRetrieval?.applied_priors?.length ?? 0);
+  const showPriorsPanel = effectivePriorCount > 0;
+  const nodeKindLabel = nodeKind === 'mcp'
+    ? 'MCP'
+    : nodeKind === 'tool'
+      ? 'Tool'
+      : nodeKind === 'llm'
+        ? 'LLM'
+        : null;
+  const priorsTone = {
+    border: 'rgba(9, 105, 218, 0.22)',
+    background: isDarkTheme ? 'rgba(56, 139, 253, 0.16)' : 'rgba(9, 105, 218, 0.10)',
+    title: isDarkTheme ? '#9ecbff' : '#0550ae',
+    body: colors.text,
+  };
 
   return (
     <div
@@ -127,6 +151,53 @@ export const NodeEditorView: React.FC<NodeEditorViewProps> = ({
           gap: '12px',
         }}
       >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            minWidth: 0,
+            maxWidth: '32%',
+          }}
+        >
+          <div
+            style={{
+              fontSize: '13px',
+              fontWeight: 600,
+              color: colors.text,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={nodeLabel}
+          >
+            {nodeLabel}
+          </div>
+          {nodeKindLabel && (
+            <div
+              style={{
+                padding: '2px 8px',
+                borderRadius: '999px',
+                fontSize: '11px',
+                fontWeight: 700,
+                letterSpacing: '0.02em',
+                backgroundColor: nodeKind === 'mcp'
+                  ? (isDarkTheme ? 'rgba(191, 135, 0, 0.22)' : 'rgba(191, 135, 0, 0.12)')
+                  : nodeKind === 'tool'
+                    ? (isDarkTheme ? 'rgba(130, 80, 223, 0.18)' : 'rgba(130, 80, 223, 0.10)')
+                    : (isDarkTheme ? 'rgba(56, 139, 253, 0.16)' : 'rgba(9, 105, 218, 0.10)'),
+                color: nodeKind === 'mcp'
+                  ? (isDarkTheme ? '#f2cc60' : '#9a6700')
+                  : nodeKind === 'tool'
+                    ? (isDarkTheme ? '#d2a8ff' : '#6f42c1')
+                    : (isDarkTheme ? '#9ecbff' : '#0550ae'),
+                flexShrink: 0,
+              }}
+            >
+              {nodeKindLabel}
+            </div>
+          )}
+        </div>
         {/* Search input */}
         <div
           style={{
@@ -271,6 +342,137 @@ export const NodeEditorView: React.FC<NodeEditorViewProps> = ({
           </svg>
         </button>
       </div>
+
+      {showPriorsPanel && (
+        <div
+          style={{
+            margin: '12px 16px 0',
+            padding: '14px 16px',
+            borderRadius: '10px',
+            border: `1px solid ${priorsTone.border}`,
+            background: priorsTone.background,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+              marginBottom: '8px',
+            }}
+          >
+            <div
+              style={{
+                fontSize: '13px',
+                fontWeight: 700,
+                color: priorsTone.title,
+              }}
+            >
+              {`${effectivePriorCount} prior${effectivePriorCount === 1 ? '' : 's'} introduced here`}
+            </div>
+            {priorRetrieval?.model && (
+              <div
+                style={{
+                  fontSize: '11px',
+                  color: colors.textMuted,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {priorRetrieval.model}
+              </div>
+            )}
+          </div>
+          <div
+            style={{
+              fontSize: '12px',
+              lineHeight: '1.55',
+              color: priorsTone.body,
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {`${effectivePriorCount} prior${effectivePriorCount === 1 ? '' : 's'} introduced at this node relative to its parents.`}
+          </div>
+          {(priorRetrieval?.applied_priors?.length || 0) > 0 && (
+            <div
+              style={{
+                marginTop: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+              }}
+            >
+              {priorRetrieval!.applied_priors.map((prior) => (
+                <div
+                  key={prior.id}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    backgroundColor: isDarkTheme ? 'rgba(13, 17, 23, 0.36)' : 'rgba(255, 255, 255, 0.72)',
+                    border: `1px solid ${isDarkTheme ? 'rgba(99, 110, 123, 0.24)' : 'rgba(208, 215, 222, 0.8)'}`,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '12px',
+                      marginBottom: '6px',
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        color: colors.text,
+                      }}
+                    >
+                      {prior.name || prior.id}
+                    </div>
+                    {prior.path && (
+                      <div
+                        style={{
+                          fontSize: '10px',
+                          color: colors.textMuted,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {prior.path}
+                      </div>
+                    )}
+                  </div>
+                  {prior.summary && (
+                    <div
+                      style={{
+                        fontSize: '11px',
+                        color: colors.textMuted,
+                        marginBottom: prior.content ? '8px' : 0,
+                      }}
+                    >
+                      {prior.summary}
+                    </div>
+                  )}
+                  {prior.content && (
+                    <pre
+                      style={{
+                        margin: 0,
+                        whiteSpace: 'pre-wrap',
+                        fontFamily: 'var(--vscode-editor-font-family, monospace)',
+                        fontSize: '11px',
+                        lineHeight: '1.55',
+                        color: colors.text,
+                      }}
+                    >
+                      {prior.content}
+                    </pre>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tab bar */}
       <div

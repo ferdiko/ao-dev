@@ -1,5 +1,5 @@
 import { GraphNode, GraphEdge, LayoutNode } from './types';
-import { NODE_WIDTH, NODE_HEIGHT } from '../../layoutConstants';
+import { NODE_WIDTH, getGraphNodeHeight } from '../../layoutConstants';
 
 export function convertToLayoutNodes(nodes: GraphNode[], edges: GraphEdge[]): LayoutNode[] {
   if (!nodes || nodes.length === 0) return [];
@@ -19,7 +19,7 @@ export function convertToLayoutNodes(nodes: GraphNode[], edges: GraphEdge[]): La
     x: undefined,
     y: undefined,
     width: NODE_WIDTH,
-    height: NODE_HEIGHT,
+    height: getGraphNodeHeight(n.prior_count),
     layer: undefined,
     visualLayer: undefined,
     band: undefined

@@ -5,6 +5,7 @@ import { MessageSender } from '../types/MessageSender';
 import { WorkflowRunDetailsPanel } from './run/WorkflowRunDetailsPanel';
 import { NodeEditorView } from './editor/NodeEditorView';
 import { DetectedDocument, getFileExtension, getDocumentKey, isPreviewableDocument } from '../utils/documentDetection';
+import { stripSovaraPriorsFromValue } from '../utils/priorsDisplay';
 import { parse, stringify } from 'lossless-json';
 import { saveDocument } from '../utils/documentDownload';
 import { DocumentPreviewModal } from './common/DocumentPreviewModal';
@@ -60,7 +61,7 @@ export const GraphTabApp: React.FC<GraphTabAppProps> = ({
       try {
         if (inputValue) {
           const parsed = parse(inputValue);
-          parsedInput = (parsed as any)?.to_show ?? parsed;
+          parsedInput = stripSovaraPriorsFromValue((parsed as any)?.to_show ?? parsed);
         }
       } catch (e) {
         parsedInput = inputValue;

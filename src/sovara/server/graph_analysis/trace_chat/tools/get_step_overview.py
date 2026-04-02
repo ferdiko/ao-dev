@@ -21,6 +21,7 @@ _SEGMENT_SUMMARY_MAX_TOKENS = 512
 _STEP_SUMMARY_MAX_TOKENS = 2048
 _SUMMARY_EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": False}}
 _SEGMENT_SUMMARY_MAX_WORKERS = 10
+_SUMMARY_SECTION_HEADER = "## Three-Sentence Summary"
 
 STEP_SUMMARIZE_SYSTEM = (
     "You summarize a single step from an AI agent trace. "
@@ -229,16 +230,16 @@ def _render_content_items(
                 rendered_text = item_summaries.get(item.content_id)
                 if rendered_text:
                     lines.append(
-                        f"- [content_id={item.content_id}] Summarized content ({len(item.text)} chars): {rendered_text}"
+                        f"- [content_id={item.content_id}] summarized content ({len(item.text)} chars): {rendered_text}"
                     )
                 else:
                     lines.append(
-                        f"- [content_id={item.content_id}] Summarized content ({len(item.text)} chars)"
+                        f"- [content_id={item.content_id}] summarized content ({len(item.text)} chars)"
                     )
             else:
                 rendered_text = _compact_text(item.text) or "(empty)"
                 lines.append(
-                    f"- [content_id={item.content_id}] Full content ({len(item.text)} chars): {rendered_text}"
+                    f"- [content_id={item.content_id}] full content ({len(item.text)} chars): {rendered_text}"
                 )
             if item.summarized:
                 lines.append(f"  Load unsummarized content with {_render_get_content_call(step_id, item)}.")
@@ -249,7 +250,7 @@ def _render_content_items(
 
 def _build_step_content(trace: Trace, index: int) -> str:
     step_id = index + 1
-    semantic_summary = get_cached_step_semantic_summary(trace, step_id)
+    semantic_summary = get_or_compute_step_semantic_summary(trace, step_id)
     path_content = list(_get_editable_content_state(trace, index).paths)
     record = trace.get(index)
     content_items = build_step_content_items(path_content)
@@ -270,7 +271,7 @@ def _build_step_content(trace: Trace, index: int) -> str:
     if record.name:
         lines.append(f"Name: {record.name}")
     if semantic_summary:
-        lines.extend(["", "## Summary", "", semantic_summary])
+        lines.extend(["", _SUMMARY_SECTION_HEADER, "", semantic_summary])
 
     lines.extend(["", "## Input Content", ""])
     _render_content_items(lines, input_path_content, items_by_path, item_summaries, step_id=step_id)
@@ -328,13 +329,13 @@ def get_step_overview(trace: Trace, step_id=None) -> str:
     if err:
         return err
 
-    cached_summary = get_cached_step_semantic_summary(trace, index + 1)
     if index in trace.step_overview_cache:
         cached_result = trace.step_overview_cache[index]
-        if not cached_summary or "\n## Summary\n" in cached_result:
+        if f"\n{_SUMMARY_SECTION_HEADER}\n" in cached_result:
             logger.info("%s cache hit", _content_tag(trace, step=index + 1))
             return cached_result
 
+    get_or_compute_step_semantic_summary(trace, index + 1)
     result = _build_step_content(trace, index)
     trace.step_overview_cache[index] = result
     return result

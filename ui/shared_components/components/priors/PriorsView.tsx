@@ -48,6 +48,7 @@ interface PriorsViewProps {
   isValidating?: boolean;
   onClearValidation?: () => void;
   serverUnavailable?: boolean;
+  loadError?: string | null;
   /** Incoming folder data from server — the parent sets this when folder_ls_result arrives */
   folderResult?: { path: string; folders: FolderEntry[]; priors: Prior[]; priorCount?: number } | null;
   /** Incoming prior content update */
@@ -104,6 +105,7 @@ export const PriorsView: React.FC<PriorsViewProps> = ({
   isValidating,
   onClearValidation,
   serverUnavailable,
+  loadError,
   folderResult,
   priorContentUpdate,
   onFetchAppliedRuns,
@@ -976,11 +978,30 @@ export const PriorsView: React.FC<PriorsViewProps> = ({
           }}
         >
           <div style={{ fontSize: '14px', marginBottom: '12px' }}>
-            Unable to connect to SovaraDB.
+            Unable to reach the priors backend.
           </div>
           <div style={{ fontSize: '13px', color: isDarkTheme ? '#888888' : '#666666' }}>
-            Make sure your local `so-priors` server is running and that `PRIORS_SERVER_URL`
-            points to the correct SovaraDB host.
+            Make sure `so-server` is running. The extension now talks to priors through
+            `so-server`, which proxies requests to the child priors backend.
+          </div>
+        </div>
+      );
+    }
+
+    if (loadError && !rootData) {
+      return (
+        <div
+          style={{
+            textAlign: 'center',
+            padding: '60px 20px',
+            color: isDarkTheme ? '#cccccc' : '#444444',
+          }}
+        >
+          <div style={{ fontSize: '14px', marginBottom: '12px' }}>
+            Unable to load priors.
+          </div>
+          <div style={{ fontSize: '13px', color: isDarkTheme ? '#888888' : '#666666' }}>
+            {loadError}
           </div>
         </div>
       );

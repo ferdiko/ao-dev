@@ -151,7 +151,7 @@ This will produce a preview with flattened keys:
   ],
   "input": {
     "body.max_tokens": 8000,
-    "body.messages.0.content": "<priors>\n## Student...",
+    "body.messages.0.content": "<sovara-priors>\n## Student...",
     "body.thinking.budget_tokens": 4000,
     "body.thinking.type": "enabled",
     "url": "https://api.anthropi..."
@@ -375,7 +375,7 @@ First, inject priors into the context by modifying the user code.
 ```python
 from sovara.runner.priors import inject_priors
 
-# Inject all priors from a specific folder into a <priors> block
+# Inject all priors from a specific folder into a <sovara-priors> block
 priors_context = inject_priors(path="beaver/retriever/")
 
 # Prepend to your prompt
@@ -414,7 +414,7 @@ The main commands are:
 - `create`: create a prior; supports `--creation-trace-id` and `--trace-source`
 - `update <prior_id>`: update `--name`, `--summary`, `--content`, and/or `--path`
 - `delete <prior_id>`: delete one prior
-- `query`: return all priors in a path plus an injected `<priors>` block
+- `query`: return all priors in a path plus an injected `<sovara-priors>` block
 - `retrieve "<context>"`: use the LLM retriever to select relevant priors
 - `migrate`: move root-level priors into the default retrieval folder
 - `restructure {propose,execute,abort}`: manage taxonomy restructure proposals
@@ -490,7 +490,7 @@ Representative outputs:
       "path": "beaver/retriever/"
     }
   ],
-  "injected_context": "<priors>\n## <name>\n<content>\n</priors>"
+  "injected_context": "<sovara-priors>\n<!-- {\"priors\":[{\"id\":\"<prior_id>\"}]} -->\n## <name>\n<content>\n</sovara-priors>"
 }
 ```
 

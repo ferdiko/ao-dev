@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { NodeEditorView } from '@sovara/shared-components/components/editor/NodeEditorView';
 import { DocumentPreviewModal } from '@sovara/shared-components/components/common/DocumentPreviewModal';
+import { PriorRetrievalRecord } from '@sovara/shared-components/types';
 import { useIsVsCodeDarkTheme } from '@sovara/shared-components/utils/themeUtils';
+import { stripSovaraPriorsFromValue } from '@sovara/shared-components/utils/priorsDisplay';
 import { parse, stringify } from 'lossless-json';
 import {
   DetectedDocument,
@@ -22,6 +24,8 @@ declare global {
       label: string;
       inputValue: string;
       outputValue: string;
+      nodeKind?: string | null;
+      priorCount?: number | null;
     };
   }
 }
@@ -39,9 +43,10 @@ const safeStringify = (
 };
 
 /** Parse a JSON string, returning null on failure. */
-const extractDisplayData = (jsonStr: string): unknown => {
+const extractDisplayData = (jsonStr: string, stripPriors = false): unknown => {
   try {
-    return parse(jsonStr);
+    const parsed = parse(jsonStr);
+    return stripPriors ? stripSovaraPriorsFromValue(parsed) : parsed;
   } catch {
     return null;
   }
@@ -55,7 +60,7 @@ const getInitialContext = () => {
 const getInitialParsedData = (ctx: typeof window.nodeEditorContext, field: 'inputValue' | 'outputValue') => {
   if (!ctx) return null;
   try {
-    return extractDisplayData(ctx[field]);
+    return extractDisplayData(ctx[field], field === 'inputValue');
   } catch {
     return null;
   }
@@ -79,6 +84,7 @@ export const NodeEditorTabApp: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'input' | 'output'>(() => window.nodeEditorContext?.field || 'input');
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<DetectedDocument | null>(null);
+  const [priorRetrieval, setPriorRetrieval] = useState<PriorRetrievalRecord | null>(null);
 
   // Listen for messages from extension
   useEffect(() => {
@@ -94,20 +100,24 @@ export const NodeEditorTabApp: React.FC = () => {
             setContext(data);
             setActiveTab(data.field);
 
-            const input = extractDisplayData(data.inputValue);
-            const output = extractDisplayData(data.outputValue);
+            const input = extractDisplayData(data.inputValue, true);
+            const output = extractDisplayData(data.outputValue, false);
 
             setInputData(input);
             setOutputData(output);
             setInitialInputData(parse(safeStringify(input)));
             setInitialOutputData(parse(safeStringify(output)));
             setHasUnsavedChanges(false);
+            setPriorRetrieval(null);
           }
           break;
 
         case 'saved':
           // Server confirmed save
           setHasUnsavedChanges(false);
+          break;
+        case 'prior_retrieval':
+          setPriorRetrieval(message.record || null);
           break;
       }
     };
@@ -235,6 +245,13 @@ export const NodeEditorTabApp: React.FC = () => {
         hasUnsavedChanges={hasUnsavedChanges}
         isDarkTheme={isDarkTheme}
         nodeLabel={context.label}
+        nodeKind={context.nodeKind || undefined}
+        priorCount={
+          typeof priorRetrieval?.applied_priors?.length === 'number'
+            ? priorRetrieval.applied_priors.length
+            : (typeof context.priorCount === 'number' ? context.priorCount : undefined)
+        }
+        priorRetrieval={priorRetrieval}
         onTabChange={setActiveTab}
         onInputChange={setInputData}
         onOutputChange={setOutputData}

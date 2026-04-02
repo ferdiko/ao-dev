@@ -1,7 +1,11 @@
 from functools import wraps
-from sovara.runner.monkey_patching.patching_utils import get_input_dict, send_graph_node_and_edges
+from sovara.runner.monkey_patching.patching_utils import (
+    get_input_dict,
+    send_graph_node_and_edges,
+)
 from sovara.runner.string_matching import find_source_nodes, store_output_strings
 from sovara.runner.context_manager import get_run_id
+from sovara.runner.priors import persist_prior_metadata
 from sovara.server.database_manager import DB
 from sovara.common.logger import logger
 from sovara.runner.monkey_patching.patching_utils import is_whitelisted_endpoint
@@ -42,15 +46,16 @@ def patch_requests_send(bound_obj, bound_cls):
         if not is_whitelisted_endpoint(url, path):
             return original_function(*args, **kwargs)
 
-        # Content-based edge detection BEFORE get_in_out (uses original input)
-        run_id = get_run_id()
-        source_node_ids = find_source_nodes(run_id, input_dict, api_type)
+        source_node_ids = find_source_nodes(get_run_id(), input_dict, api_type)
 
         # Get result from cache or call LLM
-        cache_output = DB.get_in_out(input_dict, api_type)
+        cache_output = DB.get_in_out(input_dict, api_type, prepare_runtime_priors=True)
+        prior_result = cache_output.prior_result
         if cache_output.output is None:
             result = original_function(**cache_output.input_dict)  # Call LLM
             DB.cache_output(cache_result=cache_output, output_obj=result, api_type=api_type)
+        if prior_result is not None:
+            persist_prior_metadata(cache_output.run_id, cache_output.node_uuid, prior_result.metadata)
 
         # Store output strings for future matching
         store_output_strings(
@@ -65,6 +70,7 @@ def patch_requests_send(bound_obj, bound_cls):
             source_node_ids=source_node_ids,
             api_type=api_type,
             stack_trace=cache_output.stack_trace,
+            prior_count=len(prior_result.metadata.newly_applied_priors) if prior_result is not None else None,
         )
 
         return cache_output.output

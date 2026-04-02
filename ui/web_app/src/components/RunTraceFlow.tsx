@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { AttachmentStrip } from "./AttachmentPreview";
 import { extractAttachments, type Attachment } from "../attachmentUtils";
 import { DocumentPreviewModal } from "./DocumentPreviewModal";
+import { RenderedMarkdown } from "./RenderedMarkdown";
 import { Pencil, Copy, ChevronDown, ChevronRight, Upload } from "lucide-react";
 import {
   detectDocument,
@@ -16,6 +15,7 @@ import {
 import { getExternalUrl } from "@sovara/shared-components/utils/urlUtils";
 import { saveDocument } from "@sovara/shared-components/utils/documentDownload";
 import { applyDocumentReplacement, pickReplacementDocumentFromBrowser } from "@sovara/shared-components/utils/documentReplacement";
+import type { PriorRetrievalRecord } from "@sovara/shared-components/types";
 import {
   detectFlattenedMessageGroups,
   detectMessageLikeArray,
@@ -75,10 +75,6 @@ type StringClassification =
 
 type JsonPath = string[];
 type JumpTarget = { path: JsonPath; cursorOffset: number | null; selectedText: string | null };
-type MarkdownCodeProps = {
-  children?: React.ReactNode;
-  className?: string;
-};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -1305,26 +1301,7 @@ function InlineArrayItemRow({
 }
 
 function MarkdownContent({ markdown }: { markdown: string }) {
-  return (
-    <Markdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        code(props: MarkdownCodeProps) {
-          const text = String(props.children ?? "").replace(/\n$/, "");
-          const languageMatch = /language-([\w+-]+)/.exec(props.className || "");
-          const isBlock = Boolean(languageMatch) || text.includes("\n");
-
-          if (!isBlock) {
-            return <code className="io-inline-code">{props.children}</code>;
-          }
-
-          return <CodeBlock code={text} language={languageMatch?.[1] ?? inferCodeLanguage(text)} />;
-        },
-      }}
-    >
-      {markdown}
-    </Markdown>
-  );
+  return <RenderedMarkdown markdown={markdown} />;
 }
 
 function MessageBubbleBody({
@@ -2206,9 +2183,56 @@ function PrettyContent({
   );
 }
 
+function PriorInfoPanel({
+  priorCount,
+  priorRetrieval,
+}: {
+  priorCount?: number | null;
+  priorRetrieval?: PriorRetrievalRecord | null;
+}) {
+  const effectivePriorCount = typeof priorCount === "number"
+    ? priorCount
+    : (priorRetrieval?.applied_priors?.length ?? 0);
+  if (effectivePriorCount <= 0) {
+    return null;
+  }
+
+  return (
+    <div className="io-priors-panel io-priors-panel-applied">
+      <div className="io-priors-panel-header">
+        <div className="io-priors-panel-title">
+          {`${effectivePriorCount} prior${effectivePriorCount === 1 ? "" : "s"} introduced here`}
+        </div>
+        {priorRetrieval?.model && (
+          <div className="io-priors-panel-model">{priorRetrieval.model}</div>
+        )}
+      </div>
+      <div className="io-priors-panel-message">
+        {`${effectivePriorCount} prior${effectivePriorCount === 1 ? "" : "s"} introduced at this node relative to its parents.`}
+      </div>
+      {(priorRetrieval?.applied_priors?.length || 0) > 0 && (
+        <div className="io-priors-panel-list">
+          {priorRetrieval!.applied_priors.map((prior) => (
+            <div key={prior.id} className="io-priors-panel-item">
+              <div className="io-priors-panel-item-header">
+                <div className="io-priors-panel-item-title">{prior.name || prior.id}</div>
+                {prior.path && <div className="io-priors-panel-item-path">{prior.path}</div>}
+              </div>
+              {prior.summary && <div className="io-priors-panel-item-summary">{prior.summary}</div>}
+              {prior.content && <pre className="io-priors-panel-item-content">{prior.content}</pre>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function IOPanel({
   label,
   data,
+  priorCount,
+  priorRetrieval,
   viewMode,
   nodeId,
   editLock,
@@ -2221,6 +2245,8 @@ function IOPanel({
 }: {
   label: string;
   data: Record<string, unknown>;
+  priorCount?: number | null;
+  priorRetrieval?: PriorRetrievalRecord | null;
   viewMode: "pretty" | "json";
   nodeId?: string;
   editLock: EditKey | null;
@@ -2600,6 +2626,12 @@ function IOPanel({
         </div>
       </div>
       <div className="io-panel-content">
+        {label === "Input" && ((typeof priorCount === "number" && priorCount > 0) || (priorRetrieval?.applied_priors?.length || 0) > 0) && (
+          <PriorInfoPanel
+            priorCount={priorCount}
+            priorRetrieval={priorRetrieval}
+          />
+        )}
         {isActiveEdit && editPresentation === "raw" ? (
           <div className="io-edit-area">
             <div className="io-edit-wrapper">
@@ -2695,7 +2727,7 @@ function NodeHeader({ node }: { node: GraphNode }) {
         <span className="node-card-name">{node.label}</span>
       </div>
       <div className="node-card-meta-row">
-        {node.name && <span className="node-card-type llm">{node.name}</span>}
+        {node.raw_node_name && <span className="node-card-type llm">{node.raw_node_name}</span>}
         <span className="node-card-id" title={displayId}>
           {displayId}
           <button className="node-card-id-copy" onClick={handleCopyId} title="Copy step ID">
@@ -2710,6 +2742,7 @@ function NodeHeader({ node }: { node: GraphNode }) {
 
 export function RunTraceFlow({
   nodes,
+  priorRetrievalsByNode,
   viewMode,
   focusedNodeId,
   nodeRefs,
@@ -2722,6 +2755,7 @@ export function RunTraceFlow({
   onCancelEdit,
 }: {
   nodes: GraphNode[];
+  priorRetrievalsByNode: Record<string, PriorRetrievalRecord>;
   viewMode: "pretty" | "json";
   focusedNodeId: string | null;
   nodeRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
@@ -2739,6 +2773,7 @@ export function RunTraceFlow({
     <div className="run-detail-io-scroll">
       {nodes.map((node) => {
         const hasEdit = editedFields.has(`${node.id}:Input`) || editedFields.has(`${node.id}:Output`);
+        const priorRetrieval = priorRetrievalsByNode[node.id] || null;
         return (
           <div
             key={node.id}
@@ -2756,6 +2791,8 @@ export function RunTraceFlow({
             <IOPanel
               label="Input"
               data={node.input}
+              priorCount={node.prior_count}
+              priorRetrieval={priorRetrieval}
               viewMode={viewMode}
               nodeId={node.id}
               editLock={editLock}
@@ -2769,6 +2806,7 @@ export function RunTraceFlow({
             <IOPanel
               label="Output"
               data={node.output}
+              priorRetrieval={null}
               viewMode={viewMode}
               nodeId={node.id}
               editLock={editLock}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   fetchGraph,
+  fetchPriorRetrievals,
   fetchRunDetail,
   editInput,
   editOutput,
@@ -13,6 +14,8 @@ import {
 } from "../api";
 import { subscribe } from "../serverEvents";
 import type { Tag } from "../tags";
+import type { PriorRetrievalRecord } from "@sovara/shared-components/types";
+import { stripSovaraPriorsFromValue } from "@sovara/shared-components/utils/priorsDisplay";
 
 export interface GraphNode {
   id: string;
@@ -22,7 +25,9 @@ export interface GraphNode {
   output: Record<string, unknown>;
   border_color?: string;
   stack_trace?: string;
-  name?: string;
+  raw_node_name?: string;
+  node_kind?: string | null;
+  prior_count?: number | null;
   attachments?: unknown[];
 }
 
@@ -40,16 +45,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseNodeData(raw: unknown): Record<string, unknown> {
+function parseNodeData(raw: unknown, options?: { stripPriors?: boolean }): Record<string, unknown> {
+  const stripPriors = options?.stripPriors ?? false;
   if (typeof raw === "string") {
     try {
       const parsed = JSON.parse(raw);
-      return isRecord(parsed) ? parsed : {};
+      if (!isRecord(parsed)) {
+        return {};
+      }
+      return stripPriors ? stripSovaraPriorsFromValue(parsed) : parsed;
     } catch {
       return {};
     }
   }
-  return isRecord(raw) ? raw : {};
+  if (!isRecord(raw)) {
+    return {};
+  }
+  return stripPriors ? stripSovaraPriorsFromValue(raw) : raw;
 }
 
 function parseGraphPayload(payload: GraphPayload): { nodes: GraphNode[]; edges: GraphEdge[] } {
@@ -57,11 +69,13 @@ function parseGraphPayload(payload: GraphPayload): { nodes: GraphNode[]; edges: 
     id: node.uuid,
     step_id: node.step_id,
     label: node.label,
-    input: parseNodeData(node.input),
+    input: parseNodeData(node.input, { stripPriors: true }),
     output: parseNodeData(node.output),
     border_color: node.border_color,
     stack_trace: node.stack_trace,
-    name: node.name,
+    raw_node_name: node.raw_node_name,
+    node_kind: node.node_kind,
+    prior_count: node.prior_count,
     attachments: node.attachments,
   }));
   const edges: GraphEdge[] = payload.edges.map((edge: BackendGraphEdge) => ({
@@ -77,6 +91,7 @@ export function useRunState(runId: string) {
   const [selectedTags, setSelectedTags] = useState<Tag[]>([]);
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
+  const [priorRetrievalsByNode, setPriorRetrievalsByNode] = useState<Record<string, PriorRetrievalRecord>>({});
   const [loading, setLoading] = useState(true);
   const [rerunState, setRerunState] = useState<RerunState>("idle");
   const [editLock, setEditLock] = useState<EditKey | null>(null);
@@ -96,14 +111,16 @@ export function useRunState(runId: string) {
 
     async function load() {
       try {
-        const [, graphResp] = await Promise.all([
+        const [, graphResp, priorRetrievals] = await Promise.all([
           refreshRunDetail(),
           fetchGraph(runId),
+          fetchPriorRetrievals(runId),
         ]);
         if (cancelled) return;
         const parsed = parseGraphPayload(graphResp.payload);
         setGraphNodes(parsed.nodes);
         setGraphEdges(parsed.edges);
+        setPriorRetrievalsByNode(priorRetrievals);
       } catch (err) {
         console.error("Failed to load run data:", err);
       } finally {
@@ -124,6 +141,9 @@ export function useRunState(runId: string) {
       const parsed = parseGraphPayload(msg.payload as GraphPayload);
       setGraphNodes(parsed.nodes);
       setGraphEdges(parsed.edges);
+      void fetchPriorRetrievals(runId)
+        .then((records) => setPriorRetrievalsByNode(records))
+        .catch(console.error);
     });
   }, [runId]);
 
@@ -217,6 +237,7 @@ export function useRunState(runId: string) {
       handleSaveEdit,
       handleStartEdit,
       loading,
+      priorRetrievalsByNode,
       refreshRunDetail,
       rerunning,
       selectedTags,

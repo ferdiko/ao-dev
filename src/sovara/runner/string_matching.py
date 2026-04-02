@@ -16,6 +16,7 @@ from flatten_json import flatten
 from sovara.common.logger import logger
 from sovara.common.constants import COMPILED_STRING_MATCH_EXCLUDE_PATTERNS
 from sovara.runner.monkey_patching.api_parser import func_kwargs_to_json_str, api_obj_to_json_str
+from sovara.runner.priors_pipeline import strip_priors_blocks_exact
 
 
 # ===========================================================
@@ -27,8 +28,6 @@ MIN_MATCH_WORDS = 3
 
 # Minimum fraction of output words that must appear in the input
 MIN_OUTPUT_COVERAGE = 0.8
-
-
 # ===========================================================
 # Match Criteria
 # ===========================================================
@@ -105,6 +104,12 @@ def tokenize(text: str) -> List[str]:
     return cleaned.split()
 
 
+def _strip_priors_blocks(text: str) -> str:
+    if not text or "<sovara-priors>" not in text:
+        return text
+    return strip_priors_blocks_exact(text).strip()
+
+
 def compute_longest_match(output_words: List[str], input_words: List[str]) -> int:
     """Return length of longest contiguous matching word sequence."""
     if not output_words or not input_words:
@@ -135,7 +140,9 @@ def extract_input_strings(input_dict: Dict[str, Any], api_type: str) -> List[str
         flattened = flatten(
             json.loads(func_kwargs_to_json_str(input_dict, api_type)[0])["to_show"], "."
         )
-        return _filter_excluded_keys(flattened)
+        values = _filter_excluded_keys(flattened)
+        normalized_values = [_strip_priors_blocks(value).strip() for value in values]
+        return [value for value in normalized_values if value]
     except Exception as e:
         logger.error(f"Error extracting input strings: {e}")
         return []

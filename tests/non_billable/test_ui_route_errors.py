@@ -260,7 +260,7 @@ async def test_chat_route_persists_user_message_before_proxy_and_appends_answer(
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def post(self, url, json, timeout):
+        async def post(self, url, json, timeout, headers=None):
             return FakeResponse()
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
@@ -286,6 +286,69 @@ async def test_chat_route_persists_user_message_before_proxy_and_appends_answer(
         assert DB.get_trace_chat_history(run_id) == [
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "done"},
+        ]
+    finally:
+        DB.delete_project(project_id)
+
+
+@pytest.mark.anyio
+async def test_chat_route_returns_answer_even_if_post_persist_crashes(monkeypatch):
+    import httpx
+
+    project_id = str(uuid.uuid4())
+    run_id = str(uuid.uuid4())
+    DB.upsert_project(project_id, "trace-chat-project", "")
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"answer": "done", "edits_applied": False}
+
+    class FakeAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json, timeout, headers=None):
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    try:
+        DB.add_run(
+            run_id=run_id,
+            name="Trace Chat Run",
+            timestamp=datetime.now(timezone.utc),
+            cwd=os.getcwd(),
+            command="test",
+            environment={},
+            parent_run_id=run_id,
+            project_id=project_id,
+        )
+
+        original_update = DB.update_trace_chat_history
+        call_count = {"count": 0}
+
+        def flaky_update(target_run_id, history):
+            call_count["count"] += 1
+            if call_count["count"] == 2:
+                raise RuntimeError("db busy")
+            return original_update(target_run_id, history)
+
+        monkeypatch.setattr(DB, "update_trace_chat_history", flaky_update)
+
+        response = await chat(
+            run_id,
+            ChatMessageRequest(message="hello", history=[]),
+        )
+
+        assert response == {"answer": "done", "edits_applied": False}
+        assert DB.get_trace_chat_history(run_id) == [
+            {"role": "user", "content": "hello"},
         ]
     finally:
         DB.delete_project(project_id)

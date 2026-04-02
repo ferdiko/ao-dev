@@ -379,6 +379,9 @@ def main(argv: Sequence[str] | None = None, *, default_trace_path: str | None = 
     except Exception as e:
         parser.exit(status=1, message=f"Error loading trace: {e}\n")
 
+    print(f"Loading trace from {resolved_path}")
+    print(f"Loaded {len(trace)} steps.")
+    print("Chat started. Type 'quit' to exit.")
     logger.info(format_log_event_banner("Trace Opened", resolved_path.name))
     logger.info(
         "%s trace_opened path=%s steps=%d prefetch=%s",

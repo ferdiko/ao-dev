@@ -169,6 +169,7 @@ def _create_redacted_llm_node(run_id: str, api_type: str, stack_trace: str, mode
         source_node_ids=source_node_ids,
         api_type=api_type,
         stack_trace=cache_output.stack_trace,
+        prior_count=None,
     )
 
     return node_id
@@ -208,6 +209,7 @@ def _process_tool_use(
         source_node_ids=source_node_ids,
         api_type=api_type,
         stack_trace=cache_output.stack_trace,
+        prior_count=None,
     )
 
     # Store tool input for future matching (content might appear in later calls)
@@ -247,6 +249,7 @@ def _process_text_block(block, run_id: str, api_type: str, stack_trace: str, mod
         source_node_ids=source_node_ids,
         api_type=api_type,
         stack_trace=cache_output.stack_trace,
+        prior_count=None,
     )
 
     # Store text for future matching

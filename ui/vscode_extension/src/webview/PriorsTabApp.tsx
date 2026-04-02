@@ -26,6 +26,7 @@ export const PriorsTabApp: React.FC = () => {
     id: string; content: string;
   } | null>(null);
   const pendingAppliedResolvers = useRef<Map<string, (runs: any[]) => void>>(new Map());
+  const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Track expanded folders so we can re-fetch them on priors_refresh
   const expandedFoldersRef = useRef<Set<string>>(new Set(['']));
@@ -52,12 +53,17 @@ export const PriorsTabApp: React.FC = () => {
 
       switch (message.type) {
         case 'folder_ls_result':
+          if (errorTimeoutRef.current) {
+            clearTimeout(errorTimeoutRef.current);
+            errorTimeoutRef.current = null;
+          }
           setFolderResult({
             path: message.path ?? '',
             folders: message.folders || [],
             priors: message.priors || [],
             priorCount: message.prior_count,
           });
+          setError(null);
           setServerUnavailable(false);
           break;
         case 'priors_refresh':
@@ -88,20 +94,36 @@ export const PriorsTabApp: React.FC = () => {
           setIsValidating(false);
           const errorMsg = message.error || 'An unknown error occurred';
           const normalizedError = errorMsg.toLowerCase();
-          if (
+          const isConnectivityError =
             normalizedError.includes('connect')
             || normalizedError.includes('connection failed')
-            || normalizedError.includes('configured')
+            || normalizedError.includes('python server not configured')
             || normalizedError.includes('refused')
             || normalizedError.includes('timeout')
-            || normalizedError.includes('unavailable')
+            || normalizedError.includes('unavailable');
+          const isScopeError =
+            normalizedError.includes('no project configured')
+            || normalizedError.includes('no user configured');
+
+          if (errorTimeoutRef.current) {
+            clearTimeout(errorTimeoutRef.current);
+            errorTimeoutRef.current = null;
+          }
+
+          if (
+            isConnectivityError
           ) {
             setServerUnavailable(true);
+            setError(null);
           } else {
             setServerUnavailable(false);
             setError(errorMsg);
-            // Auto-clear error after 5 seconds
-            setTimeout(() => setError(null), 5000);
+            if (!isScopeError) {
+              errorTimeoutRef.current = setTimeout(() => {
+                setError(null);
+                errorTimeoutRef.current = null;
+              }, 5000);
+            }
           }
           break;
         case 'prior_created':
@@ -144,6 +166,10 @@ export const PriorsTabApp: React.FC = () => {
 
     return () => {
       window.removeEventListener('message', handleMessage);
+      if (errorTimeoutRef.current) {
+        clearTimeout(errorTimeoutRef.current);
+        errorTimeoutRef.current = null;
+      }
     };
   }, [refreshExpandedFolders]);
 
@@ -195,6 +221,7 @@ export const PriorsTabApp: React.FC = () => {
         isValidating={isValidating}
         onClearValidation={() => setValidationResult(null)}
         serverUnavailable={serverUnavailable}
+        loadError={error}
         folderResult={folderResult}
         priorContentUpdate={priorContentUpdate}
         onFetchFolder={fetchFolder}

@@ -52,6 +52,8 @@ class CacheOutput:
         input_hash: Hash of the input for efficient cache lookups
         run_id: The run ID associated with this cache operation
         stack_trace: Python stack trace at the point of the LLM call
+        prompt_suffix_json: Serialized unmatched prompt-bearing suffix stored on
+            the LLM call for priors observability
     """
 
     input_dict: dict
@@ -61,6 +63,9 @@ class CacheOutput:
     input_hash: str
     run_id: str
     stack_trace: Optional[str] = None
+    node_kind: Optional[str] = None
+    prompt_suffix_json: str = "[]"
+    prior_result: Any = None
 
 
 class DatabaseManager:
@@ -725,19 +730,32 @@ class DatabaseManager:
         file_paths = [self.get_file_path(attachment_id) for attachment_id in attachment_ids]
         return [f for f in file_paths if f is not None]
 
-    def get_in_out(self, input_dict: dict, api_type: str) -> CacheOutput:
+    def get_in_out(self, input_dict: dict, api_type: str, *, prepare_runtime_priors: bool = False) -> CacheOutput:
         """Get input/output for LLM call, handling caching and overwrites."""
         from sovara.runner.context_manager import get_run_id
         from sovara.common.utils import hash_input, set_seed
-        from sovara.runner.monkey_patching.patching_utils import capture_stack_trace
+        from sovara.runner.monkey_patching.patching_utils import capture_stack_trace, get_node_kind
 
         # Capture stack trace early (before any internal calls pollute it)
         stack_trace = capture_stack_trace()
-
-        input_pickle, _ = func_kwargs_to_json_str(input_dict, api_type)
-        input_hash = hash_input(input_pickle)
-
         run_id = get_run_id()
+        node_kind = get_node_kind(input_dict, api_type)
+        prior_result = None
+
+        working_input_dict = input_dict
+        if prepare_runtime_priors and node_kind == "llm" and api_type in {
+            "httpx.Client.send",
+            "httpx.AsyncClient.send",
+            "requests.Session.send",
+            "genai.BaseApiClient.async_request",
+        }:
+            from sovara.runner.priors import prepare_llm_call_for_priors
+
+            prior_result = prepare_llm_call_for_priors(input_dict, api_type)
+            working_input_dict = prior_result.executed_input_dict
+
+        input_pickle, _ = func_kwargs_to_json_str(working_input_dict, api_type)
+        input_hash = hash_input(input_pickle)
 
         occurrence = self._next_occurrence(run_id, input_hash)
         row = self.backend.get_llm_call_by_run_and_hash_query(run_id, input_hash, offset=occurrence)
@@ -747,13 +765,16 @@ class DatabaseManager:
                 f"Cache miss: run_id {str(run_id)[:4]}, input_hash {str(input_hash)[:4]}"
             )
             return CacheOutput(
-                input_dict=input_dict,
+                input_dict=working_input_dict,
                 output=None,
                 node_uuid=None,
                 input_pickle=input_pickle,
                 input_hash=input_hash,
                 run_id=run_id,
                 stack_trace=stack_trace,
+                node_kind=node_kind,
+                prompt_suffix_json=prior_result.prompt_suffix_json if prior_result is not None else "[]",
+                prior_result=prior_result,
             )
 
         node_uuid = row["node_uuid"]
@@ -763,7 +784,7 @@ class DatabaseManager:
             logger.debug(
                 f"Cache hit (input overwritten): run_id {str(run_id)[:4]}, input_hash {str(input_hash)[:4]}"
             )
-            input_dict = json_str_to_original_inp_dict(row["input_overwrite"], input_dict, api_type)
+            working_input_dict = json_str_to_original_inp_dict(row["input_overwrite"], working_input_dict, api_type)
 
         # TODO We can't distinguish between output and output_overwrite
         if row["output"] is not None:
@@ -774,13 +795,16 @@ class DatabaseManager:
 
         set_seed(node_uuid)
         return CacheOutput(
-            input_dict=input_dict,
+            input_dict=working_input_dict,
             output=output,
             node_uuid=node_uuid,
             input_pickle=input_pickle,
             input_hash=input_hash,
             run_id=run_id,
             stack_trace=stack_trace,
+            node_kind=node_kind,
+            prompt_suffix_json=prior_result.prompt_suffix_json if prior_result is not None else "[]",
+            prior_result=prior_result,
         )
 
     def cache_output(
@@ -807,6 +831,8 @@ class DatabaseManager:
                 api_type,
                 output_json_str,
                 cache_result.stack_trace,
+                cache_result.node_kind,
+                cache_result.prompt_suffix_json,
             )
             self.checkpoint_active_runtime(cache_result.run_id)
         else:
@@ -981,6 +1007,77 @@ class DatabaseManager:
 
     def copy_llm_calls(self, old_run_id, new_run_id):
         self.backend.copy_llm_calls_query(old_run_id, new_run_id)
+
+    def copy_prior_retrievals(self, old_run_id, new_run_id):
+        self.backend.copy_prior_retrievals_query(old_run_id, new_run_id)
+
+    @staticmethod
+    def _decode_json_column(raw_value: Any, fallback: Any):
+        if raw_value in (None, ""):
+            return fallback
+        try:
+            return json.loads(raw_value)
+        except (TypeError, json.JSONDecodeError):
+            return fallback
+
+    def _normalize_prior_retrieval_row(self, row):
+        if row is None:
+            return None
+        return {
+            "run_id": row["run_id"],
+            "node_uuid": row["node_uuid"],
+            "retrieval_context": row["retrieval_context"] or "",
+            "inherited_prior_ids": self._decode_json_column(row["inherited_prior_ids_json"], []),
+            "applied_priors": self._decode_json_column(row["applied_priors_json"], []),
+            "rendered_priors_block": row["rendered_priors_block"] or "",
+            "injection_anchor": self._decode_json_column(row["injection_anchor_json"], None),
+            "model": row["model"],
+            "timeout_ms": row["timeout_ms"],
+            "latency_ms": row["latency_ms"],
+            "warning_message": row["warning_message"],
+            "error_message": row["error_message"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def get_prior_retrieval(self, run_id, node_uuid):
+        row = self.backend.get_prior_retrieval_query(run_id, node_uuid)
+        return self._normalize_prior_retrieval_row(row)
+
+    def get_prior_retrievals_for_run(self, run_id):
+        rows = self.backend.get_prior_retrievals_for_run_query(run_id)
+        return [self._normalize_prior_retrieval_row(row) for row in rows]
+
+    def upsert_prior_retrieval(
+        self,
+        run_id: str,
+        node_uuid: str,
+        *,
+        retrieval_context: str = "",
+        inherited_prior_ids: list[str] | None = None,
+        applied_priors: list[dict[str, Any]] | None = None,
+        rendered_priors_block: str = "",
+        injection_anchor: dict[str, Any] | None = None,
+        model: str | None = None,
+        timeout_ms: int | None = None,
+        latency_ms: int | None = None,
+        warning_message: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        self.backend.upsert_prior_retrieval_query(
+            run_id,
+            node_uuid,
+            retrieval_context,
+            json.dumps(inherited_prior_ids or []),
+            json.dumps(applied_priors or []),
+            rendered_priors_block,
+            json.dumps(injection_anchor) if injection_anchor is not None else None,
+            model,
+            timeout_ms,
+            latency_ms,
+            warning_message,
+            error_message,
+        )
 
     # ============================================================
     # Priors Applied operations

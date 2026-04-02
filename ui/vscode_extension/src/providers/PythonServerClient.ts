@@ -75,6 +75,22 @@ export class PythonServerClient {
         return resp.json();
     }
 
+    public async httpPut(path: string, body: any = {}): Promise<any> {
+        const url = `${this.baseUrl}${path}`;
+        const resp = await fetch(url, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        return resp.json();
+    }
+
+    public async httpDelete(path: string): Promise<any> {
+        const url = `${this.baseUrl}${path}`;
+        const resp = await fetch(url, { method: 'DELETE' });
+        return resp.json();
+    }
+
     private connect() {
         console.log('[Sovara] connect() called');
         // Clean up existing client

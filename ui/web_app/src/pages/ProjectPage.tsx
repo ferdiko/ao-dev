@@ -344,7 +344,8 @@ export function ProjectPage() {
       <Breadcrumb
         items={[
           { label: "Projects", to: "/" },
-          { label: projectName },
+          { label: projectName, to: `/project/${projectId}` },
+          { label: "Runs" },
         ]}
       />
 

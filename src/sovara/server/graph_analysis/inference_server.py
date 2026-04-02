@@ -19,8 +19,10 @@ import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Optional
+from urllib.error import URLError
+from urllib.request import urlopen
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from sovara.server.graph_models import RunGraph
 from sovara.server.graph_analysis.trace_chat.logger import (
@@ -108,7 +110,7 @@ def _build_trace_from_graph(graph_data: dict):
             to_show_in,
             to_show_out,
             index=len(records),
-            name=node.name or "",
+            name=node.raw_node_name or node.label or "",
             node_uuid=node.uuid,
         ))
 
@@ -256,9 +258,11 @@ def prefetch(run_id: str):
 
 
 @app.post("/chat/{run_id}")
-async def chat(run_id: str, req: ChatRequest):
+async def chat(run_id: str, req: ChatRequest, request: Request):
+    trace_chat_id = request.headers.get("x-sovara-trace-chat-id", "-")
     logger.info(
-        "Trace chat request: run_id=%s history_messages=%d message=%s",
+        "Trace chat request: id=%s run_id=%s history_messages=%d message=%s",
+        trace_chat_id,
         run_id,
         len(req.history),
         _log_preview(req.message),
@@ -288,7 +292,8 @@ async def chat(run_id: str, req: ChatRequest):
         raise
 
     logger.info(
-        "Trace chat response ready: run_id=%s answer_chars=%d edits_applied=%s",
+        "Trace chat response ready: id=%s run_id=%s answer_chars=%d edits_applied=%s",
+        trace_chat_id,
         run_id,
         len(result.get("answer", "")),
         result.get("edits_applied", False),
@@ -303,10 +308,23 @@ async def chat(run_id: str, req: ChatRequest):
 _process: Optional[subprocess.Popen] = None
 
 
+def _is_inference_server_running(host: str, port: int, timeout: float = 1.0) -> bool:
+    try:
+        with urlopen(f"http://{host}:{port}/health", timeout=timeout) as response:
+            return response.status == 200
+    except (OSError, URLError):
+        return False
+
+
 def start() -> None:
     """Spawn the inference server as a child process."""
     global _process
     from sovara.common.constants import HOST, INFERENCE_PORT, INFERENCE_SERVER_LOG
+
+    if _process is not None and _process.poll() is None:
+        return
+    if _is_inference_server_running(HOST, INFERENCE_PORT):
+        return
 
     os.makedirs(os.path.dirname(INFERENCE_SERVER_LOG), exist_ok=True)
     log_f = open(INFERENCE_SERVER_LOG, "a")

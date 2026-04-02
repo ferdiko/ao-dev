@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   chatWithTrace,
   clearTraceChatHistory,
+  deletePriorItems,
+  fetchPrior,
   fetchProjectRuns,
   fetchTraceChatHistory,
   post,
@@ -193,6 +195,91 @@ describe("api", () => {
       "/_sovara/health",
       "/ui/chat/run-1",
     ]);
+  });
+
+  it("retries normal GET calls after backend startup when fetch fails", async () => {
+    fetchMock
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 202,
+        json: async () => ({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "p1", name: "Retry", summary: "", content: "" }),
+      });
+
+    const result = await fetchPrior("project-1", "p1");
+
+    expect(result.id).toBe("p1");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/ui/priors/p1?project_id=project-1",
+      "/_sovara/health",
+      "/_sovara/start-server",
+      "/_sovara/health",
+      "/ui/priors/p1?project_id=project-1",
+    ]);
+  });
+
+  it("retries normal GET calls after backend startup when proxy returns 503", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: "backend unavailable" }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 202,
+        json: async () => ({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "p1", name: "Retry", summary: "", content: "" }),
+      });
+
+    const result = await fetchPrior("project-1", "p1");
+
+    expect(result.id).toBe("p1");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/ui/priors/p1?project_id=project-1",
+      "/_sovara/health",
+      "/_sovara/start-server",
+      "/_sovara/health",
+      "/ui/priors/p1?project_id=project-1",
+    ]);
+  });
+
+  it("surfaces plain-text proxy errors for batch prior mutations", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 423,
+      json: async () => {
+        throw new Error("not json");
+      },
+      text: async () => "Unable to reach priors backend at http://127.0.0.1:5960",
+    });
+
+    await expect(deletePriorItems("project-1", [{ kind: "prior", id: "p1" }])).rejects.toThrow(
+      "Unable to reach priors backend at http://127.0.0.1:5960",
+    );
   });
 
   it("fetches persisted trace chat history for a run", async () => {

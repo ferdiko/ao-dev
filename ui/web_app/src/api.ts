@@ -5,6 +5,7 @@
  * Types use the same field names as the backend JSON responses.
  */
 
+import type { PriorRetrievalRecord } from "@sovara/shared-components/types";
 import type { Tag } from "./tags";
 
 // ============================================================
@@ -70,10 +71,40 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+async function readErrorMessage(resp: Response, fallback: string): Promise<string> {
+  const jsonResponse = typeof resp.clone === "function" ? resp.clone() : resp;
+  try {
+    const data = await jsonResponse.json();
+    if (data && typeof data === "object") {
+      const detail = "detail" in data ? data.detail : null;
+      if (typeof detail === "string" && detail.trim()) {
+        return detail;
+      }
+      const error = "error" in data ? data.error : null;
+      if (typeof error === "string" && error.trim()) {
+        return error;
+      }
+    }
+  } catch {
+    // Fall through to plain text parsing below.
+  }
+
+  try {
+    const textResponse = typeof resp.clone === "function" ? resp.clone() : resp;
+    const text = await textResponse.text();
+    if (text.trim()) {
+      return text.trim();
+    }
+  } catch {
+    // Fall back to the generic status message below.
+  }
+
+  return fallback;
+}
+
 async function parseJsonResponse<T>(resp: Response, method: string, path: string): Promise<T> {
   if (!resp.ok) {
-    const data = await resp.json().catch(() => null);
-    throw new Error(data?.detail ?? data?.error ?? `${method} ${path} failed: ${resp.status}`);
+    throw new Error(await readErrorMessage(resp, `${method} ${path} failed: ${resp.status}`));
   }
   return resp.json();
 }
@@ -154,8 +185,35 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
+async function put<T>(path: string, body: unknown): Promise<T> {
+  return requestJson<T>(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function del<T>(path: string): Promise<T> {
+  return requestJson<T>(path, {
+    method: "DELETE",
+  });
+}
+
 export { post };
 
+function withQuery(path: string, params: Record<string, string | number | boolean | null | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") continue;
+    search.set(key, String(value));
+  }
+  const query = search.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+export async function keepBackendAlive(): Promise<void> {
+  await requestJson("/health", { cache: "no-store" });
+}
 // ============================================================
 // User endpoints
 // ============================================================
@@ -281,6 +339,165 @@ export async function fetchProject(
   projectId: string
 ): Promise<{ project_id: string; name: string; description: string }> {
   return get(`/ui/projects/${projectId}`);
+}
+
+// ============================================================
+// Priors endpoints
+// ============================================================
+
+export interface PriorRecord {
+  id: string;
+  name: string;
+  summary: string;
+  content?: string;
+  path?: string;
+  prior_status: "draft" | "active";
+  validationSeverity?: "info" | "warning" | "error";
+}
+
+export interface PriorValidationDetail {
+  feedback: string;
+  severity: "info" | "warning" | "error";
+  conflicting_prior_ids: string[];
+}
+
+export interface PriorMutationResponse extends PriorRecord {
+  status: "created" | "updated" | "deleted" | "submitted" | "rejected";
+  reason?: string;
+  hint?: string;
+  conflicting_prior_ids?: string[];
+  validation?: PriorValidationDetail;
+}
+
+export interface FolderLsResponse {
+  folders: Array<{ path: string; prior_count: number }>;
+  priors: PriorRecord[];
+  prior_count: number;
+}
+
+export interface FolderMutationResponse {
+  status: "created" | "updated" | "deleted";
+  path: string;
+  new_path?: string;
+}
+
+export interface PriorItemRef {
+  kind: "prior" | "folder";
+  id?: string;
+  path?: string;
+}
+
+export interface PriorBatchMutationResponse {
+  status: "copied" | "moved" | "deleted";
+  items?: Array<{
+    kind: "prior" | "folder";
+    id?: string;
+    path?: string;
+    name?: string;
+  }>;
+  count: number;
+}
+
+export interface PriorRunsResponse {
+  type: string;
+  prior_id: string;
+  records: Array<{ runId: string; nodeUuid?: string; name: string }>;
+}
+
+export async function fetchPriorsFolder(projectId: string, path = ""): Promise<FolderLsResponse> {
+  return post(withQuery("/ui/priors/folders/ls", { project_id: projectId }), { path });
+}
+
+export async function createPriorFolder(projectId: string, path: string): Promise<FolderMutationResponse> {
+  return post(withQuery("/ui/priors/folders", { project_id: projectId }), { path });
+}
+
+export async function movePriorFolder(
+  projectId: string,
+  path: string,
+  newPath: string,
+): Promise<FolderMutationResponse> {
+  return put(withQuery("/ui/priors/folders", { project_id: projectId }), { path, new_path: newPath });
+}
+
+export async function deletePriorFolder(projectId: string, path: string): Promise<FolderMutationResponse> {
+  return post(withQuery("/ui/priors/folders/delete", { project_id: projectId }), { path });
+}
+
+export async function copyPriorItems(
+  projectId: string,
+  items: PriorItemRef[],
+  destinationPath: string,
+  asDraft = false,
+): Promise<PriorBatchMutationResponse> {
+  return post(withQuery("/ui/priors/items/copy", { project_id: projectId }), {
+    items,
+    destination_path: destinationPath,
+    as_draft: asDraft,
+  });
+}
+
+export async function movePriorItems(
+  projectId: string,
+  items: PriorItemRef[],
+  destinationPath: string,
+): Promise<PriorBatchMutationResponse> {
+  return post(withQuery("/ui/priors/items/move", { project_id: projectId }), {
+    items,
+    destination_path: destinationPath,
+  });
+}
+
+export async function deletePriorItems(
+  projectId: string,
+  items: PriorItemRef[],
+): Promise<PriorBatchMutationResponse> {
+  return post(withQuery("/ui/priors/items/delete", { project_id: projectId }), { items });
+}
+
+export async function fetchPrior(projectId: string, priorId: string): Promise<PriorRecord> {
+  return get(withQuery(`/ui/priors/${priorId}`, { project_id: projectId }));
+}
+
+export async function createPrior(
+  projectId: string,
+  body: { name: string; summary?: string; content: string; path?: string },
+  force = false,
+): Promise<PriorMutationResponse> {
+  return post(withQuery("/ui/priors", { project_id: projectId, force }), body);
+}
+
+export async function createDraftPrior(
+  projectId: string,
+  body: { name: string; content: string; path?: string },
+): Promise<PriorMutationResponse> {
+  return post(withQuery("/ui/priors/drafts", { project_id: projectId }), body);
+}
+
+export async function updatePrior(
+  projectId: string,
+  priorId: string,
+  body: Partial<{ name: string; summary: string; content: string; path?: string }>,
+  force = false,
+): Promise<PriorMutationResponse> {
+  return put(withQuery(`/ui/priors/${priorId}`, { project_id: projectId, force }), body);
+}
+
+export async function submitPrior(
+  projectId: string,
+  priorId: string,
+  body: Partial<{ name: string; content: string; path?: string }>,
+  force = false,
+): Promise<PriorMutationResponse> {
+  return post(withQuery(`/ui/priors/${priorId}/submit`, { project_id: projectId, force }), body);
+}
+
+export async function deletePrior(projectId: string, priorId: string): Promise<{ status: string; id: string }> {
+  return del(withQuery(`/ui/priors/${priorId}`, { project_id: projectId }));
+}
+
+export async function fetchRunsForPrior(priorId: string): Promise<PriorRunsResponse> {
+  return get(`/ui/runs-for-prior/${priorId}`);
 }
 
 // ============================================================
@@ -431,7 +648,9 @@ export interface BackendGraphNode {
   label: string;
   border_color?: string;
   stack_trace?: string;
-  name?: string;
+  raw_node_name?: string;
+  node_kind?: string | null;
+  prior_count?: number | null;
   attachments?: unknown[];
 }
 
@@ -457,6 +676,13 @@ export async function fetchGraph(runId: string) {
   return get<GraphResponse>(
     `/ui/graph/${runId}`
   );
+}
+
+export async function fetchPriorRetrievals(runId: string): Promise<Record<string, PriorRetrievalRecord>> {
+  const response = await get<{ type: string; run_id: string; records: PriorRetrievalRecord[] }>(
+    `/ui/run/${runId}/prior-retrievals`,
+  );
+  return Object.fromEntries((response.records || []).map((record) => [record.node_uuid, record]));
 }
 
 // ============================================================

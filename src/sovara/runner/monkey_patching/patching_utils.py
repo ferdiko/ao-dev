@@ -67,31 +67,18 @@ def _extract_name_from_url(input_dict: Dict[str, Any], api_type: str) -> Optiona
     Returns None if extraction fails.
     """
     try:
-        # Get URL based on API type
-        if api_type == "requests.Session.send":
-            url = str(input_dict["request"].url)
-            path = input_dict["request"].path_url
-        elif api_type in ["httpx.Client.send", "httpx.AsyncClient.send"]:
-            url = str(input_dict["request"].url)
-            path = input_dict["request"].url.path
-        elif api_type == "genai.BaseApiClient.async_request":
-            path = input_dict.get("path", "")
-            url = path  # genai doesn't have full URL
-        elif api_type == "MCP.ClientSession.send_request":
-            # MCP doesn't have URL-based fallback traditionally, but we can try
-            return None
-        else:
+        url, path = _extract_request_url_and_path(input_dict, api_type)
+        if not url:
             return None
 
         # Try regex pattern for /models/xxx:<path> or models/xxx:<path>
-        match = re.search(r"/?models/([^/:]+)", path)
+        match = re.search(r"/?models/([^/:]+)", path or "")
         if match:
             return match.group(1)
 
-        # Try known URL patterns (tools like Serper, Brave, etc.)
-        for pattern, name in COMPILED_URL_PATTERN_TO_NODE_NAME:
-            if pattern.search(url):
-                return name
+        tool_name = get_tool_name_for_url(url)
+        if tool_name:
+            return tool_name
 
         # Last resort: return the path itself
         if url:
@@ -195,12 +182,55 @@ def is_whitelisted_endpoint(url: str, path: str) -> bool:
     return False
 
 
-def get_node_name_for_url(url: str) -> Optional[str]:
-    """Return the display name for a URL if it matches any pattern, else None."""
+def get_tool_name_for_url(url: str) -> Optional[str]:
+    """Return the display name for a known tool URL if it matches any pattern, else None."""
     for pattern, name in COMPILED_URL_PATTERN_TO_NODE_NAME:
         if pattern.search(url):
             return name
     return None
+
+
+def _extract_request_url_and_path(input_dict: Dict[str, Any], api_type: str) -> tuple[str | None, str | None]:
+    """Extract request URL/path for API types that expose transport-level metadata."""
+    try:
+        if api_type == "requests.Session.send":
+            request = input_dict["request"]
+            return str(request.url), request.path_url
+        if api_type in ["httpx.Client.send", "httpx.AsyncClient.send"]:
+            request = input_dict["request"]
+            return str(request.url), request.url.path
+        if api_type == "genai.BaseApiClient.async_request":
+            path = input_dict.get("path", "")
+            return path, path
+    except (AttributeError, KeyError, TypeError):
+        return None, None
+
+    return None, None
+
+
+def _is_embedding_path(path: str | None) -> bool:
+    """Embeddings are tracked as tool nodes because priors should never target them."""
+    if not path:
+        return False
+    return "/embed" in path or "/embeddings" in path
+
+
+def get_node_kind(input_dict: Dict[str, Any], api_type: str) -> str:
+    """Classify a captured node as llm, mcp, or tool."""
+    if api_type == "MCP.ClientSession.send_request":
+        return "mcp"
+
+    if api_type == "claude_agent_sdk.parse_message":
+        return "tool" if input_dict.get("tool_name") else "llm"
+
+    url, path = _extract_request_url_and_path(input_dict, api_type)
+    if _is_embedding_path(path):
+        return "tool"
+
+    if url and get_tool_name_for_url(url):
+        return "tool"
+
+    return "llm"
 
 
 # ===========================================================
@@ -311,13 +341,15 @@ def get_input_dict(func, *args, **kwargs):
 
 
 def send_graph_node_and_edges(
-    node_id, input_dict, output_obj, source_node_ids, api_type, stack_trace=None
+    node_id,
+    input_dict,
+    output_obj,
+    source_node_ids,
+    api_type,
+    stack_trace,
+    prior_count,
 ):
     """Send graph node and edge updates to the server."""
-    # Use provided stack_trace or capture a new one
-    if stack_trace is None:
-        stack_trace = capture_stack_trace()
-
     # Import here to avoid circular import
     from sovara.runner.monkey_patching.api_parser import func_kwargs_to_json_str, api_obj_to_json_str
 
@@ -326,8 +358,9 @@ def send_graph_node_and_edges(
     output_full_str = api_obj_to_json_str(output_obj, api_type)
     input_string = json.dumps(json.loads(input_full_str)["to_show"])
     output_string = json.dumps(json.loads(output_full_str)["to_show"])
-    name = get_node_name(input_dict, api_type)
+    raw_node_name = get_node_name(input_dict, api_type)
     label = get_node_label(input_dict, api_type)
+    node_kind = get_node_kind(input_dict, api_type)
     run_id = get_run_id()
 
     # Store input for this node (needed for containment checks)
@@ -365,7 +398,9 @@ def send_graph_node_and_edges(
             "border_color": CERTAINTY_UNKNOWN,
             "label": label,
             "stack_trace": stack_trace,
-            "name": name,
+            "node_kind": node_kind,
+            "prior_count": prior_count,
+            "raw_node_name": raw_node_name,
             "attachments": attachments,
         },
         "incoming_edges": source_node_ids,

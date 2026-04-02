@@ -231,6 +231,7 @@ def build_probe_response(
                 "node_uuid": current_node_uuid,
                 "run_id": resolved_run_id,
                 "api_type": llm_call["api_type"],
+                "node_kind": llm_call.get("node_kind"),
                 "label": llm_call["label"],
                 "timestamp": format_timestamp(llm_call["timestamp"]),
                 "parent_uuids": parent_ids.get(current_node_uuid, []),
@@ -402,6 +403,7 @@ def prepare_edit_rerun(
         DB.update_graph_topology(new_run_id, RunGraph.from_json_string(run["graph_topology"]))
 
     DB.copy_llm_calls(resolved_source_run_id, new_run_id)
+    DB.copy_prior_retrievals(resolved_source_run_id, new_run_id)
 
     new_value = build_key_edit_value(new_run_id, resolved_node_uuid, field, key, value)
     message = {"run_id": new_run_id, "node_uuid": resolved_node_uuid, "value": new_value}

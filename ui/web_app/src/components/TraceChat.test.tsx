@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -155,4 +156,33 @@ describe("TraceChat", () => {
       await screen.findByText("Yes, it finished in the background.", {}, { timeout: 3000 }),
     ).toBeInTheDocument();
   }, 10000);
+
+  it("resolves chat normally under StrictMode", async () => {
+    vi.mocked(fetchTraceChatHistory).mockResolvedValue([]);
+    vi.mocked(chatWithTrace).mockResolvedValue({
+      answer: "The trace completed successfully.",
+      edits_applied: false,
+    });
+    vi.mocked(clearTraceChatHistory).mockResolvedValue([]);
+    vi.mocked(restartRun).mockResolvedValue();
+
+    render(
+      <StrictMode>
+        <TraceChat runId="run-1" />
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(fetchTraceChatHistory).toHaveBeenCalledWith("run-1");
+    });
+
+    const input = screen.getByPlaceholderText("Ask about this trace…");
+    fireEvent.change(input, { target: { value: "What happened?" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    expect(await screen.findByText("The trace completed successfully.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
+    });
+  });
 });

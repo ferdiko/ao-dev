@@ -1,5 +1,6 @@
 import json
 import re
+from copy import deepcopy
 from typing import Any, Dict, List, Tuple
 from flatten_json import flatten, unflatten_list
 from flatten_dict import unflatten, flatten as flatten_keep_list
@@ -72,6 +73,30 @@ def unflatten_to_show(inp):
     else:
         unflattened_dict = inp
     return unflattened_dict
+
+
+def flatten_complete_to_show(to_show: dict[str, Any] | list[Any] | str | None) -> dict[str, Any]:
+    """Fully flatten a stored ``to_show`` payload, including list indices."""
+    if to_show is None:
+        return {}
+    if isinstance(to_show, dict):
+        nested = unflatten_to_show(to_show)
+        return flatten(nested, ".")
+    if isinstance(to_show, list):
+        return flatten(to_show, ".")
+    return {"value": to_show}
+
+
+def restore_complete_to_show_from_flattened(
+    flattened_to_show: dict[str, Any],
+) -> dict[str, Any] | list[Any] | str | None:
+    """Rebuild a stored ``to_show`` payload from a fully flattened mapping."""
+    if not flattened_to_show:
+        return {}
+    if set(flattened_to_show.keys()) == {"value"}:
+        return flattened_to_show["value"]
+    nested = unflatten_list(flattened_to_show, ".")
+    return flatten_to_show(nested)
 
 
 def should_exclude_key(key: str) -> bool:
@@ -189,6 +214,32 @@ def json_str_to_original_inp_dict(json_str: str, input_dict: dict, api_type: str
         return json_str_to_original_inp_dict_claude_sdk(merged_json_str, input_dict)
     else:
         return merged_dict
+
+
+def replace_to_show_in_input_dict(
+    input_dict: dict,
+    api_type: str,
+    to_show: dict[str, Any] | list[Any] | str | None,
+) -> dict:
+    """
+    Return a cloned input dict whose display-facing ``to_show`` payload has been replaced.
+
+    The underlying API-specific reconstruction helpers mutate the passed input object
+    in place, so this helper clones ``input_dict`` first and then rebuilds the
+    transport request from the supplied ``to_show`` structure.
+    """
+    try:
+        cloned_input_dict = deepcopy(input_dict)
+    except Exception:
+        import dill
+
+        cloned_input_dict = dill.loads(dill.dumps(input_dict))
+
+    complete_json_str, _ = func_kwargs_to_json_str(cloned_input_dict, api_type)
+    complete_input = json.loads(complete_json_str)
+    merged_raw = merge_filtered_into_raw(complete_input["raw"], to_show)
+    wrapped = json.dumps({"raw": merged_raw, "to_show": to_show}, sort_keys=True)
+    return json_str_to_original_inp_dict(wrapped, cloned_input_dict, api_type)
 
 
 def api_obj_to_json_str(response_obj: Any, api_type: str) -> str:

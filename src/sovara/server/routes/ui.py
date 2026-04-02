@@ -1,6 +1,8 @@
 """UI REST endpoints -- called by VS Code extension and web app."""
 
+import asyncio
 import os
+import time
 import uuid
 from typing import Literal
 from fastapi import APIRouter, Depends, Query
@@ -12,7 +14,9 @@ from sovara.common.custom_metrics import MetricFilter
 from sovara.server.app import get_state
 from sovara.server.state import ServerState, logger
 from sovara.server.database_manager import DB, BadRequestError, ResourceNotFoundError
+from sovara.server.priors_client import PriorsBackendClient, PriorsBackendError
 from sovara.server.graph_models import RunGraph
+from sovara.server.prior_display import attach_ui_prior_counts, build_ui_prior_records
 from sovara.common.user import read_user_id, write_user_id
 from sovara.common.project import find_project_root, read_project_id, write_project_id, delete_project_configs
 from sovara.server.handlers.ui_handlers import (
@@ -45,7 +49,6 @@ TAG_COLORS = {
     "#1b8a72",
 }
 
-
 def _request_error_response(exc: Exception) -> JSONResponse:
     status_code = 404 if isinstance(exc, ResourceNotFoundError) else 400
     return JSONResponse(status_code=status_code, content={"error": str(exc)})
@@ -74,6 +77,58 @@ def _notify_user_state_changed(state: ServerState) -> None:
     state.notify_user_changed()
     state.notify_project_list_changed()
     state.notify_run_list_changed()
+
+
+def _resolve_active_priors_scope(project_id: str | None = None) -> tuple[str, str]:
+    user_id = read_user_id()
+    if not user_id:
+        raise ResourceNotFoundError("No user configured.")
+
+    if project_id:
+        project = DB.get_project(project_id)
+        if not project:
+            raise ResourceNotFoundError(f"Project '{project_id}' not found.")
+        return user_id, project_id
+
+    workspace_root = os.environ.get("SOVARA_WORKSPACE_ROOT") or os.getcwd()
+    project_root = find_project_root(workspace_root)
+    if project_root:
+        return user_id, read_project_id(project_root)
+
+    result = DB.find_project_for_location(user_id, workspace_root)
+    if result:
+        project_id, _project_location = result
+        return user_id, project_id
+
+    raise ResourceNotFoundError(f"No project configured for workspace '{workspace_root}'.")
+
+
+def _get_priors_backend_client(project_id: str | None = None) -> PriorsBackendClient:
+    user_id, project_id = _resolve_active_priors_scope(project_id=project_id)
+    return PriorsBackendClient(user_id=user_id, project_id=project_id)
+
+
+def _priors_backend_error_response(exc: PriorsBackendError) -> JSONResponse:
+    status_code = exc.status_code if 400 <= exc.status_code < 600 else 502
+    logger.error("Priors backend proxy error (%s): %s", status_code, exc)
+    return JSONResponse(status_code=status_code, content={"error": str(exc)})
+
+
+def _attach_prior_metadata_to_graph(run_id: str, graph: RunGraph) -> RunGraph:
+    prior_rows = DB.get_prior_retrievals_for_run(run_id)
+    if not prior_rows:
+        return graph
+    return attach_ui_prior_counts(graph, prior_rows)
+
+
+def _get_ui_prior_records(run_id: str, graph: RunGraph | None = None) -> dict[str, dict]:
+    prior_rows = DB.get_prior_retrievals_for_run(run_id)
+    if not prior_rows:
+        return {}
+    if graph is None:
+        row = DB.get_run_metadata(run_id)
+        graph = RunGraph.from_json_string(row["graph_topology"] if row else None)
+    return build_ui_prior_records(graph, prior_rows)
 
 
 # ============================================================
@@ -188,6 +243,73 @@ class PrepareEditRerunRequest(BaseModel):
     key: str
     value: str
     run_name: str | None = None
+
+
+class UiPriorCreateRequest(BaseModel):
+    name: str
+    summary: str | None = None
+    content: str
+    path: str = ""
+    creation_trace_id: str | None = None
+    trace_source: str | None = None
+
+
+class UiPriorUpdateRequest(BaseModel):
+    name: str | None = None
+    summary: str | None = None
+    content: str | None = None
+    path: str | None = None
+
+
+class UiPriorSubmitRequest(BaseModel):
+    name: str | None = None
+    content: str | None = None
+    path: str | None = None
+
+
+class UiFolderLsRequest(BaseModel):
+    path: str = ""
+
+
+class UiFolderCreateRequest(BaseModel):
+    path: str
+
+
+class UiFolderMoveRequest(BaseModel):
+    path: str
+    new_path: str
+
+
+class UiFolderDeleteRequest(BaseModel):
+    path: str
+
+
+class UiPriorItemRef(BaseModel):
+    kind: str
+    id: str | None = None
+    path: str | None = None
+
+
+class UiPriorItemsCopyRequest(BaseModel):
+    items: list[UiPriorItemRef]
+    destination_path: str = ""
+    as_draft: bool = False
+
+
+class UiPriorItemsMoveRequest(BaseModel):
+    items: list[UiPriorItemRef]
+    destination_path: str = ""
+
+
+class UiPriorItemsDeleteRequest(BaseModel):
+    items: list[UiPriorItemRef]
+
+
+class UiPriorRetrieveRequest(BaseModel):
+    context: str
+    base_path: str = ""
+    model: str | None = None
+    ignore_prior_ids: list[str] = []
 
 
 # ============================================================
@@ -604,10 +726,11 @@ def get_project_runs(
 def get_graph(run_id: str, state: ServerState = Depends(get_state)):
     # Check in-memory graph first
     if run_id in state.run_graphs:
+        graph = _attach_prior_metadata_to_graph(run_id, state.run_graphs[run_id])
         return {
             "type": "graph_update",
             "run_id": run_id,
-            "payload": state.run_graphs[run_id].to_dict(),
+            "payload": graph.to_dict(),
             "active_runtime_seconds": state.get_persisted_active_runtime_seconds(run_id),
         }
 
@@ -615,6 +738,7 @@ def get_graph(run_id: str, state: ServerState = Depends(get_state)):
     row = DB.get_graph(run_id)
     if row and row["graph_topology"]:
         graph = RunGraph.from_json_string(row["graph_topology"])
+        graph = _attach_prior_metadata_to_graph(run_id, graph)
         state.run_graphs[run_id] = graph
         return {
             "type": "graph_update",
@@ -710,6 +834,38 @@ def get_run_detail(run_id: str, state: ServerState = Depends(get_state)):
     }
 
 
+@router.get("/run/{run_id}/prior-retrieval/{node_uuid}")
+def get_node_prior_retrieval(run_id: str, node_uuid: str):
+    row = DB.get_llm_call_full(run_id, node_uuid)
+    if not row:
+        return _request_error_response(
+            ResourceNotFoundError(f"Node not found for run_id={run_id}, node_uuid={node_uuid}.")
+        )
+
+    graph_row = DB.get_run_metadata(run_id)
+    graph = RunGraph.from_json_string(graph_row["graph_topology"] if graph_row else None)
+    ui_records = _get_ui_prior_records(run_id, graph=graph)
+
+    return {
+        "type": "prior_retrieval",
+        "run_id": run_id,
+        "node_uuid": node_uuid,
+        "record": ui_records.get(node_uuid) or DB.get_prior_retrieval(run_id, node_uuid),
+    }
+
+
+@router.get("/run/{run_id}/prior-retrievals")
+def get_run_prior_retrievals(run_id: str):
+    row = DB.get_run_metadata(run_id)
+    graph = RunGraph.from_json_string(row["graph_topology"] if row else None)
+    return {
+        "type": "prior_retrievals",
+        "run_id": run_id,
+        "records": list(_get_ui_prior_records(run_id, graph=graph).values())
+        or DB.get_prior_retrievals_for_run(run_id),
+    }
+
+
 @router.get("/priors-applied/{run_id}")
 def get_priors_applied(run_id: str, state: ServerState = Depends(get_state)):
     records = DB.get_priors_applied_for_run(run_id)
@@ -720,6 +876,264 @@ def get_priors_applied(run_id: str, state: ServerState = Depends(get_state)):
 def get_runs_for_prior(prior_id: str, state: ServerState = Depends(get_state)):
     records = DB.get_runs_for_prior(prior_id)
     return {"type": "runs_for_prior", "prior_id": prior_id, "records": records}
+
+
+@router.get("/priors/scope")
+def get_priors_scope(project_id: str | None = Query(default=None)):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        return client.get_scope()
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.get("/priors")
+def list_priors(path: str | None = None, project_id: str | None = Query(default=None)):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        return client.list_priors(path=path)
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.get("/priors/{prior_id}")
+def get_prior(prior_id: str, project_id: str | None = Query(default=None)):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        return client.get_prior(prior_id)
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.post("/priors")
+def create_prior(
+    req: UiPriorCreateRequest,
+    force: bool = Query(default=False),
+    project_id: str | None = Query(default=None),
+    state: ServerState = Depends(get_state),
+):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        result = client.create_prior(req.model_dump(), force=force)
+        if result.get("status") in {"created", "updated", "deleted"}:
+            state.schedule_broadcast({"type": "priors_refresh"})
+        return result
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.post("/priors/drafts")
+def create_prior_draft(
+    req: UiPriorCreateRequest,
+    project_id: str | None = Query(default=None),
+    state: ServerState = Depends(get_state),
+):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        result = client.create_draft_prior(req.model_dump())
+        if result.get("status") in {"created", "updated", "deleted", "submitted"}:
+            state.schedule_broadcast({"type": "priors_refresh"})
+        return result
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.put("/priors/{prior_id}")
+def update_prior(
+    prior_id: str,
+    req: UiPriorUpdateRequest,
+    force: bool = Query(default=False),
+    project_id: str | None = Query(default=None),
+    state: ServerState = Depends(get_state),
+):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        result = client.update_prior(prior_id, req.model_dump(exclude_none=True), force=force)
+        if result.get("status") in {"created", "updated", "deleted"}:
+            state.schedule_broadcast({"type": "priors_refresh"})
+        return result
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.post("/priors/{prior_id}/submit")
+def submit_prior(
+    prior_id: str,
+    req: UiPriorSubmitRequest,
+    force: bool = Query(default=False),
+    project_id: str | None = Query(default=None),
+    state: ServerState = Depends(get_state),
+):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        result = client.submit_prior(prior_id, req.model_dump(exclude_none=True), force=force)
+        if result.get("status") in {"created", "updated", "deleted", "submitted"}:
+            state.schedule_broadcast({"type": "priors_refresh"})
+        return result
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.delete("/priors/{prior_id}")
+def delete_prior(prior_id: str, project_id: str | None = Query(default=None), state: ServerState = Depends(get_state)):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        result = client.delete_prior(prior_id)
+        if result.get("status") in {"created", "updated", "deleted"}:
+            state.schedule_broadcast({"type": "priors_refresh"})
+        return result
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.post("/priors/folders/ls")
+def folder_ls(req: UiFolderLsRequest, project_id: str | None = Query(default=None)):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        return client.folder_ls(req.path)
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.post("/priors/folders")
+def create_folder(
+    req: UiFolderCreateRequest,
+    project_id: str | None = Query(default=None),
+    state: ServerState = Depends(get_state),
+):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        result = client.create_folder(req.path)
+        if result.get("status") in {"created", "updated", "deleted"}:
+            state.schedule_broadcast({"type": "priors_refresh"})
+        return result
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.put("/priors/folders")
+def move_folder(
+    req: UiFolderMoveRequest,
+    project_id: str | None = Query(default=None),
+    state: ServerState = Depends(get_state),
+):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        result = client.move_folder(req.path, req.new_path)
+        if result.get("status") in {"created", "updated", "deleted"}:
+            state.schedule_broadcast({"type": "priors_refresh"})
+        return result
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.post("/priors/folders/delete")
+def delete_folder(
+    req: UiFolderDeleteRequest,
+    project_id: str | None = Query(default=None),
+    state: ServerState = Depends(get_state),
+):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        result = client.delete_folder(req.path)
+        if result.get("status") in {"created", "updated", "deleted"}:
+            state.schedule_broadcast({"type": "priors_refresh"})
+        return result
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.post("/priors/items/copy")
+def copy_prior_items(
+    req: UiPriorItemsCopyRequest,
+    project_id: str | None = Query(default=None),
+    state: ServerState = Depends(get_state),
+):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        result = client.copy_items(
+            [item.model_dump(exclude_none=True) for item in req.items],
+            req.destination_path,
+            as_draft=req.as_draft,
+        )
+        if result.get("status") in {"copied", "moved", "deleted"}:
+            state.schedule_broadcast({"type": "priors_refresh"})
+        return result
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.post("/priors/items/move")
+def move_prior_items(
+    req: UiPriorItemsMoveRequest,
+    project_id: str | None = Query(default=None),
+    state: ServerState = Depends(get_state),
+):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        result = client.move_items([item.model_dump(exclude_none=True) for item in req.items], req.destination_path)
+        if result.get("status") in {"copied", "moved", "deleted"}:
+            state.schedule_broadcast({"type": "priors_refresh"})
+        return result
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.post("/priors/items/delete")
+def delete_prior_items(
+    req: UiPriorItemsDeleteRequest,
+    project_id: str | None = Query(default=None),
+    state: ServerState = Depends(get_state),
+):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        result = client.delete_items([item.model_dump(exclude_none=True) for item in req.items])
+        if result.get("status") in {"copied", "moved", "deleted"}:
+            state.schedule_broadcast({"type": "priors_refresh"})
+        return result
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
+
+
+@router.post("/priors/retrieve")
+def retrieve_priors(req: UiPriorRetrieveRequest, project_id: str | None = Query(default=None)):
+    try:
+        client = _get_priors_backend_client(project_id=project_id)
+        return client.retrieve_priors(req.model_dump())
+    except (PriorsBackendError, ResourceNotFoundError) as exc:
+        if isinstance(exc, PriorsBackendError):
+            return _priors_backend_error_response(exc)
+        return _request_error_response(exc)
 
 
 @router.post("/edit-input")
@@ -947,41 +1361,147 @@ async def chat(run_id: str, req: ChatMessageRequest):
     from fastapi import HTTPException
     from sovara.common.constants import HOST, INFERENCE_PORT
 
+    trace_chat_id = uuid.uuid4().hex[:8]
+    started_at = time.monotonic()
+    logger.info(
+        "Trace chat proxy start: id=%s run_id=%s history_messages=%d message_chars=%d",
+        trace_chat_id,
+        run_id,
+        len(req.history),
+        len(req.message),
+    )
+
     persisted_history = list(req.history) + [{"role": "user", "content": req.message}]
     try:
-        DB.update_trace_chat_history(run_id, persisted_history)
+        await asyncio.to_thread(DB.update_trace_chat_history, run_id, persisted_history)
+        logger.info(
+            "Trace chat proxy pre-persist complete: id=%s run_id=%s elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            time.monotonic() - started_at,
+        )
     except (BadRequestError, ResourceNotFoundError) as exc:
-        return _request_error_response(exc)
+        # Keep the chat proxy path authoritative for request errors. Missing or
+        # stale DB state should not mask upstream inference failures.
+        logger.warning(
+            "Trace chat proxy pre-persist failed: id=%s run_id=%s error=%s elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            exc,
+            time.monotonic() - started_at,
+        )
+    except Exception:
+        logger.exception(
+            "Trace chat proxy pre-persist crashed: id=%s run_id=%s elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            time.monotonic() - started_at,
+        )
 
     timeout_seconds = 120.0
     try:
         async with httpx.AsyncClient() as client:
+            logger.info(
+                "Trace chat proxy upstream request start: id=%s run_id=%s timeout=%.1fs elapsed=%.3fs",
+                trace_chat_id,
+                run_id,
+                timeout_seconds,
+                time.monotonic() - started_at,
+            )
             resp = await client.post(
                 f"http://{HOST}:{INFERENCE_PORT}/chat/{run_id}",
                 json=req.model_dump(),
+                headers={"x-sovara-trace-chat-id": trace_chat_id},
                 timeout=timeout_seconds,
             )
+            logger.info(
+                "Trace chat proxy upstream response received: id=%s run_id=%s status=%d elapsed=%.3fs",
+                trace_chat_id,
+                run_id,
+                resp.status_code,
+                time.monotonic() - started_at,
+            )
     except httpx.TimeoutException:
-        logger.error("Trace chat proxy timed out after %.1fs for run %s", timeout_seconds, run_id)
+        logger.error(
+            "Trace chat proxy timed out: id=%s run_id=%s timeout=%.1fs elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            timeout_seconds,
+            time.monotonic() - started_at,
+        )
         raise HTTPException(504, f"Trace chat timed out after {int(timeout_seconds)} seconds")
     except httpx.HTTPError as e:
-        logger.error("Trace chat proxy failed for run %s: %s", run_id, e)
+        logger.error(
+            "Trace chat proxy failed: id=%s run_id=%s error=%s elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            e,
+            time.monotonic() - started_at,
+        )
         raise HTTPException(502, "Could not reach inference server")
     if resp.status_code != 200:
+        logger.warning(
+            "Trace chat proxy upstream returned non-200: id=%s run_id=%s status=%d detail=%s elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            resp.status_code,
+            _extract_http_error_detail(resp),
+            time.monotonic() - started_at,
+        )
         raise HTTPException(resp.status_code, _extract_http_error_detail(resp))
     try:
         data = resp.json()
+        logger.info(
+            "Trace chat proxy upstream JSON parsed: id=%s run_id=%s keys=%s elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            sorted(data.keys()) if isinstance(data, dict) else type(data).__name__,
+            time.monotonic() - started_at,
+        )
     except ValueError:
-        logger.error("Inference server returned invalid JSON for run %s", run_id)
+        logger.error(
+            "Trace chat proxy upstream returned invalid JSON: id=%s run_id=%s elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            time.monotonic() - started_at,
+        )
         raise HTTPException(502, "Invalid response from inference server")
 
     answer = data.get("answer")
     if isinstance(answer, str):
         try:
-            DB.update_trace_chat_history(
+            await asyncio.to_thread(
+                DB.update_trace_chat_history,
                 run_id,
                 persisted_history + [{"role": "assistant", "content": answer}],
             )
+            logger.info(
+                "Trace chat proxy post-persist complete: id=%s run_id=%s answer_chars=%d elapsed=%.3fs",
+                trace_chat_id,
+                run_id,
+                len(answer),
+                time.monotonic() - started_at,
+            )
         except (BadRequestError, ResourceNotFoundError) as exc:
-            return _request_error_response(exc)
+            logger.warning(
+                "Trace chat proxy post-persist failed: id=%s run_id=%s error=%s elapsed=%.3fs",
+                trace_chat_id,
+                run_id,
+                exc,
+                time.monotonic() - started_at,
+            )
+        except Exception:
+            logger.exception(
+                "Trace chat proxy post-persist crashed: id=%s run_id=%s elapsed=%.3fs",
+                trace_chat_id,
+                run_id,
+                time.monotonic() - started_at,
+            )
+    logger.info(
+        "Trace chat proxy complete: id=%s run_id=%s answered=%s elapsed=%.3fs",
+        trace_chat_id,
+        run_id,
+        isinstance(answer, str),
+        time.monotonic() - started_at,
+    )
     return data
