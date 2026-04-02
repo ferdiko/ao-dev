@@ -479,7 +479,25 @@ def _format_slug_family(match: re.Match[str]) -> str:
 # These are matched against the raw model name before cleanup rules are applied
 # Order matters: more specific patterns should come before general ones.
 # Keep this list for truly irregular aliases that cannot be derived from family formatters.
-MODEL_NAME_PATTERNS: list[tuple[str, str]] = []
+MODEL_NAME_PATTERNS: list[tuple[str, str]] = [
+    # Mistral - recent marketing aliases where the API slug does not match the display name
+    (r"^mistral-small-2603$", "Mistral Small 4"),
+    (r"^mistral-moderation-2603$", "Mistral Moderation 2"),
+    (r"^voxtral-mini-tts-2603$", "Voxtral Mini TTS"),
+    (r"^voxtral-tts-2603$", "Voxtral TTS"),
+    (r"^voxtral-mini-2602$", "Voxtral Mini Transcribe 2"),
+    (r"^voxtral-mini-transcribe-realtime-2602$", "Voxtral Mini Transcribe Realtime"),
+    (r"^labs-leanstral-2603$", "Leanstral"),
+    (r"^mistral-large-2512$", "Mistral Large 3"),
+    (r"^ministral-14b-2512$", "Ministral 3 14B"),
+    (r"^ministral-8b-2512$", "Ministral 3 8B"),
+    (r"^ministral-3b-2512$", "Ministral 3 3B"),
+    (r"^devstral-2512$", "Devstral 2"),
+    (r"^labs-devstral-small-2512$", "Devstral Small 2"),
+    (r"^magistral-medium-2509$", "Magistral Medium 1.2"),
+    (r"^magistral-small-2509$", "Magistral Small 1.2"),
+    (r"^mistral-medium-2508$", "Mistral Medium 3.1"),
+]
 COMPILED_MODEL_NAME_PATTERNS = [
     (re.compile(pattern), name) for pattern, name in MODEL_NAME_PATTERNS
 ]
@@ -514,7 +532,7 @@ MODEL_NAME_FORMATTERS = [
     (r"^(command|aya|tiny-aya)(?:-(.+))?$", _format_slug_family),
     (r"^granite(?:-(.+))?$", lambda m: _format_prefixed_family(m, "Granite")),
     (
-        r"^(open-mistral|open-mixtral|mistral|mixtral|ministral|magistral|devstral|codestral|pixtral|voxtral|leanstral)(?:-(.+))?$",
+        r"^(?:labs-)?(open-mistral|open-mixtral|mistral|mixtral|ministral|magistral|devstral|codestral|pixtral|voxtral|leanstral)(?:-(.+))?$",
         _format_slug_family,
     ),
 ]
