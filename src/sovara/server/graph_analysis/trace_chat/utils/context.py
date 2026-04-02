@@ -4,11 +4,11 @@ Provides post-consumption compaction of tool results to keep the message
 history within a character budget.
 """
 
-import logging
-
+from sovara.common.constants import INFERENCE_SERVER_LOG
+from sovara.common.logger import create_file_logger
 from ....llm_backend import NO_THINKING_EXTRA_BODY, infer_text
 
-logger = logging.getLogger("sovara_agent")
+logger = create_file_logger(INFERENCE_SERVER_LOG)
 
 MAX_TOOL_RESULT_CHARS = 16000
 MIN_COMPACTABLE_SIZE = 500

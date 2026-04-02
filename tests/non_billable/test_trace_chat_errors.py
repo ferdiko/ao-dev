@@ -22,12 +22,6 @@ from sovara.server.graph_analysis.inference_server import (
     prefetch,
 )
 from sovara.server.graph_analysis.trace_chat.cancel import TraceChatCancelled
-from sovara.server.graph_analysis.trace_chat.logger import (
-    LOGGER_NAME,
-    configure_inference_process_logging,
-    ensure_standalone_logger,
-    format_log_event_banner,
-)
 from sovara.server.graph_analysis.trace_chat.main import handle_question
 from sovara.server.graph_analysis.trace_chat.tools import execute_tool
 from sovara.server.graph_analysis.trace_chat.utils.edit_persist import DISPLAY_ONLY_MSG
@@ -153,20 +147,7 @@ def test_handle_question_raises_when_cancelled_before_iteration(monkeypatch):
     assert infer_called == [False]
 
 
-def test_format_log_event_banner_is_single_line_and_parseable():
-    banner = format_log_event_banner(
-        "User Message [q1]",
-        "hello\nthere",
-        marker="-",
-        min_width=40,
-    )
-
-    assert banner.startswith("----")
-    assert "\n" not in banner
-    assert "USER MESSAGE [Q1]: hello there" in banner
-
-
-def test_handle_question_logs_user_message_banner(monkeypatch):
+def test_handle_question_logs_question_start(monkeypatch):
     logs: list[str] = []
 
     def fake_infer(messages, system, tools, max_tokens):
@@ -192,8 +173,14 @@ def test_handle_question_logs_user_message_banner(monkeypatch):
 
     handle_question("hello there", Trace(raw="", records=[], run_id="run-1"), [])
 
-    assert any("USER MESSAGE" in entry and "hello there" in entry for entry in logs)
-    assert any("[trace_chat run_id=run-1 qid=" in entry and "user_message=hello there" in entry for entry in logs)
+    assert any(
+        "Trace chat question start run_id=run-1 qid=" in entry and "message=hello there" in entry
+        for entry in logs
+    )
+    assert any(
+        "Trace chat context run_id=run-1 qid=" in entry and "history_messages=0" in entry
+        for entry in logs
+    )
 
 
 def test_handle_question_logs_llm_exceptions(monkeypatch):
@@ -409,105 +396,7 @@ def test_create_file_logger_can_rebind_named_logger(tmp_path):
         named_logger.propagate = previous_propagate
 
 
-def test_configure_inference_process_logging_routes_agent_logs_to_inference_file(monkeypatch, tmp_path):
-    inference_log = tmp_path / "inference_server.log"
-    old_log = tmp_path / "agent.log"
-
-    agent_logger = logging.getLogger(LOGGER_NAME)
-    previous_handlers = list(agent_logger.handlers)
-    previous_level = agent_logger.level
-    previous_propagate = agent_logger.propagate
-
-    root_logger = logging.getLogger("Sovara")
-    previous_root_handlers = list(root_logger.handlers)
-    previous_root_level = root_logger.level
-
-    existing_handler = logging.FileHandler(old_log, mode="a")
-    root_handler = logging.StreamHandler()
-    root_handler.setLevel(logging.DEBUG)
-
-    try:
-        for handler in list(agent_logger.handlers):
-            agent_logger.removeHandler(handler)
-        agent_logger.addHandler(existing_handler)
-
-        for handler in list(root_logger.handlers):
-            root_logger.removeHandler(handler)
-        root_logger.addHandler(root_handler)
-        root_logger.setLevel(logging.DEBUG)
-
-        monkeypatch.setattr(
-            "sovara.server.graph_analysis.trace_chat.logger.INFERENCE_SERVER_LOG",
-            str(inference_log),
-        )
-
-        configured_logger = configure_inference_process_logging()
-
-        assert configured_logger is agent_logger
-        assert configured_logger.level == logging.INFO
-        assert configured_logger.propagate is False
-        assert len(configured_logger.handlers) == 1
-        assert Path(configured_logger.handlers[0].baseFilename) == inference_log.resolve()
-        assert Path(configured_logger.handlers[0].baseFilename) != old_log.resolve()
-        assert root_logger.level == logging.WARNING
-        assert root_handler.level == logging.WARNING
-    finally:
-        for handler in list(agent_logger.handlers):
-            agent_logger.removeHandler(handler)
-            handler.close()
-        for handler in previous_handlers:
-            agent_logger.addHandler(handler)
-        agent_logger.setLevel(previous_level)
-        agent_logger.propagate = previous_propagate
-
-        for handler in list(root_logger.handlers):
-            root_logger.removeHandler(handler)
-            handler.close()
-        for handler in previous_root_handlers:
-            root_logger.addHandler(handler)
-        root_logger.setLevel(previous_root_level)
-
-
-def test_ensure_standalone_logger_routes_agent_logs_to_inference_file(monkeypatch, tmp_path):
-    inference_log = tmp_path / "inference_server.log"
-    old_log = tmp_path / "agent.log"
-
-    agent_logger = logging.getLogger(LOGGER_NAME)
-    previous_handlers = list(agent_logger.handlers)
-    previous_level = agent_logger.level
-    previous_propagate = agent_logger.propagate
-
-    existing_handler = logging.FileHandler(old_log, mode="a")
-
-    try:
-        for handler in list(agent_logger.handlers):
-            agent_logger.removeHandler(handler)
-        agent_logger.addHandler(existing_handler)
-
-        monkeypatch.setattr(
-            "sovara.server.graph_analysis.trace_chat.logger.INFERENCE_SERVER_LOG",
-            str(inference_log),
-        )
-
-        configured_logger = ensure_standalone_logger()
-
-        assert configured_logger is agent_logger
-        assert configured_logger.level == logging.INFO
-        assert configured_logger.propagate is False
-        assert len(configured_logger.handlers) == 1
-        assert Path(configured_logger.handlers[0].baseFilename) == inference_log.resolve()
-        assert Path(configured_logger.handlers[0].baseFilename) != old_log.resolve()
-    finally:
-        for handler in list(agent_logger.handlers):
-            agent_logger.removeHandler(handler)
-            handler.close()
-        for handler in previous_handlers:
-            agent_logger.addHandler(handler)
-        agent_logger.setLevel(previous_level)
-        agent_logger.propagate = previous_propagate
-
-
-def test_prefetch_logs_trace_opened_banner(monkeypatch):
+def test_prefetch_logs_trace_opened(monkeypatch):
     logs: list[str] = []
     trace = Trace(raw="", records=[], run_id="run-1")
 
@@ -538,9 +427,8 @@ def test_prefetch_logs_trace_opened_banner(monkeypatch):
     monkeypatch.setattr("sovara.server.graph_analysis.inference_server.logger", FakeLogger())
 
     assert prefetch("run-1") == {"status": "prefetching"}
-    assert any("TRACE OPENED: run_id=run-1" in entry for entry in logs)
     assert any(
-        "[trace_chat run_id=run-1 source=prefetch] trace_opened steps=0 is_new=True" in entry
+        "Trace chat opened from prefetch run_id=run-1 steps=0 is_new=True" in entry
         for entry in logs
     )
 

@@ -12,42 +12,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-_HEADING_RE = re.compile(r"^#{1,6}\s+\S")
+from .content_utils import extract_text_content, is_text_block_list, split_prompt, stringify_field
+
 _PROMPT_KEYS = {"system", "instructions", "prompt"}
-
-
-# ---------------------------------------------------------------------------
-# Shared content helpers
-# ---------------------------------------------------------------------------
-
-def extract_text_content(content) -> str:
-    """Extract text from a message content field.
-
-    Handles plain strings, Anthropic-style content block lists
-    ([{"type": "text", "text": "..."}]), and falls back to str().
-    """
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                parts.append(str(block.get("text", "")))
-            elif isinstance(block, dict):
-                parts.append(f"[{block.get('type', 'unknown')} block]")
-            else:
-                parts.append(str(block))
-        return "\n".join(parts)
-    if content is None:
-        return ""
-    return str(content)
-
-
-def stringify_field(value) -> str:
-    """Convert a trace field to string. Pass strings through, JSON-dump the rest."""
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def extract_tag(raw: str, tag: str, default: str = "") -> str:
@@ -76,41 +43,6 @@ def _is_small_json_blob(value: Any) -> bool:
         return len(json.dumps(value, ensure_ascii=False, sort_keys=True)) <= 160
     except TypeError:
         return False
-
-
-def _is_text_block_list(value: Any) -> bool:
-    return (
-        isinstance(value, list)
-        and bool(value)
-        and all(isinstance(block, dict) for block in value)
-        and any(block.get("type") == "text" for block in value)
-    )
-
-
-def _merge_heading_only_paragraphs(chunks: List[str]) -> List[str]:
-    merged: List[str] = []
-    i = 0
-    while i < len(chunks):
-        lines = chunks[i].splitlines()
-        is_heading_only = len(lines) == 1 and bool(_HEADING_RE.match(lines[0]))
-        if is_heading_only and i + 1 < len(chunks):
-            next_lines = chunks[i + 1].splitlines()
-            next_is_heading = len(next_lines) == 1 and bool(_HEADING_RE.match(next_lines[0]))
-            if not next_is_heading:
-                merged.append(chunks[i] + "\n\n" + chunks[i + 1])
-                i += 2
-                continue
-        merged.append(chunks[i])
-        i += 1
-    return merged
-
-
-def split_prompt(text: str) -> List[str]:
-    """Split text on blank lines, merging orphan markdown headings into the next paragraph."""
-    chunks = [chunk.strip() for chunk in text.split("\n\n") if chunk.strip()]
-    if not chunks:
-        return [""]
-    return _merge_heading_only_paragraphs(chunks)
 
 
 def _summarize_paragraph(paragraph: str) -> str:
@@ -232,7 +164,7 @@ def _collect_text_candidates(value: Any, path: str = "") -> list[tuple[str, Any,
     if isinstance(value, str):
         candidates.append((path, value, "plain_text"))
         return candidates
-    if _is_text_block_list(value):
+    if is_text_block_list(value):
         candidates.append((path, value, "text_block_list"))
         return candidates
     if isinstance(value, dict):
@@ -295,7 +227,7 @@ def _build_semantic_hints(to_show: dict) -> _SemanticHints:
         role = str(message.get("role", "unknown"))
         content = message.get("content", "")
         content_path = _path_join(_path_join(hints.message_list_path or "", raw_index), "content")
-        content_codec = "text_block_list" if _is_text_block_list(content) else "plain_text"
+        content_codec = "text_block_list" if is_text_block_list(content) else "plain_text"
         if not hints.system_prompt and role == "system":
             hints.system_prompt = extract_text_content(content)
             hints.prompt_path = content_path
@@ -362,7 +294,7 @@ def _render_blocks(
             is_prompt=(path == semantic_hints.prompt_path),
         )]
 
-    if _is_text_block_list(value):
+    if is_text_block_list(value):
         text = extract_text_content(value)
         paragraphs = split_prompt(text)
         summaries = [_summarize_paragraph(paragraph) for paragraph in paragraphs]
@@ -714,7 +646,7 @@ class Trace:
     step_overview_cache: Dict[int, str] = field(default_factory=dict, repr=False)
     step_semantic_summary_cache: Dict[int, str] = field(default_factory=dict, repr=False)
     verdict_cache: Dict[int, tuple] = field(default_factory=dict, repr=False)
-    editable_content_cache: Dict[str, Any] = field(default_factory=dict, repr=False)
+    edit_undo_stack: Dict[int, List[tuple[dict, dict]]] = field(default_factory=dict, repr=False)
     prefetched_summary: str = field(default="", repr=False)
     run_id: Optional[str] = None
 
@@ -761,14 +693,6 @@ class Trace:
         self.prefetched_summary = ""
 
         self.prompt_registry, self.diffed = diff_trace(self.records)
-
-        if keep_editable_content_for is None:
-            self.editable_content_cache = {}
-            return
-
-        cache_key = f"step:{keep_editable_content_for}"
-        kept = self.editable_content_cache.get(cache_key)
-        self.editable_content_cache = {cache_key: kept} if kept is not None else {}
 
     def prompt_turns(self) -> Dict[str, List[int]]:
         groups: Dict[str, List[int]] = {}

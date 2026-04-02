@@ -405,7 +405,14 @@ async def test_chat_route_persists_user_message_before_proxy_and_appends_answer(
             state,
         )
 
-        assert response == {"answer": "done", "edits_applied": False}
+        assert response == {
+            "answer": "done",
+            "edits_applied": False,
+            "history": [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "done"},
+            ],
+        }
         assert DB.get_trace_chat_history(run_id) == [
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "done"},
@@ -543,7 +550,15 @@ async def test_chat_route_drops_stale_completion_after_newer_request(monkeypatch
             state,
         )
 
-        assert second_response == {"answer": "new answer", "edits_applied": False}
+        assert second_response == {
+            "answer": "new answer",
+            "edits_applied": False,
+            "history": [
+                {"role": "user", "content": "first"},
+                {"role": "user", "content": "second"},
+                {"role": "assistant", "content": "new answer"},
+            ],
+        }
 
         release_first.set()
         with pytest.raises(HTTPException) as exc:

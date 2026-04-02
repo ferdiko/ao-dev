@@ -7,10 +7,12 @@ Provides both:
 
 import inspect
 
-from ..cancel import TraceChatCancelled
-from ..logger import get_logger
+from sovara.common.constants import INFERENCE_SERVER_LOG
+from sovara.common.logger import create_file_logger
 
-server_logger = get_logger()
+from ..cancel import TraceChatCancelled
+
+server_logger = create_file_logger(INFERENCE_SERVER_LOG)
 
 from .get_trace_overview import get_trace_overview
 from .get_step_snapshot import get_step_snapshot
@@ -289,7 +291,7 @@ def execute_tool(
         raise
     except Exception as e:
         if log_tag:
-            server_logger.exception("%s Trace chat tool failed: %s params=%s", log_tag, tool_name, params)
+            server_logger.exception("Trace chat tool failed: %s %s params=%s", tool_name, log_tag, params)
         else:
             server_logger.exception("Trace chat tool failed: %s params=%s", tool_name, params)
         return f"Tool '{tool_name}' failed: {e}"

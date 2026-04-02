@@ -13,27 +13,20 @@ def test_trace_chat_main_loads_trace_and_uses_input(monkeypatch, capsys, tmp_pat
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(trace_chat_main, "ensure_standalone_logger", lambda: None)
     monkeypatch.setattr("builtins.input", lambda _prompt="": "quit")
 
     trace_chat_main.main(["--no-prefetch", str(trace_path)])
 
     out = capsys.readouterr().out
-    assert f"Loading trace from {trace_path.resolve()}" in out
-    assert "Loaded 1 steps." in out
-    assert "Chat started. Type 'quit' to exit." in out
     assert "Goodbye!" in out
 
 
 def test_trace_chat_main_uses_default_trace_relative_to_module(monkeypatch, capsys):
-    monkeypatch.setattr(trace_chat_main, "ensure_standalone_logger", lambda: None)
     monkeypatch.setattr("builtins.input", lambda _prompt="": "quit")
 
     trace_chat_main.main(["--no-prefetch"], default_trace_path="example_traces/weather_agent.jsonl")
 
     out = capsys.readouterr().out
-    assert "example_traces/weather_agent.jsonl" in out
-    assert "Loaded 5 steps." in out
     assert "Goodbye!" in out
 
 
@@ -54,7 +47,7 @@ def test_trace_chat_main_help_works_as_standalone_script():
     assert "trace_path" in result.stdout
 
 
-def test_start_prefetch_logs_tagged_start(monkeypatch):
+def test_start_prefetch_logs_requested_start(monkeypatch):
     calls = []
 
     class DummyFuture:
@@ -81,4 +74,4 @@ def test_start_prefetch_logs_tagged_start(monkeypatch):
 
     assert future is pool.future
     assert hasattr(future, "_sovara_started_at")
-    assert calls == [("%s start requested from main steps=%d", ("[prefetch run_id=run-1 source=main]", 0))]
+    assert calls == [("Trace chat prefetch requested from main run_id=%s steps=%d", ("run-1", 0))]

@@ -1,13 +1,18 @@
 """get_step_snapshot tool — returns raw content for one step."""
 
-from ..logger import format_log_tags, get_logger
-from ..utils.editable_content import format_path
+from sovara.common.constants import INFERENCE_SERVER_LOG
+from sovara.common.logger import create_file_logger
+
 from ..utils.step_ids import resolve_step_index
 from ..utils.trace import Trace, blocks_char_count, stringify_field
 
-logger = get_logger()
+logger = create_file_logger(INFERENCE_SERVER_LOG)
 MAX_FULL_STEP_CHARS = 5000
 MAX_PREVIEW_PARAGRAPHS_PER_BLOCK = 4
+
+
+def _format_path(path: str) -> str:
+    return path or "<root>"
 
 
 def should_withhold_raw_view(rendered_chars: int) -> bool:
@@ -24,7 +29,7 @@ def _preview_text(text: str, max_len: int = 120) -> str:
 
 
 def render_block_preview(block) -> list[str]:
-    display_path = format_path(block.path)
+    display_path = _format_path(block.path)
     lines = [f"### `{display_path}`"]
     if block.role and not display_path.endswith(".role"):
         lines.append(f"Role: `{block.role}`")
@@ -101,7 +106,7 @@ def build_step_summary(
 
 
 def _render_raw_block(block) -> list[str]:
-    lines = [f"### `{format_path(block.path)}`"]
+    lines = [f"### `{_format_path(block.path)}`"]
 
     if isinstance(block.raw_value, str):
         lines.append(block.raw_value)
@@ -165,18 +170,12 @@ def get_step_snapshot(trace: Trace, step_id, scope="full") -> str:
     record = trace.get(index)
     diffed = trace.get_diffed(index)
     rendered = _render_record_raw(record, diffed, scope=scope)
-    log_tag = format_log_tags(
-        "trace_tool",
-        run_id=trace.run_id or "-",
-        tool="get_step_snapshot",
-        step=index + 1,
-        snapshot_scope=scope,
-    )
-
     if should_withhold_raw_view(len(rendered)):
         logger.info(
-            "%s raw view withheld chars=%d limit=%d",
-            log_tag,
+            "get_step_snapshot withheld run_id=%s step=%d scope=%s chars=%d limit=%d",
+            trace.run_id or "-",
+            index + 1,
+            scope,
             len(rendered),
             MAX_FULL_STEP_CHARS,
         )

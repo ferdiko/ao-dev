@@ -13,12 +13,6 @@ if __package__ in (None, ""):
     # Allow `python src/.../trace_chat/main.py ...` during local debugging.
     sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
-    from sovara.server.graph_analysis.trace_chat.logger import (
-        ensure_standalone_logger,
-        format_log_event_banner,
-        format_log_tags,
-        get_logger,
-    )
     from sovara.server.graph_analysis.trace_chat.cancel import TraceChatCancelled, raise_if_cancelled
     from sovara.server.graph_analysis.trace_chat.tools import TOOLS_SCHEMA, execute_tool
     from sovara.server.graph_analysis.trace_chat.tools.summarize_trace import _generate_summary
@@ -28,7 +22,6 @@ if __package__ in (None, ""):
     from sovara.server.llm_backend import infer
 else:
     from .cancel import TraceChatCancelled, raise_if_cancelled
-    from .logger import ensure_standalone_logger, format_log_event_banner, format_log_tags, get_logger
     from .tools import TOOLS_SCHEMA, execute_tool
     from .tools.summarize_trace import _generate_summary
     from .utils.edit_persist import RERUN_MSG
@@ -36,7 +29,10 @@ else:
     from .utils.trace import Trace
     from ...llm_backend import infer
 
-logger = get_logger()
+from sovara.common.constants import INFERENCE_SERVER_LOG
+from sovara.common.logger import create_file_logger
+
+logger = create_file_logger(INFERENCE_SERVER_LOG)
 
 MAX_REACT_ITERATIONS = 10
 TRACE_CHAT_DIR = Path(__file__).resolve().parent
@@ -88,10 +84,6 @@ def _log_preview(text: str, max_len: int = 240) -> str:
     return compact[:max_len] + "..."
 
 
-def _prefetch_tag(trace: Trace, **fields) -> str:
-    return format_log_tags("prefetch", run_id=trace.run_id or "-", **fields)
-
-
 def _supports_kwarg(fn, name: str) -> bool:
     signature = inspect.signature(fn)
     return (
@@ -110,19 +102,16 @@ def handle_question(question: str, trace: Trace, history: list,
     edits_applied = False
     run_id = trace.run_id or "-"
     question_id = uuid.uuid4().hex[:8]
-    question_tag = format_log_tags("trace_chat", run_id=run_id, qid=question_id)
     logger.info(
-        format_log_event_banner(
-            f"User Message [{question_id}]",
-            _log_preview(question, max_len=160),
-            marker="-",
-        )
-    )
-    logger.info("%s user_message=%s", question_tag, _log_preview(question, max_len=160))
-    logger.info(
-        "%s TRACE CONTEXT: run_id=%s steps=%d history_messages=%d",
-        question_tag,
+        "Trace chat question start run_id=%s qid=%s message=%s",
         run_id,
+        question_id,
+        _log_preview(question, max_len=160),
+    )
+    logger.info(
+        "Trace chat context run_id=%s qid=%s steps=%d history_messages=%d",
+        run_id,
+        question_id,
         len(trace),
         len(history),
     )
@@ -130,7 +119,6 @@ def handle_question(question: str, trace: Trace, history: list,
 
     trace_summary = trace.prefetched_summary or ""
     if prefetch_future is not None and not trace_summary:
-        prefetch_tag = format_log_tags("prefetch", run_id=run_id, qid=question_id)
         prefetch_started_at = getattr(prefetch_future, "_sovara_started_at", None)
         prefetch_age = None
         if prefetch_started_at is not None:
@@ -140,21 +128,29 @@ def handle_question(question: str, trace: Trace, history: list,
                 trace_summary = prefetch_future.result()
                 trace.prefetched_summary = trace_summary
                 logger.info(
-                    "%s ready after %.1fs (%d chars): %s",
-                    prefetch_tag,
+                    "Trace chat prefetch ready run_id=%s qid=%s after %.1fs chars=%d preview=%s",
+                    run_id,
+                    question_id,
                     prefetch_age or 0.0,
                     len(trace_summary),
                     _log_preview(trace_summary),
                 )
             except Exception as e:
-                logger.warning("%s failed after %.1fs: %s", prefetch_tag, prefetch_age or 0.0, e)
+                logger.warning(
+                    "Trace chat prefetch failed run_id=%s qid=%s after %.1fs: %s",
+                    run_id,
+                    question_id,
+                    prefetch_age or 0.0,
+                    e,
+                )
         else:
             if prefetch_age is None:
-                logger.info("%s still running; proceeding without it", prefetch_tag)
+                logger.info("Trace chat prefetch still running run_id=%s qid=%s; proceeding without it", run_id, question_id)
             else:
                 logger.info(
-                    "%s still running after %.1fs; proceeding without it",
-                    prefetch_tag,
+                    "Trace chat prefetch still running run_id=%s qid=%s after %.1fs; proceeding without it",
+                    run_id,
+                    question_id,
                     prefetch_age,
                 )
 
@@ -170,13 +166,7 @@ def handle_question(question: str, trace: Trace, history: list,
     for iteration in range(MAX_REACT_ITERATIONS):
         raise_if_cancelled(cancel_event)
         iteration_num = iteration + 1
-        iteration_tag = format_log_tags(
-            "trace_chat",
-            run_id=run_id,
-            qid=question_id,
-            iter=iteration_num,
-        )
-        logger.info("%s ReAct iteration start", iteration_tag)
+        logger.info("Trace chat iteration start run_id=%s qid=%s iter=%d", run_id, question_id, iteration_num)
 
         try:
             infer_kwargs = {
@@ -192,8 +182,9 @@ def handle_question(question: str, trace: Trace, history: list,
             )
         except TraceChatCancelled:
             logger.info(
-                "%s CANCELLED during planner call on iteration %d after %.1fs",
-                question_tag,
+                "Trace chat cancelled during planner call run_id=%s qid=%s iter=%d after %.1fs",
+                run_id,
+                question_id,
                 iteration_num,
                 time.monotonic() - t0,
             )
@@ -213,20 +204,23 @@ def handle_question(question: str, trace: Trace, history: list,
             answer = msg.content or ""
             raise_if_cancelled(cancel_event)
             logger.info(
-                "%s ANSWER after %d iteration(s), %d chars, total %.1fs",
-                question_tag,
+                "Trace chat answer ready run_id=%s qid=%s iterations=%d chars=%d total=%.1fs",
+                run_id,
+                question_id,
                 iteration_num,
                 len(answer),
                 time.monotonic() - t0,
             )
-            logger.info("%s ANSWER content:\n%s", question_tag, answer)
+            logger.info("Trace chat answer content run_id=%s qid=%s:\n%s", run_id, question_id, answer)
             return {"answer": answer, "edits_applied": edits_applied}
 
         # Append assistant message (with tool_calls) to history
         messages.append(msg)
         logger.info(
-            "%s planner returned %d tool call(s)",
-            iteration_tag,
+            "Trace chat planner returned tool calls run_id=%s qid=%s iter=%d count=%d",
+            run_id,
+            question_id,
+            iteration_num,
             len(msg.tool_calls),
         )
 
@@ -237,28 +231,36 @@ def handle_question(question: str, trace: Trace, history: list,
                 params = json.loads(tc.function.arguments) if tc.function.arguments else {}
             except json.JSONDecodeError:
                 params = {}
-            tool_tag = format_log_tags(
-                "trace_tool",
-                run_id=run_id,
-                qid=question_id,
-                iter=iteration_num,
-                tool=tc.function.name,
-                call=tc.id,
+            tool_tag = (
+                f"run_id={run_id} qid={question_id} iter={iteration_num} "
+                f"tool={tc.function.name} call={tc.id}"
             )
             parsed_calls.append((tc, params, tool_tag))
 
         def _run_one(tc, params, tool_tag):
             raise_if_cancelled(cancel_event)
             t_tool = time.monotonic()
-            logger.info("%s start params=%s", tool_tag, params)
+            logger.info(
+                "Trace chat tool start run_id=%s qid=%s iter=%d tool=%s call=%s params=%s",
+                run_id,
+                question_id,
+                iteration_num,
+                tc.function.name,
+                tc.id,
+                params,
+            )
             execute_tool_kwargs = {"log_tag": tool_tag}
             if _supports_kwarg(execute_tool, "cancel_event"):
                 execute_tool_kwargs["cancel_event"] = cancel_event
             result = execute_tool(tc.function.name, trace, params, **execute_tool_kwargs)
             raise_if_cancelled(cancel_event)
             logger.info(
-                "%s done in %.1fs result_chars=%d preview=%s",
-                tool_tag,
+                "Trace chat tool done run_id=%s qid=%s iter=%d tool=%s call=%s elapsed=%.1fs result_chars=%d preview=%s",
+                run_id,
+                question_id,
+                iteration_num,
+                tc.function.name,
+                tc.id,
                 time.monotonic() - t_tool,
                 len(result),
                 _log_preview(result),
@@ -270,8 +272,9 @@ def handle_question(question: str, trace: Trace, history: list,
                 results = list(pool.map(lambda args: _run_one(*args), parsed_calls))
         except TraceChatCancelled:
             logger.info(
-                "%s CANCELLED during tool execution on iteration %d after %.1fs",
-                question_tag,
+                "Trace chat cancelled during tool execution run_id=%s qid=%s iter=%d after %.1fs",
+                run_id,
+                question_id,
                 iteration_num,
                 time.monotonic() - t0,
             )
@@ -286,13 +289,14 @@ def handle_question(question: str, trace: Trace, history: list,
             answer = "\n\n".join(result.strip() for result in edit_results if result.strip())
             raise_if_cancelled(cancel_event)
             logger.info(
-                "%s EDIT RESULT after %d iteration(s), %d chars, total %.1fs",
-                question_tag,
+                "Trace chat edit result run_id=%s qid=%s iterations=%d chars=%d total=%.1fs",
+                run_id,
+                question_id,
                 iteration_num,
                 len(answer),
                 time.monotonic() - t0,
             )
-            logger.info("%s EDIT RESULT content:\n%s", question_tag, answer)
+            logger.info("Trace chat edit result content run_id=%s qid=%s:\n%s", run_id, question_id, answer)
             return {"answer": answer, "edits_applied": edits_applied}
 
         for tc, result in results:
@@ -307,7 +311,7 @@ def handle_question(question: str, trace: Trace, history: list,
 
     raise_if_cancelled(cancel_event)
     fallback = "Reached maximum iterations without a final answer."
-    logger.warning("%s FALLBACK after %.1fs: %s", question_tag, time.monotonic() - t0, fallback)
+    logger.warning("Trace chat fallback run_id=%s qid=%s after %.1fs: %s", run_id, question_id, time.monotonic() - t0, fallback)
     return {"answer": fallback, "edits_applied": edits_applied}
 
 
@@ -368,8 +372,8 @@ def _start_prefetch(trace: Trace, enabled: bool) -> tuple[ThreadPoolExecutor | N
     prefetch_future = pool.submit(_generate_summary, trace)
     prefetch_future._sovara_started_at = time.monotonic()
     logger.info(
-        "%s start requested from main steps=%d",
-        _prefetch_tag(trace, source="main"),
+        "Trace chat prefetch requested from main run_id=%s steps=%d",
+        trace.run_id or "-",
         len(trace),
     )
     return pool, prefetch_future
@@ -413,7 +417,6 @@ def run_terminal_chat(trace: Trace, *, prefetch_summary: bool = True) -> None:
 
 
 def main(argv: Sequence[str] | None = None, *, default_trace_path: str | None = None):
-    ensure_standalone_logger()
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
     trace_path = _resolve_trace_path(args, parser, default_trace_path=default_trace_path)
@@ -423,10 +426,9 @@ def main(argv: Sequence[str] | None = None, *, default_trace_path: str | None = 
     except Exception as e:
         parser.exit(status=1, message=f"Error loading trace: {e}\n")
 
-    logger.info(format_log_event_banner("Trace Opened", resolved_path.name))
     logger.info(
-        "%s trace_opened path=%s steps=%d prefetch=%s",
-        format_log_tags("trace_chat", run_id=trace.run_id or "1ace86e8-9c34-4672-9235-45f7871895ce"),
+        "Trace chat opened run_id=%s path=%s steps=%d prefetch=%s",
+        trace.run_id or resolved_path.stem,
         resolved_path,
         len(trace),
         "off" if args.no_prefetch else "on",

@@ -2,15 +2,15 @@
 
 import time
 
-from sovara.common.constants import TRACE_CHAT_SCATTER_BUDGET_SECONDS
+from sovara.common.constants import INFERENCE_SERVER_LOG, TRACE_CHAT_SCATTER_BUDGET_SECONDS
+from sovara.common.logger import create_file_logger
 
 from ....llm_backend import NO_THINKING_EXTRA_BODY, infer, scatter_execute
 from ..cancel import raise_if_cancelled
-from ..logger import get_logger
 from ..utils.step_ids import resolve_step_index
 from ..utils.trace import Trace, extract_tag, render_record_markdown
 
-logger = get_logger()
+logger = create_file_logger(INFERENCE_SERVER_LOG)
 _VERIFY_STEP_MAX_TOKENS = 512
 _VERDICT_PHRASES = {
     "CORRECT": "I think this is correct.",

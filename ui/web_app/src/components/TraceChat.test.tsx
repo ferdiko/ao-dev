@@ -202,6 +202,7 @@ describe("TraceChat", () => {
   it("hydrates persisted history if the direct chat request never settles", async () => {
     vi.mocked(fetchTraceChatHistory)
       .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         { role: "user", content: "Did it finish?" },
         { role: "assistant", content: "Yes, it finished in the background." },
@@ -224,10 +225,12 @@ describe("TraceChat", () => {
     fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
 
     expect(screen.getByText("Thinking…")).toBeInTheDocument();
+    expect(screen.getByText("Did it finish?")).toBeInTheDocument();
 
     expect(
       await screen.findByText("Yes, it finished in the background.", {}, { timeout: 3000 }),
     ).toBeInTheDocument();
+    expect(screen.getByText("Did it finish?")).toBeInTheDocument();
     expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("Ask about this trace…")).toBeEnabled();
   }, 10000);

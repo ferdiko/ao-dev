@@ -100,6 +100,19 @@ function historiesMatch(messages: ChatMessage[], history: TraceChatHistoryMessag
   ));
 }
 
+function historyStartsWith(
+  history: TraceChatHistoryMessage[],
+  prefix: TraceChatHistoryMessage[],
+): boolean {
+  if (history.length < prefix.length) {
+    return false;
+  }
+  return prefix.every((message, index) => (
+    message.role === history[index]?.role
+    && message.content === history[index]?.content
+  ));
+}
+
 const PENDING_HISTORY_POLL_MS = 1000;
 const PENDING_HISTORY_POLL_TIMEOUT_MS = 120000;
 
@@ -123,6 +136,7 @@ export function TraceChat({
   const activeAbortControllerRef = useRef<AbortController | null>(null);
   const requestCounterRef = useRef(0);
   const activeRequestIdRef = useRef<number | null>(null);
+  const activeRequestHistoryRef = useRef<TraceChatHistoryMessage[] | null>(null);
   const suppressedPendingUserMessageIdRef = useRef<string | null>(null);
   const lastMessage = messages[messages.length - 1];
   const hasPendingPersistedReply = (
@@ -134,6 +148,7 @@ export function TraceChat({
   const clearActiveRequest = () => {
     activeAbortControllerRef.current = null;
     activeRequestIdRef.current = null;
+    activeRequestHistoryRef.current = null;
     if (isMountedRef.current) {
       setActiveRequestId(null);
     }
@@ -216,6 +231,13 @@ export function TraceChat({
           if (cancelled) {
             return;
           }
+          const pendingHistory = activeRequestHistoryRef.current;
+          if (
+            pendingHistory !== null
+            && !historyStartsWith(history, pendingHistory)
+          ) {
+            continue;
+          }
           if (!historiesMatch(messages, history)) {
             setMessages(hydrateMessages(history));
             if (
@@ -250,6 +272,7 @@ export function TraceChat({
     requestCounterRef.current = requestId;
     activeAbortControllerRef.current = abortController;
     activeRequestIdRef.current = requestId;
+    activeRequestHistoryRef.current = buildPersistedHistory(messagesWithUser);
     suppressedPendingUserMessageIdRef.current = null;
     setMessages(messagesWithUser);
     setInput("");

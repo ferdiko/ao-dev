@@ -1,16 +1,16 @@
-import logging
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Callable, Sequence, TypeVar
 
 import litellm
-from sovara.common.constants import TRACE_CHAT_SCATTER_BUDGET_SECONDS
+from sovara.common.constants import INFERENCE_SERVER_LOG, TRACE_CHAT_SCATTER_BUDGET_SECONDS
+from sovara.common.logger import create_file_logger
 from sovara.common.user import read_user_id
 from sovara.server.database_manager import DB
 from sovara.server.llm_settings import build_litellm_request_config
 from sovara.server.graph_analysis.trace_chat.cancel import TraceChatCancelled, raise_if_cancelled
 
-logger = logging.getLogger("sovara_agent")
+logger = create_file_logger(INFERENCE_SERVER_LOG)
 T = TypeVar("T")
 R = TypeVar("R")
 

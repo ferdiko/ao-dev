@@ -16,7 +16,7 @@ from sovara.server.graph_analysis.trace_chat.tools.edit_content import (
     undo,
 )
 from sovara.server.graph_analysis.trace_chat.utils.edit_persist import PersistOutcome
-from sovara.server.graph_analysis.trace_chat.utils.editable_content import EditableContentState, PathContent
+from sovara.server.graph_analysis.trace_chat.utils.step_content_view import ContentUnit
 from sovara.server.graph_analysis.trace_chat.tools.verify import verify
 from sovara.server.graph_analysis.trace_chat.utils.trace import (
     Trace,
@@ -239,7 +239,7 @@ def test_step_edit_invalidates_cached_analysis():
     assert trace.prefetched_summary == ""
 
 
-def test_shared_edit_content_invalidates_all_steps_using_that_prompt():
+def test_step_edit_invalidates_only_the_edited_step():
     trace = Trace.from_string(
         "\n".join([
             """{"system_prompt":"Shared prompt.","input":[{"role":"user","content":"Hello"}],"output":"ok","name":"demo"}""",
@@ -264,12 +264,12 @@ def test_shared_edit_content_invalidates_all_steps_using_that_prompt():
 
     assert trace.records[0].summary is None
     assert trace.records[0].correct is None
-    assert trace.records[1].summary is None
-    assert trace.records[1].correct is None
+    assert trace.records[1].summary == "record summary 1"
+    assert trace.records[1].correct is False
     assert trace.diffed[0].summary is None
     assert trace.diffed[0].correct is None
-    assert trace.diffed[1].summary is None
-    assert trace.diffed[1].correct is None
+    assert trace.diffed[1].summary == "record summary 1"
+    assert trace.diffed[1].correct is False
     assert trace.summary_cache == {}
     assert trace.step_overview_cache == {}
     assert trace.step_semantic_summary_cache == {}
@@ -323,7 +323,6 @@ def test_get_step_overview_and_verify_do_not_return_stale_values_after_edit(monk
     summary = get_step_overview(trace, step_id=1)
 
     assert "cached step overview 0" not in summary
-    assert "## Three-Sentence Summary" in summary
     assert "## Input Content" in summary
     assert "`messages.0.content`" in summary
     assert "content_id=c0" in summary
@@ -349,7 +348,7 @@ def test_get_step_full_returns_compact_preview_for_large_steps(monkeypatch):
         "# Step 1",
         "Name: demo",
         "",
-        "## Three-Sentence Summary",
+        "## Summary",
         "",
         "General task and output. Specific input details. Specific output details.",
         "",
@@ -397,7 +396,7 @@ def test_get_step_new_input_returns_compact_preview_for_large_steps(monkeypatch)
         "# Step 1",
         "Name: demo",
         "",
-        "## Three-Sentence Summary",
+        "## Summary",
         "",
         "General task and output. Specific input details. Specific output details.",
         "",
@@ -456,7 +455,6 @@ def test_get_step_overview_returns_structured_overview_for_large_steps(monkeypat
     summary = get_step_overview(trace, step_id=1)
 
     assert "# Step 1" in summary
-    assert "## Three-Sentence Summary" in summary
     assert "## Input Content" in summary
     assert "content_id=c0" in summary
     assert "long content summary" in summary
@@ -485,7 +483,7 @@ def test_get_step_overview_shows_content_id_for_inline_short_content(monkeypatch
     summary = get_step_overview(trace, step_id=1)
 
     assert "content_id=c0" in summary
-    assert "full content" in summary
+    assert "Full content" in summary
     assert "Short content." in summary
 
 
@@ -494,29 +492,20 @@ def test_get_step_overview_segment_summaries_use_timeout_fallback(monkeypatch):
     step_overview_module = importlib.import_module(
         "sovara.server.graph_analysis.trace_chat.tools.get_step_overview"
     )
-    content_items_module = importlib.import_module(
-        "sovara.server.graph_analysis.trace_chat.utils.content_items"
-    )
     scatter_calls: dict[str, object] = {}
 
     items = [
-        content_items_module.StepContentItem(
+        ContentUnit(
             content_id="c0",
-            branch="input",
-            path="messages.0.content",
-            display_path="messages.0.content",
-            codec="plain_text",
-            text="alpha beta gamma delta epsilon zeta",
-            summarized=True,
+            input_or_output="input",
+            dict_path=("messages", 0, "content"),
+            text="alpha beta gamma delta epsilon zeta " * 4,
         ),
-        content_items_module.StepContentItem(
+        ContentUnit(
             content_id="c1",
-            branch="input",
-            path="messages.1.content",
-            display_path="messages.1.content",
-            codec="plain_text",
-            text="one two three four five six",
-            summarized=True,
+            input_or_output="input",
+            dict_path=("messages", 1, "content"),
+            text="one two three four five six " * 4,
         ),
     ]
 
@@ -734,15 +723,7 @@ def test_write_input_content_edit_falls_back_to_graph_when_llm_call_is_missing(m
         )
     ])
     trace.run_id = "run-1"
-    state = EditableContentState(paths=[
-        PathContent(
-            path="body.messages.0.content",
-            paragraphs=["Edited question."],
-            codec="plain_text",
-            branch="input",
-            role="user",
-        )
-    ])
+    input_to_show = {"body": {"messages": [{"role": "user", "content": "Edited question."}]}}
     persisted_updates: list[tuple[str, str, str, object]] = []
 
     monkeypatch.setattr(edit_persist_module, "_read_to_show", lambda run_id, node_uuid: None)
@@ -760,7 +741,7 @@ def test_write_input_content_edit_falls_back_to_graph_when_llm_call_is_missing(m
         )[1],
     )
 
-    result = edit_persist_module.write_input_content_edit(trace, 0, state)
+    result = edit_persist_module.write_input_content_edit(trace, 0, input_to_show)
 
     assert result == PersistOutcome(
         ok=True,
@@ -790,14 +771,7 @@ def test_write_output_content_edit_falls_back_to_graph_when_llm_output_to_show_i
         )
     ])
     trace.run_id = "run-1"
-    state = EditableContentState(paths=[
-        PathContent(
-            path="content.content.0.text",
-            paragraphs=["Edited answer."],
-            codec="plain_text",
-            branch="output",
-        )
-    ])
+    output_to_show = {"content.content": [{"text": "Edited answer."}]}
     persisted_updates: list[tuple[str, str, str, object]] = []
 
     monkeypatch.setattr(edit_persist_module, "_read_output_to_show", lambda run_id, node_uuid: None)
@@ -815,7 +789,7 @@ def test_write_output_content_edit_falls_back_to_graph_when_llm_output_to_show_i
         )[1],
     )
 
-    result = edit_persist_module.write_output_content_edit(trace, 0, state)
+    result = edit_persist_module.write_output_content_edit(trace, 0, output_to_show)
 
     assert result == PersistOutcome(
         ok=True,
@@ -859,6 +833,36 @@ def test_delete_content_unit_accepts_content_id():
 
     assert "Deleted" in deleted
     assert updated.endswith("Third paragraph.")
+
+
+def test_delete_content_unit_clears_the_last_remaining_paragraph():
+    trace = Trace.from_records([
+        build_trace_record_from_to_show(
+            {
+                "body": {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "Only paragraph.",
+                        }
+                    ]
+                }
+            },
+            {"output": "ok"},
+            index=0,
+            name="demo",
+        )
+    ])
+
+    deleted = delete_content_unit(
+        trace,
+        step_id=1,
+        content_id="c1",
+    )
+
+    assert "Deleted" in deleted
+    assert trace.records[0].input_to_show["body"]["messages"][0]["content"] == ""
+    assert get_content_unit(trace, step_id=1, content_id="c1") == "[content_id=c1] `body.messages.0.content`:\n"
 
 
 def test_tool_registry_exposes_get_step_overview():
@@ -983,15 +987,15 @@ def test_generate_summary_logs_prefetch_tagged_progress(monkeypatch):
     result = summarize_module._generate_summary(trace)
 
     assert result == "Trace: 2 steps, 1 conversation(s)\nTrace summary"
-    assert logs[0] == ("%s start steps=%d", ("[prefetch run_id=run-1]", 2))
+    assert logs[0] == ("summarize_trace start run_id=%s steps=%d", ("run-1", 2))
     assert any(
-        message == "%s semantic summary ready in %.1fs chars=%d"
-        and args[0].startswith("[prefetch run_id=run-1 phase=step")
+        message == "summarize_trace step summary ready run_id=%s step=%d elapsed=%.1fs chars=%d"
+        and args[0] == "run-1"
         for message, args in logs
     )
     assert any(
-        message == "%s done summary_chars=%d per_step=%.1fs synthesis=%.1fs total=%.1fs"
-        and args[0] == "[prefetch run_id=run-1]"
+        message == "summarize_trace done run_id=%s summary_chars=%d per_step=%.1fs synthesis=%.1fs total=%.1fs"
+        and args[0] == "run-1"
         for message, args in logs
     )
 

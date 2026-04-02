@@ -42,17 +42,6 @@ def search(trace: Trace, query) -> str:
         if len(results) >= MAX_RESULTS:
             break
 
-    # Search cached editable content when it has already been materialized.
-    for cache_key, state in getattr(trace, "editable_content_cache", {}).items():
-        for idx, path_entry in enumerate(state.paths):
-            if query_lower in path_entry.text.lower():
-                results.append(
-                    f"Editable content [{cache_key}] path {idx} ({path_entry.path}): "
-                    f"{_snippet(path_entry.text, query_lower)}"
-                )
-            if len(results) >= MAX_RESULTS:
-                break
-
     if not results:
         return f"No matches for '{query}'."
 

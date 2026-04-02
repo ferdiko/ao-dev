@@ -2,10 +2,10 @@
 
 import time
 
-from sovara.common.constants import TRACE_CHAT_SCATTER_BUDGET_SECONDS
+from sovara.common.constants import INFERENCE_SERVER_LOG, TRACE_CHAT_SCATTER_BUDGET_SECONDS
+from sovara.common.logger import create_file_logger
 
 from ....llm_backend import NO_THINKING_EXTRA_BODY, infer_text, scatter_execute
-from ..logger import format_log_tags, get_logger
 from ..utils.trace import Trace, blocks_char_count, stringify_field
 from .get_step_overview import (
     STEP_SUMMARIZE_SYSTEM,
@@ -30,20 +30,16 @@ SYNTHESIZE_SYSTEM = (
     "One line per phase. No headers, emoji, or filler."
 )
 
-logger = get_logger()
-
-
-def _prefetch_tag(trace: Trace, **fields) -> str:
-    return format_log_tags("prefetch", run_id=trace.run_id or "-", **fields)
+logger = create_file_logger(INFERENCE_SERVER_LOG)
 
 
 def _summarize_step_semantically(trace: Trace, step_id: int) -> str:
-    step_tag = _prefetch_tag(trace, phase="step", step=step_id)
     t0 = time.monotonic()
     semantic_summary = get_or_compute_step_semantic_summary(trace, step_id)
     logger.info(
-        "%s semantic summary ready in %.1fs chars=%d",
-        step_tag,
+        "summarize_trace step summary ready run_id=%s step=%d elapsed=%.1fs chars=%d",
+        trace.run_id or "-",
+        step_id,
         time.monotonic() - t0,
         len(semantic_summary),
     )
@@ -103,14 +99,14 @@ def _prefix_structural_header(summary: str, overview: str) -> str:
 def _generate_summary(trace: Trace) -> str:
     """Do the actual work: overview + per-step summaries + synthesis."""
     t0 = time.monotonic()
-    base_tag = _prefetch_tag(trace)
-    logger.info("%s start steps=%d", base_tag, len(trace))
+    run_id = trace.run_id or "-"
+    logger.info("summarize_trace start run_id=%s steps=%d", run_id, len(trace))
 
     try:
         overview = get_trace_overview(trace)
         logger.info(
-            "%s overview ready chars=%d elapsed=%.1fs",
-            _prefetch_tag(trace, phase="overview"),
+            "summarize_trace overview ready run_id=%s chars=%d elapsed=%.1fs",
+            run_id,
             len(overview),
             time.monotonic() - t0,
         )
@@ -125,8 +121,8 @@ def _generate_summary(trace: Trace) -> str:
                 pending_steps.append(step_id)
 
         logger.info(
-            "%s budget=%.1fs cached=%d pending=%d",
-            _prefetch_tag(trace, phase="steps_budget"),
+            "summarize_trace step budget run_id=%s budget=%.1fs cached=%d pending=%d",
+            run_id,
             TRACE_CHAT_SCATTER_BUDGET_SECONDS,
             len(summaries_by_step),
             len(pending_steps),
@@ -138,8 +134,8 @@ def _generate_summary(trace: Trace) -> str:
                 nonlocal completed
                 completed += 1
                 logger.info(
-                    "%s completed=%d/%d latest_step=%d elapsed=%.1fs",
-                    _prefetch_tag(trace, phase="steps_progress"),
+                    "summarize_trace progress run_id=%s completed=%d/%d latest_step=%d elapsed=%.1fs",
+                    run_id,
                     completed,
                     len(trace),
                     step_id,
@@ -148,14 +144,15 @@ def _generate_summary(trace: Trace) -> str:
 
             def _on_summary_exception(step_id: int, _exc: Exception) -> None:
                 logger.exception(
-                    "%s semantic summary failed; using fallback",
-                    _prefetch_tag(trace, phase="step", step=step_id),
+                    "summarize_trace step summary failed run_id=%s step=%d; using fallback",
+                    run_id,
+                    step_id,
                 )
 
             def _on_summary_timeout(fallback_steps: list[int]) -> None:
                 logger.warning(
-                    "%s deadline reached after %.1fs fallback=%d steps=%s",
-                    _prefetch_tag(trace, phase="steps_budget"),
+                    "summarize_trace step budget timed out run_id=%s after %.1fs fallback=%d steps=%s",
+                    run_id,
                     TRACE_CHAT_SCATTER_BUDGET_SECONDS,
                     len(fallback_steps),
                     sorted(fallback_steps),
@@ -183,8 +180,8 @@ def _generate_summary(trace: Trace) -> str:
         combined = f"## Overview\n{overview}\n\n## Step Summaries\n"
         combined += "\n".join(summaries)
         logger.info(
-            "%s combined context chars=%d",
-            _prefetch_tag(trace, phase="synthesis_input"),
+            "summarize_trace synthesis input run_id=%s chars=%d",
+            run_id,
             len(combined),
         )
 
@@ -199,8 +196,8 @@ def _generate_summary(trace: Trace) -> str:
         t_synth = time.monotonic()
 
         logger.info(
-            "%s done summary_chars=%d per_step=%.1fs synthesis=%.1fs total=%.1fs",
-            base_tag,
+            "summarize_trace done run_id=%s summary_chars=%d per_step=%.1fs synthesis=%.1fs total=%.1fs",
+            run_id,
             len(result),
             t_summaries - t0,
             t_synth - t_summaries,
@@ -208,7 +205,7 @@ def _generate_summary(trace: Trace) -> str:
         )
         return result
     except Exception:
-        logger.exception("%s failed after %.1fs", base_tag, time.monotonic() - t0)
+        logger.exception("summarize_trace failed run_id=%s after %.1fs", run_id, time.monotonic() - t0)
         raise
 
 

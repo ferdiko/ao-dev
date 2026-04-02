@@ -23,13 +23,9 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from sovara.common.constants import INFERENCE_SERVER_LOG
+from sovara.common.logger import create_file_logger
 from sovara.server.graph_models import RunGraph
-from sovara.server.graph_analysis.trace_chat.logger import (
-    configure_inference_process_logging,
-    format_log_event_banner,
-    format_log_tags,
-    get_logger,
-)
 from sovara.server.graph_analysis.trace_chat.cancel import TraceChatCancelled
 
 # ============================================================
@@ -37,7 +33,7 @@ from sovara.server.graph_analysis.trace_chat.cancel import TraceChatCancelled
 # ============================================================
 
 app = FastAPI()
-logger = get_logger()
+logger = create_file_logger(INFERENCE_SERVER_LOG)
 
 
 @app.get("/health")
@@ -63,10 +59,6 @@ def _log_preview(text: str, max_len: int = 160) -> str:
     if len(compact) <= max_len:
         return compact
     return compact[:max_len] + "..."
-
-
-def _prefetch_tag(run_id: str, **fields) -> str:
-    return format_log_tags("prefetch", run_id=run_id, **fields)
 
 
 def _graph_fingerprint(graph_data: dict) -> str:
@@ -150,7 +142,7 @@ def _ensure_prefetch_future(run_id: str, trace, *, is_new: bool) -> Future:
     if is_new:
         stale = _prefetch_futures.pop(run_id, None)
         if stale is not None and not stale.done():
-            logger.info("%s dropped stale running future", _prefetch_tag(run_id, phase="prefetch"))
+            logger.info("Prefetch dropped stale running future run_id=%s", run_id)
 
     future = _prefetch_futures.get(run_id)
     if future is not None:
@@ -171,8 +163,8 @@ def _ensure_prefetch_future(run_id: str, trace, *, is_new: bool) -> Future:
         future._sovara_run_id = run_id
         _prefetch_futures[run_id] = future
         logger.info(
-            "%s queued steps=%d is_new=%s",
-            _prefetch_tag(run_id, phase="prefetch"),
+            "Prefetch queued run_id=%s steps=%d is_new=%s",
+            run_id,
             len(trace),
             is_new,
         )
@@ -185,23 +177,23 @@ def _ensure_prefetch_future(run_id: str, trace, *, is_new: bool) -> Future:
             )
             if done_future.cancelled():
                 logger.warning(
-                    "%s future cancelled after %.1fs",
-                    _prefetch_tag(run_id, phase="prefetch"),
+                    "Prefetch future cancelled run_id=%s after %.1fs",
+                    run_id,
                     elapsed,
                 )
                 return
             try:
                 summary = done_future.result()
                 logger.info(
-                    "%s future complete in %.1fs summary_chars=%d",
-                    _prefetch_tag(run_id, phase="prefetch"),
+                    "Prefetch future complete run_id=%s elapsed=%.1fs summary_chars=%d",
+                    run_id,
                     elapsed,
                     len(summary),
                 )
             except Exception as exc:
                 logger.error(
-                    "%s future failed after %.1fs: %s",
-                    _prefetch_tag(run_id, phase="prefetch"),
+                    "Prefetch future failed run_id=%s after %.1fs: %s",
+                    run_id,
                     elapsed,
                     exc,
                 )
@@ -216,8 +208,8 @@ def _ensure_prefetch_future(run_id: str, trace, *, is_new: bool) -> Future:
         )
         state = "done" if future.done() else "running"
         logger.info(
-            "%s reusing existing future state=%s age=%.1fs",
-            _prefetch_tag(run_id, phase="prefetch"),
+            "Prefetch reusing existing future run_id=%s state=%s age=%.1fs",
+            run_id,
             state,
             elapsed,
         )
@@ -254,10 +246,9 @@ def prefetch(run_id: str):
             if trace is None:
                 logger.warning("Prefetch skipped for run_id=%s: no trace found", run_id)
                 return
-            logger.info(format_log_event_banner("Trace Opened", f"run_id={run_id}"))
             logger.info(
-                "%s trace_opened steps=%d is_new=%s",
-                format_log_tags("trace_chat", run_id=run_id, source="prefetch"),
+                "Trace chat opened from prefetch run_id=%s steps=%d is_new=%s",
+                run_id,
                 len(trace),
                 is_new,
             )
@@ -375,6 +366,5 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=5961)
     args = parser.parse_args()
 
-    logger = configure_inference_process_logging()
     logger.info("Inference server starting on %s:%s", args.host, args.port)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
