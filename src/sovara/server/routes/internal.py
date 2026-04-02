@@ -30,8 +30,14 @@ class InternalInferRequest(BaseModel):
 class InternalPriorsRetrieveRequest(BaseModel):
     run_id: str
     context: str
+    base_path: str | None = None
     model: str | None = None
     ignore_prior_ids: list[str] = Field(default_factory=list)
+
+
+class InternalPriorsQueryRequest(BaseModel):
+    run_id: str
+    path: str | None = None
 
 
 class InternalPrefixCacheLookupRequest(BaseModel):
@@ -87,10 +93,29 @@ def internal_priors_retrieve(req: InternalPriorsRetrieveRequest):
         return client.retrieve_priors(
             {
                 "context": req.context,
+                "base_path": req.base_path,
                 "model": req.model,
                 "ignore_prior_ids": req.ignore_prior_ids,
             }
         )
+    except PriorsBackendError as exc:
+        status_code = exc.status_code if 400 <= exc.status_code < 600 else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/priors/query")
+def internal_priors_query(req: InternalPriorsQueryRequest):
+    run = DB.query_one("SELECT user_id, project_id FROM runs WHERE run_id=?", (req.run_id,))
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run not found: {req.run_id}")
+    if not run["user_id"] or not run["project_id"]:
+        raise HTTPException(status_code=400, detail="Run is missing user/project scope for priors query")
+
+    client = PriorsBackendClient(user_id=run["user_id"], project_id=run["project_id"])
+    try:
+        return client.query_priors(path=req.path)
     except PriorsBackendError as exc:
         status_code = exc.status_code if 400 <= exc.status_code < 600 else 502
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
@@ -142,4 +167,3 @@ def internal_priors_prefix_cache_store(req: InternalPrefixCacheStoreRequest):
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-

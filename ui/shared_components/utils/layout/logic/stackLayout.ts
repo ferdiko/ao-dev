@@ -23,13 +23,16 @@ export function calculateStackLayout(
   // Center each node horizontally
   const centerX = (containerWidth - nodeWidth) / 2;
 
+  let currentY = 0;
   nodes.forEach((node, i) => {
+    const currentNodeHeight = node.height ?? nodeHeight;
     node.layer = i;
     node.visualLayer = i;
     node.x = centerX;
-    node.y = i * (nodeHeight + layerSpacing);
+    node.y = currentY;
     node.width = nodeWidth;
-    node.height = nodeHeight;
+    node.height = currentNodeHeight;
+    currentY += currentNodeHeight + layerSpacing;
   });
 
   // 2. Build LayerInfo (one node per layer)

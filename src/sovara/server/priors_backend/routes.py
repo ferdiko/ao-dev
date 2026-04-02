@@ -337,6 +337,8 @@ def get_prior(request: Request, prior_id: str):
 def query_priors(request: Request, body: PriorQueryRequest):
     store = get_prior_store(request)
     path = _normalize_path(body.path) if body.path else ""
+    if body.path is not None and not store.folder_exists(path):
+        raise HTTPException(status_code=404, detail="Folder not found")
     priors = _active_only(store.list_all(path=path if body.path is not None else None, include_content=True))
     return {
         "path": path,
@@ -854,6 +856,8 @@ def delete_prior(request: Request, prior_id: str):
 async def retrieve_priors_endpoint(request: Request, body: PriorRetrieveRequest):
     store = get_prior_store(request)
     base_path = _normalize_path(body.base_path)
+    if body.base_path and not store.folder_exists(base_path):
+        raise HTTPException(status_code=404, detail="Folder not found")
     scope = store.read_scope_metadata()
     priors_revision = int(scope["revision"])
     requested_model = body.model or "openai/gpt-5.4"

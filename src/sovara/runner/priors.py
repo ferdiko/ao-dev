@@ -1,12 +1,11 @@
 """Runtime priors helpers and the legacy manual priors injection API."""
 from dataclasses import dataclass, field
+import io
 import json
 import time
 import urllib.error
 import urllib.request
 from typing import Any, List, Optional
-
-import httpx
 
 from sovara.common.constants import PRIORS_SERVER_URL
 from sovara.common.logger import logger
@@ -322,6 +321,8 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
             metadata=metadata,
         )
 
+    import httpx
+
     try:
         started_at = time.perf_counter()
         _runtime_log(
@@ -456,6 +457,16 @@ def _priors_request(endpoint: str, payload: dict) -> dict:
     url = f"{PRIORS_SERVER_URL}/api/v1{endpoint}"
     data = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
+    run_id = get_run_id()
+    if run_id:
+        run = DB.query_one("SELECT user_id, project_id FROM runs WHERE run_id=?", (run_id,))
+        if run is not None:
+            user_id = run.get("user_id")
+            project_id = run.get("project_id")
+            if user_id:
+                headers["x-sovara-user-id"] = str(user_id)
+            if project_id:
+                headers["x-sovara-project-id"] = str(project_id)
 
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=300) as response:
@@ -464,21 +475,46 @@ def _priors_request(endpoint: str, payload: dict) -> dict:
 
 def _query_priors(path: Optional[str] = None) -> tuple[List[dict], str]:
     """Fetch all priors from a path and return both rows and injected context."""
-    payload = {}
-    if path is not None:
-        payload["path"] = path
-    result = _priors_request("/query/priors", payload)
+    run_id = get_run_id()
+    if run_id:
+        result = http_post(
+            "/internal/priors/query",
+            {
+                "run_id": run_id,
+                "path": path,
+            },
+            timeout=_INTERNAL_PRIORS_HTTP_TIMEOUT_S,
+        )
+    else:
+        payload = {}
+        if path is not None:
+            payload["path"] = path
+        result = _priors_request("/query/priors", payload)
     return result.get("priors", []), result.get("injected_context", "")
 
 
 def _retrieve_priors(path: Optional[str], context: str, model: Optional[str] = None) -> List[dict]:
     """Retrieve relevant priors via the LLM-backed retriever."""
-    payload = {"context": context}
-    if path is not None:
-        payload["base_path"] = path
-    if model is not None:
-        payload["model"] = model
-    result = _priors_request("/query/priors/retrieve", payload)
+    run_id = get_run_id()
+    if run_id:
+        result = http_post(
+            "/internal/priors/retrieve",
+            {
+                "run_id": run_id,
+                "context": context,
+                "base_path": path,
+                "model": model,
+                "ignore_prior_ids": [],
+            },
+            timeout=_INTERNAL_PRIORS_HTTP_TIMEOUT_S,
+        )
+    else:
+        payload = {"context": context}
+        if path is not None:
+            payload["base_path"] = path
+        if model is not None:
+            payload["model"] = model
+        result = _priors_request("/priors/retrieve", payload)
     return result.get("priors", [])
 
 
@@ -519,6 +555,35 @@ def _track_priors(prior_ids: List[str]) -> None:
         logger.debug(f"Could not track prior application: {e}")
 
 
+def _http_error_detail(exc: urllib.error.HTTPError) -> str | None:
+    if exc.fp is None:
+        return None
+    raw: bytes | None = None
+    try:
+        raw = exc.fp.read()
+    except Exception:
+        return None
+    finally:
+        try:
+            exc.fp = io.BytesIO(raw if isinstance(raw, bytes) else b"")
+        except Exception:
+            pass
+
+    if not isinstance(raw, bytes) or not raw:
+        return None
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        text = raw.decode("utf-8", errors="ignore").strip()
+        return text or None
+
+    if isinstance(payload, dict):
+        detail = payload.get("detail") or payload.get("error")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+    return None
+
+
 def inject_priors(
     path: Optional[str] = None,
     context: Optional[str] = None,
@@ -535,7 +600,11 @@ def inject_priors(
         model: Optional retriever model override.
 
     Returns:
-        Formatted priors string, or empty string if unavailable.
+        Formatted priors string, or empty string if the priors server is unavailable.
+
+    Raises:
+        ValueError: When the requested priors folder path is invalid for the current scope.
+        RuntimeError: When the priors request fails with a non-recoverable HTTP error.
     """
     if method == "none":
         return ""
@@ -547,9 +616,22 @@ def inject_priors(
             priors = _retrieve_priors(path, context, model=model)
             injected_context = _format_priors(priors)
         elif method == "all":
-            priors, injected_context = _query_priors(path)
+            priors, _unused_injected_context = _query_priors(path)
+            injected_context = _format_priors(priors)
         else:
             raise ValueError(f"Unknown method: {method}")
+    except urllib.error.HTTPError as e:
+        detail = _http_error_detail(e) or e.reason
+        if e.code == 404 and path:
+            raise ValueError(
+                f"inject_priors(path={path!r}, method={method!r}) failed because the prior folder "
+                f"{path!r} does not exist in the current SovaraDB project scope. "
+                f"Fix the path or create that folder in SovaraDB and retry. "
+                f"Backend detail: {detail}"
+            ) from e
+        raise RuntimeError(
+            f"inject_priors(path={path!r}, method={method!r}) failed with HTTP {e.code}: {detail}"
+        ) from e
     except (urllib.error.URLError, ConnectionError) as e:
         logger.warning(f"Priors server unavailable: {e}")
         return ""

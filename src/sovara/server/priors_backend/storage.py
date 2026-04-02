@@ -92,6 +92,12 @@ class PriorStore:
     def _folder_path(self, path: str) -> str:
         return os.path.join(self.base, _normalize_path(path))
 
+    def folder_exists(self, path: str) -> bool:
+        normalized = _normalize_path(path)
+        if not normalized:
+            return True
+        return os.path.isdir(self._folder_path(normalized))
+
     def _join_folder_path(self, parent_path: str, name: str) -> str:
         parent = _normalize_path(parent_path)
         segment = name.strip("/").strip()

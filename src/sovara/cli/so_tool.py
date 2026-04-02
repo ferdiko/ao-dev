@@ -854,7 +854,7 @@ def priors_retrieve_command(args) -> None:
         data["base_path"] = args.path
     if args.model:
         data["model"] = args.model
-    output_json(_priors_request("POST", "/api/v1/query/priors/retrieve", data))
+    output_json(_priors_request("POST", "/api/v1/priors/retrieve", data))
 
 
 def _normalize_folder_path(path: str) -> str:

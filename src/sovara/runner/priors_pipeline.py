@@ -21,6 +21,8 @@ _PROMPT_BEARING_PATTERNS = [
     re.compile(r"^instructions$"),
     re.compile(r"^body\.input$"),
     re.compile(r"^input$"),
+    re.compile(r"^body\.input\.\d+\.content$"),
+    re.compile(r"^input\.\d+\.content$"),
     re.compile(r"^body\.messages\.\d+\.content$"),
     re.compile(r"^messages\.\d+\.content$"),
     re.compile(r"^body\.input\.\d+\.content\.\d+\.text$"),

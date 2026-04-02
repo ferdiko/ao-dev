@@ -4,23 +4,19 @@ import { Handle, Position, NodeProps } from 'reactflow';
 import { GraphNode } from '../../types';
 import { NodePopover } from './NodePopover';
 import { LabelEditor } from '../LabelEditor';
-import { NODE_WIDTH, NODE_HEIGHT, NODE_BORDER_WIDTH } from '../../utils/layoutConstants';
+import {
+  NODE_WIDTH,
+  NODE_HEIGHT,
+  NODE_BORDER_WIDTH,
+  NODE_PRIOR_HEADER_HEIGHT,
+  getGraphNodeHeight,
+} from '../../utils/layoutConstants';
 import { MessageSender } from '../../types/MessageSender';
 
 // Define handle offset constants for consistency
 const SIDE_HANDLE_OFFSET = 15; // pixels from center
 const HANDLE_TARGET_POSITION = 50 - SIDE_HANDLE_OFFSET; // 35% from top
 const HANDLE_SOURCE_POSITION = 50 + SIDE_HANDLE_OFFSET; // 65% from top
-
-// Label truncation
-const MAX_LABEL_LENGTH = 20;
-
-function truncateLabel(label: string): string {
-  if (label.length > MAX_LABEL_LENGTH) {
-    return label.slice(0, MAX_LABEL_LENGTH - 1) + "…";
-  }
-  return label;
-}
 
 interface CustomNodeData extends GraphNode {
   attachments: any;
@@ -108,6 +104,7 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
   const isDarkTheme = data.isDarkTheme ?? false;
   const priorCount = typeof data.prior_count === 'number' ? data.prior_count : 0;
   const showPriorHeader = priorCount > 0;
+  const totalNodeHeight = getGraphNodeHeight(data.prior_count);
   const priorHeaderLabel = `${priorCount} prior${priorCount === 1 ? '' : 's'}`;
   const priorHeaderStyle: React.CSSProperties = {
     background: isDarkTheme ? 'rgba(56, 139, 253, 0.18)' : 'rgba(9, 105, 218, 0.14)',
@@ -138,12 +135,12 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
       style={{
         boxSizing: "border-box",
         width: NODE_WIDTH,
-        height: NODE_HEIGHT,
+        height: totalNodeHeight,
         background: "var(--vscode-input-background)",
         border: `${NODE_BORDER_WIDTH}px solid var(--vscode-foreground, #CCCCCC)`,
         borderRadius: 8,
-        padding: 2,
         position: "relative",
+        overflow: "hidden",
         cursor: "pointer",
         filter: isHovered ? (isDarkTheme ? 'brightness(1.2)' : 'brightness(0.9)') : 'none',
         transition: 'filter 0.1s ease-out',
@@ -171,23 +168,6 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
         data.onHover?.(null);
       }}
     >
-      {typeof data.step_id === "number" && (
-        <div
-          style={{
-            position: "absolute",
-            top: showPriorHeader ? 28 : 8,
-            right: 10,
-            fontSize: "10px",
-            fontWeight: 700,
-            opacity: 0.72,
-            whiteSpace: "nowrap",
-            pointerEvents: "none",
-          }}
-          title={`Step ${data.step_id}`}
-        >
-          {`Step ${data.step_id}`}
-        </div>
-      )}
       {showPriorHeader && priorHeaderLabel && (
         <div
           style={{
@@ -195,17 +175,17 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
             top: 0,
             left: 0,
             right: 0,
-            height: 20,
+            height: NODE_PRIOR_HEADER_HEIGHT,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            borderTopLeftRadius: 6,
-            borderTopRightRadius: 6,
             fontSize: '10px',
             fontWeight: 700,
             letterSpacing: '0.02em',
             textTransform: 'uppercase',
+            boxSizing: 'border-box',
             ...priorHeaderStyle,
+            zIndex: 2,
           }}
           title={priorHeaderLabel}
         >
@@ -304,38 +284,82 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({
       {/* Label */}
       <div
         style={{
-          fontSize: "11px",
-          fontWeight: "600",
-          fontFamily: "var(--vscode-font-family, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif)",
+          position: 'absolute',
+          top: showPriorHeader ? NODE_PRIOR_HEADER_HEIGHT : 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          boxSizing: "border-box",
+          padding: "6px 10px",
+          zIndex: 1,
           display: "flex",
-          alignItems: "center",
+          flexDirection: "column",
           justifyContent: "center",
-          height: "100%",
           opacity: isEditingLabel ? 0 : 1,
-          color: "var(--vscode-foreground)",
-          textAlign: "center",
-          padding: typeof data.step_id === "number"
-            ? (showPriorHeader ? "18px 54px 0 8px" : "0 54px 0 8px")
-            : (showPriorHeader ? "18px 8px 0 8px" : "0 8px"),
           overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
         }}
-        title={data.label}
       >
         <div
           style={{
             display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: "2px",
-            width: "100%",
+            alignItems: "baseline",
+            gap: 8,
+            minWidth: 0,
           }}
         >
-          <div style={{ width: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {truncateLabel(data.label)}
+          <div
+            style={{
+              fontSize: "11px",
+              fontWeight: 600,
+              fontFamily: "var(--vscode-font-family, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif)",
+              color: "var(--vscode-foreground)",
+              flex: "1 1 auto",
+              minWidth: 0,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+            title={data.label}
+          >
+            {data.label}
           </div>
+          {typeof data.step_id === "number" && (
+            <div
+              style={{
+                fontSize: "9px",
+                fontWeight: 500,
+                fontFamily: "var(--vscode-font-family, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif)",
+                color: "var(--vscode-descriptionForeground, var(--vscode-foreground))",
+                opacity: 0.78,
+                whiteSpace: "nowrap",
+                flex: "0 0 auto",
+                pointerEvents: "none",
+              }}
+              title={`Step ${data.step_id}`}
+            >
+              {`Step ${data.step_id}`}
+            </div>
+          )}
         </div>
+        {data.raw_node_name && (
+          <div
+            style={{
+              fontSize: "9px",
+              fontWeight: 400,
+              fontFamily: "var(--vscode-font-family, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif)",
+              color: "var(--vscode-descriptionForeground, var(--vscode-foreground))",
+              opacity: 0.7,
+              marginTop: 1,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+            title={data.raw_node_name}
+          >
+            {data.raw_node_name}
+          </div>
+        )}
+        {!data.raw_node_name && <div style={{ height: 10, marginTop: 1 }} />}
       </div>
     </div>
   );

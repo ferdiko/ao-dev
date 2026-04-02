@@ -89,6 +89,21 @@ def test_extract_prompt_bearing_keys_in_order_without_role_fields():
     ]
 
 
+def test_extract_prompt_bearing_keys_includes_plain_responses_input_strings():
+    flattened = {
+        "body.input.0.role": "system",
+        "body.input.0.content": "You are a helpful assistant.",
+        "body.input.1.role": "user",
+        "body.input.1.content": "Question",
+        "body.model": "gpt-5.4-mini",
+    }
+
+    assert extract_prompt_bearing_keys(flattened, "httpx.Client.send") == [
+        "body.input.0.content",
+        "body.input.1.content",
+    ]
+
+
 def test_replay_injected_prefix_replaces_prompt_pair_values():
     flattened = {
         "body.system": "System",

@@ -3,8 +3,15 @@ export type LayoutMode = 'grid' | 'stack';
 export const LAYOUT_MODE: LayoutMode = 'stack';
 
 // Node dimensions
-export const NODE_WIDTH = 150;
-export const NODE_HEIGHT = 32;
+export const NODE_WIDTH = 170;
+export const NODE_HEIGHT = 46;
+export const NODE_PRIOR_HEADER_HEIGHT = 18;
+
+export function getGraphNodeHeight(priorCount?: number | null): number {
+  return typeof priorCount === 'number' && priorCount > 0
+    ? NODE_HEIGHT + NODE_PRIOR_HEADER_HEIGHT
+    : NODE_HEIGHT;
+}
 
 // Node styling
 export const NODE_BORDER_WIDTH = 1;

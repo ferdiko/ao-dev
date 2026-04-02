@@ -121,3 +121,38 @@ def test_priors_retrieve_endpoint_returns_selected_priors_and_scope_revision(mon
     assert refreshed_response.status_code == 200
     assert refreshed_response.json()["priors_revision"] == 2
     assert calls["count"] == 2
+
+
+def test_query_priors_returns_404_for_missing_folder():
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/api/v1/query/priors",
+        headers={
+            "x-sovara-user-id": "missing-query-user",
+            "x-sovara-project-id": "missing-query-project",
+        },
+        json={"path": "beaver/retriever/"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Folder not found"
+
+
+def test_priors_retrieve_endpoint_returns_404_for_missing_base_path():
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/api/v1/priors/retrieve",
+        headers={
+            "x-sovara-user-id": "missing-retrieve-user",
+            "x-sovara-project-id": "missing-retrieve-project",
+        },
+        json={
+            "context": "Need guidance for transient API failures",
+            "base_path": "beaver/retriever/",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Folder not found"

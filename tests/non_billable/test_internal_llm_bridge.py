@@ -282,9 +282,49 @@ def test_internal_priors_retrieve_resolves_scope_from_run(monkeypatch):
     assert captured["scope"] == (TEST_USER_ID, TEST_PROJECT_ID)
     assert captured["body"] == {
         "context": "body.messages.0.content: retry",
+        "base_path": None,
         "model": None,
         "ignore_prior_ids": ["p1"],
     }
+
+
+def test_internal_priors_query_resolves_scope_from_run(monkeypatch):
+    run_id = str(uuid.uuid4())
+    DB.add_run(
+        run_id=run_id,
+        name="Priors Query",
+        timestamp=datetime.now(timezone.utc),
+        cwd="/tmp",
+        command="python -m test.workflow",
+        environment={},
+        project_id=TEST_PROJECT_ID,
+        user_id=TEST_USER_ID,
+    )
+
+    captured = {}
+
+    def fake_query_priors(self, path=None):
+        captured["scope"] = (self.user_id, self.project_id)
+        captured["path"] = path
+        return {"priors": [], "injected_context": "", "path": path or ""}
+
+    monkeypatch.setattr("sovara.server.priors_client.PriorsBackendClient.query_priors", fake_query_priors)
+    client = _make_internal_test_client()
+
+    try:
+        response = client.post(
+            "/internal/priors/query",
+            json={
+                "run_id": run_id,
+                "path": "retriever/",
+            },
+        )
+    finally:
+        DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
+
+    assert response.status_code == 200
+    assert captured["scope"] == (TEST_USER_ID, TEST_PROJECT_ID)
+    assert captured["path"] == "retriever/"
 
 
 def test_internal_priors_prefix_cache_lookup_resolves_scope_from_run(monkeypatch):

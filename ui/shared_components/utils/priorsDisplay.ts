@@ -1,13 +1,17 @@
 const SOVARA_PRIORS_BLOCK_RE = /<sovara-priors\b[^>]*>[\s\S]*?<\/sovara-priors>/gi;
+const SOVARA_PRIORS_BLOCK_WITH_SEPARATOR_RE =
+  /<sovara-priors\b[^>]*>[\s\S]*?<\/sovara-priors>\n\n/gi;
 
 export function stripSovaraPriorsBlocks(text: string): string {
   if (!text) {
     return text;
   }
 
-  return text
-    .replace(SOVARA_PRIORS_BLOCK_RE, "")
-    .replace(/\n{3,}/g, "\n\n");
+  const withoutManagedSeparator = text.replace(
+    SOVARA_PRIORS_BLOCK_WITH_SEPARATOR_RE,
+    "",
+  );
+  return withoutManagedSeparator.replace(SOVARA_PRIORS_BLOCK_RE, "");
 }
 
 export function stripSovaraPriorsFromValue<T>(value: T): T {
