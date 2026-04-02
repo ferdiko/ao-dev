@@ -3,19 +3,27 @@ import os
 import uuid
 from datetime import datetime, timezone
 
+import pytest
+
 from sovara.common.constants import PRIORS_SERVER_URL, SOVARA_CONFIG
 from sovara.server.database_manager import DB
 from sovara.server.routes.ui import (
     CreateProjectTagRequest,
     EditInputRequest,
     EditOutputRequest,
+    ChatMessageRequest,
+    PersistedTraceChatHistoryRequest,
     RestartRequest,
+    chat,
+    clear_trace_chat_history,
     create_project_tag,
     edit_input,
     edit_output,
+    get_trace_chat_history,
     get_project_runs,
     get_ui_config,
     restart,
+    update_trace_chat_history,
 )
 from sovara.server.state import ServerState
 
@@ -163,5 +171,184 @@ def test_get_project_runs_applies_bool_metric_filters():
         )
 
         assert [row["run_id"] for row in response["finished"]] == [run_true]
+    finally:
+        DB.delete_project(project_id)
+
+
+def test_trace_chat_history_round_trips_for_a_run():
+    project_id = str(uuid.uuid4())
+    run_id = str(uuid.uuid4())
+    DB.upsert_project(project_id, "trace-chat-project", "")
+
+    try:
+        DB.add_run(
+            run_id=run_id,
+            name="Trace Chat Run",
+            timestamp=datetime.now(timezone.utc),
+            cwd=os.getcwd(),
+            command="test",
+            environment={},
+            parent_run_id=run_id,
+            project_id=project_id,
+        )
+
+        update_response = update_trace_chat_history(
+            run_id,
+            PersistedTraceChatHistoryRequest(history=[
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi there"},
+            ]),
+        )
+        get_response = get_trace_chat_history(run_id)
+        clear_response = clear_trace_chat_history(run_id)
+
+        assert update_response == {
+            "history": [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi there"},
+            ],
+        }
+        assert get_response == update_response
+        assert clear_response == {"history": []}
+        assert get_trace_chat_history(run_id) == {"history": []}
+    finally:
+        DB.delete_project(project_id)
+
+
+def test_trace_chat_history_invalid_json_falls_back_to_empty_history():
+    project_id = str(uuid.uuid4())
+    run_id = str(uuid.uuid4())
+    DB.upsert_project(project_id, "trace-chat-project", "")
+
+    try:
+        DB.add_run(
+            run_id=run_id,
+            name="Trace Chat Run",
+            timestamp=datetime.now(timezone.utc),
+            cwd=os.getcwd(),
+            command="test",
+            environment={},
+            parent_run_id=run_id,
+            project_id=project_id,
+        )
+        DB.execute("UPDATE runs SET trace_chat_history=? WHERE run_id=?", ("{", run_id))
+
+        assert get_trace_chat_history(run_id) == {"history": []}
+    finally:
+        DB.delete_project(project_id)
+
+
+@pytest.mark.anyio
+async def test_chat_route_persists_user_message_before_proxy_and_appends_answer(monkeypatch):
+    import httpx
+
+    project_id = str(uuid.uuid4())
+    run_id = str(uuid.uuid4())
+    DB.upsert_project(project_id, "trace-chat-project", "")
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"answer": "done", "edits_applied": False}
+
+    class FakeAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json, timeout, headers=None):
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    try:
+        DB.add_run(
+            run_id=run_id,
+            name="Trace Chat Run",
+            timestamp=datetime.now(timezone.utc),
+            cwd=os.getcwd(),
+            command="test",
+            environment={},
+            parent_run_id=run_id,
+            project_id=project_id,
+        )
+
+        response = await chat(
+            run_id,
+            ChatMessageRequest(message="hello", history=[]),
+        )
+
+        assert response == {"answer": "done", "edits_applied": False}
+        assert DB.get_trace_chat_history(run_id) == [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "done"},
+        ]
+    finally:
+        DB.delete_project(project_id)
+
+
+@pytest.mark.anyio
+async def test_chat_route_returns_answer_even_if_post_persist_crashes(monkeypatch):
+    import httpx
+
+    project_id = str(uuid.uuid4())
+    run_id = str(uuid.uuid4())
+    DB.upsert_project(project_id, "trace-chat-project", "")
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"answer": "done", "edits_applied": False}
+
+    class FakeAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json, timeout, headers=None):
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    try:
+        DB.add_run(
+            run_id=run_id,
+            name="Trace Chat Run",
+            timestamp=datetime.now(timezone.utc),
+            cwd=os.getcwd(),
+            command="test",
+            environment={},
+            parent_run_id=run_id,
+            project_id=project_id,
+        )
+
+        original_update = DB.update_trace_chat_history
+        call_count = {"count": 0}
+
+        def flaky_update(target_run_id, history):
+            call_count["count"] += 1
+            if call_count["count"] == 2:
+                raise RuntimeError("db busy")
+            return original_update(target_run_id, history)
+
+        monkeypatch.setattr(DB, "update_trace_chat_history", flaky_update)
+
+        response = await chat(
+            run_id,
+            ChatMessageRequest(message="hello", history=[]),
+        )
+
+        assert response == {"answer": "done", "edits_applied": False}
+        assert DB.get_trace_chat_history(run_id) == [
+            {"role": "user", "content": "hello"},
+        ]
     finally:
         DB.delete_project(project_id)

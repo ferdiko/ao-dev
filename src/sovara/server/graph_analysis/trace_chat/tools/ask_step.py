@@ -1,6 +1,6 @@
 """ask_step tool — answers a specific question about a step without injecting full content."""
 
-from ....llm_backend import infer_text
+from ....llm_backend import NO_THINKING_EXTRA_BODY, infer_text
 from ..utils.step_ids import resolve_step_index
 from ..utils.trace import Trace, render_record_markdown
 
@@ -26,6 +26,7 @@ def ask_step(trace: Trace, question, step_id=None) -> str:
         [{"role": "system", "content": ASK_STEP_SYSTEM},
          {"role": "user", "content": content}],
         tier="cheap",
+        extra_body=NO_THINKING_EXTRA_BODY,
         max_tokens=512,
     )
 

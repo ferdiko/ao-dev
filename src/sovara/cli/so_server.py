@@ -129,7 +129,7 @@ def launch_daemon_server() -> bool:
 
 def server_command_parser():
     parser = ArgumentParser(
-        usage="so-server {start, stop, restart, clear, logs, clear-logs}",
+        usage="so-server {start, stop, restart, clear, logs, priors-logs, infer-logs, clear-logs}",
         description="Server utilities.",
         allow_abbrev=False,
     )

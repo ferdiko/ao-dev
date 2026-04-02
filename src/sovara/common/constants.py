@@ -46,6 +46,7 @@ MESSAGE_POLL_INTERVAL = 0.1
 SERVER_INACTIVITY_TIMEOUT = 1200  # Shutdown server after 20 min of inactivity
 RUN_ORPHAN_TIMEOUT = 5  # Seconds before a run without SSE is considered dead
 SHUTDOWN_WAIT = 2
+TRACE_CHAT_SCATTER_BUDGET_SECONDS = 5.0
 
 # Run meta data.
 DEFAULT_NOTE = "Take notes."

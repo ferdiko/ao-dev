@@ -43,21 +43,6 @@ def extract_text_content(content) -> str:
     return str(content)
 
 
-def format_messages(messages: list, system_prompt: str = "") -> str:
-    """Backward-compatible message renderer used by legacy callers."""
-    parts = []
-    if system_prompt:
-        parts.append(f"[system]\n{system_prompt}")
-    for msg in messages:
-        if isinstance(msg, dict):
-            role = msg.get("role", "unknown")
-            content = extract_text_content(msg.get("content", ""))
-            parts.append(f"[{role}]\n{content}")
-        else:
-            parts.append(stringify_field(msg))
-    return "\n\n".join(parts)
-
-
 def stringify_field(value) -> str:
     """Convert a trace field to string. Pass strings through, JSON-dump the rest."""
     if isinstance(value, str):
@@ -163,6 +148,18 @@ class RenderBlock:
         if self.paragraphs:
             return "\n\n".join(self.paragraphs)
         return extract_text_content(self.raw_value)
+
+
+def block_char_count(block: RenderBlock) -> int:
+    """Count the user-visible chars represented by one render block."""
+    if block.kind == "text":
+        return len(block.text)
+    return len(stringify_field(block.raw_value))
+
+
+def blocks_char_count(blocks: List[RenderBlock]) -> int:
+    """Count the user-visible chars represented by multiple render blocks."""
+    return sum(block_char_count(block) for block in blocks)
 
 
 @dataclass
@@ -714,8 +711,10 @@ class Trace:
     prompt_registry: Dict[str, str] = field(default_factory=dict)
     diffed: List[DiffedRecord] = field(default_factory=list)
     summary_cache: Dict[int, str] = field(default_factory=dict, repr=False)
+    step_overview_cache: Dict[int, str] = field(default_factory=dict, repr=False)
+    step_semantic_summary_cache: Dict[int, str] = field(default_factory=dict, repr=False)
     verdict_cache: Dict[int, tuple] = field(default_factory=dict, repr=False)
-    prompt_sections_cache: Dict[str, Any] = field(default_factory=dict, repr=False)
+    editable_content_cache: Dict[str, Any] = field(default_factory=dict, repr=False)
     prefetched_summary: str = field(default="", repr=False)
     run_id: Optional[str] = None
 
@@ -747,7 +746,7 @@ class Trace:
         self,
         affected_indices: set[int],
         *,
-        keep_prompt_sections_for: Optional[int] = None,
+        keep_editable_content_for: Optional[int] = None,
     ) -> None:
         """Invalidate derived analysis and recompute structural views after an edit."""
         for idx in affected_indices:
@@ -756,18 +755,20 @@ class Trace:
                 self.records[idx].correct = None
 
         self.summary_cache.clear()
+        self.step_overview_cache.clear()
+        self.step_semantic_summary_cache.clear()
         self.verdict_cache.clear()
         self.prefetched_summary = ""
 
         self.prompt_registry, self.diffed = diff_trace(self.records)
 
-        if keep_prompt_sections_for is None:
-            self.prompt_sections_cache = {}
+        if keep_editable_content_for is None:
+            self.editable_content_cache = {}
             return
 
-        cache_key = f"step:{keep_prompt_sections_for}"
-        kept = self.prompt_sections_cache.get(cache_key)
-        self.prompt_sections_cache = {cache_key: kept} if kept is not None else {}
+        cache_key = f"step:{keep_editable_content_for}"
+        kept = self.editable_content_cache.get(cache_key)
+        self.editable_content_cache = {cache_key: kept} if kept is not None else {}
 
     def prompt_turns(self) -> Dict[str, List[int]]:
         groups: Dict[str, List[int]] = {}

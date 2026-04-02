@@ -3254,23 +3254,26 @@
   min-height: 0;
   overflow: hidden;
   background: #ffffff;
+  transition: width 0.2s ease;
 }
 .run-chat-panel.collapsed {
   width: 40px !important;
   flex: none;
   overflow: visible;
-  transition: width 0.25s ease;
 }
 .run-chat-panel .trace-chat {
   flex: 1;
   min-height: 0;
   background: #ffffff;
 }
+.run-chat-panel.collapsed .trace-chat {
+  display: none;
+}
 
 /* Collapsed chat strip */
 .run-chat-collapsed {
   position: relative;
-  display: flex;
+  display: none;
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -3278,6 +3281,9 @@
   border-left: 1px solid var(--color-border);
   background: var(--color-surface);
   cursor: pointer;
+}
+.run-chat-panel.collapsed .run-chat-collapsed {
+  display: flex;
 }
 .run-chat-collapsed-toggle {
   position: absolute;
@@ -4044,6 +4050,12 @@
   padding: 0 14px;
   border-bottom: 1px solid var(--color-border);
 }
+.trace-chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-left: auto;
+}
 .trace-chat-body {
   flex: 1;
   display: flex;
@@ -4068,6 +4080,16 @@
 }
 .trace-chat-collapse:hover {
   color: var(--color-text);
+}
+.trace-chat-clear-btn {
+  padding: 4px 10px;
+}
+.trace-chat-clear-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.trace-chat-clear-btn:disabled:hover {
+  background: transparent;
 }
 .trace-chat-title {
   display: flex;

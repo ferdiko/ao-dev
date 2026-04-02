@@ -7,7 +7,7 @@ import httpx
 
 from sovara.common.constants import TEST_PROJECT_ID, TEST_USER_ID
 from sovara.runner.monkey_patching.patching_utils import get_node_kind
-from sovara.server.database_backends.sqlite import _ensure_llm_calls_schema, _ensure_prior_schema
+from sovara.server.database_backends.sqlite import _ensure_llm_calls_schema, _ensure_prior_schema, _ensure_run_schema
 from sovara.server.database_manager import DB
 
 
@@ -234,3 +234,55 @@ def test_ensure_llm_calls_schema_renames_input_delta_column():
     columns = [row["name"] for row in conn.execute("PRAGMA table_info(llm_calls)").fetchall()]
     assert "input_delta_json" not in columns
     assert "prompt_suffix_json" in columns
+
+
+def test_ensure_run_schema_adds_trace_chat_history_column():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE llm_calls (
+            run_id TEXT,
+            node_uuid TEXT,
+            input TEXT,
+            input_hash TEXT,
+            input_overwrite TEXT,
+            output TEXT,
+            color TEXT,
+            label TEXT,
+            api_type TEXT,
+            stack_trace TEXT,
+            timestamp TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE runs (
+            run_id TEXT PRIMARY KEY,
+            parent_run_id TEXT,
+            project_id TEXT,
+            user_id TEXT,
+            graph_topology TEXT,
+            color_preview TEXT,
+            timestamp TIMESTAMP DEFAULT (datetime('now')),
+            runtime_seconds REAL,
+            active_runtime_seconds REAL,
+            cwd TEXT,
+            command TEXT,
+            environment TEXT,
+            version_date TEXT,
+            name TEXT,
+            success TEXT CHECK (success IN ('', 'Satisfactory', 'Failed')),
+            custom_metrics TEXT NOT NULL DEFAULT '{}',
+            thumb_label INTEGER CHECK (thumb_label IN (0, 1)),
+            notes TEXT,
+            log TEXT
+        )
+        """
+    )
+
+    _ensure_run_schema(conn)
+
+    columns = [row["name"] for row in conn.execute("PRAGMA table_info(runs)").fetchall()]
+    assert "trace_chat_history" in columns

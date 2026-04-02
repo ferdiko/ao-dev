@@ -67,6 +67,9 @@ so-server clear
 # View server logs
 so-server logs
 
+# View inference server logs
+so-server infer-logs
+
 # Clear all log files
 so-server clear-logs
 ```
@@ -77,6 +80,7 @@ so-server clear-logs
 - If you make changes to server code, run `so-server restart` to apply them
 - Log files are stored in `~/.sovara/logs/`:
   - `main_server.log` - Main server logs
+  - `inference_server.log` - Inference server and trace-chat logs
 
 ### Troubleshooting
 

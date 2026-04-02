@@ -48,126 +48,12 @@ export interface Run {
 // HTTP helpers
 // ============================================================
 
-async function get<T>(path: string): Promise<T> {
-  const resp = await fetchWithBackendRetry(path);
-  if (!resp.ok) {
-    throw new Error(await readErrorMessage(resp, `GET ${path} failed: ${resp.status}`));
-  }
-  return resp.json();
-}
+const BACKEND_START_TIMEOUT_MS = 10_000;
+const BACKEND_HEALTH_POLL_MS = 250;
+let backendStartupPromise: Promise<void> | null = null;
 
-async function post<T>(path: string, body: unknown): Promise<T> {
-  const resp = await fetchWithBackendRetry(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) {
-    throw new Error(await readErrorMessage(resp, `POST ${path} failed: ${resp.status}`));
-  }
-  return resp.json();
-}
-
-async function put<T>(path: string, body: unknown): Promise<T> {
-  const resp = await fetchWithBackendRetry(path, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) {
-    throw new Error(await readErrorMessage(resp, `PUT ${path} failed: ${resp.status}`));
-  }
-  return resp.json();
-}
-
-async function del<T>(path: string): Promise<T> {
-  const resp = await fetchWithBackendRetry(path, {
-    method: "DELETE",
-  });
-  if (!resp.ok) {
-    throw new Error(await readErrorMessage(resp, `DELETE ${path} failed: ${resp.status}`));
-  }
-  return resp.json();
-}
-
-export { post };
-
-function shouldRetryBackend(resp: Response): boolean {
-  return resp.status >= 500;
-}
-
-async function readErrorMessage(resp: Response, fallback: string): Promise<string> {
-  try {
-    const cloned = resp.clone();
-    const data = await cloned.json();
-    if (data && typeof data === "object") {
-      const error = "error" in data ? data.error : null;
-      if (typeof error === "string" && error.trim()) {
-        return error;
-      }
-      const detail = "detail" in data ? data.detail : null;
-      if (typeof detail === "string" && detail.trim()) {
-        return detail;
-      }
-    }
-  } catch {
-    // Fall through to text parsing below.
-  }
-
-  try {
-    const text = await resp.text();
-    if (text.trim()) {
-      return text.trim();
-    }
-  } catch {
-    // Fall back to the generic status message below.
-  }
-
-  return fallback;
-}
-
-async function fetchWithBackendRetry(path: string, init?: RequestInit): Promise<Response> {
-  try {
-    const resp = await fetch(path, init);
-    if (!shouldRetryBackend(resp)) {
-      return resp;
-    }
-  } catch {
-    // Fall through to the startup hook below.
-  }
-
-  await ensureBackendRunning();
-  return fetch(path, init);
-}
-
-function withQuery(path: string, params: Record<string, string | number | boolean | null | undefined>): string {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === null || value === "") continue;
-    search.set(key, String(value));
-  }
-  const query = search.toString();
-  return query ? `${path}?${query}` : path;
-}
-
-async function ensureBackendRunning(): Promise<void> {
-  if (await isBackendHealthy()) {
-    return;
-  }
-
-  const resp = await fetch("/_sovara/start-server", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
-  });
-  if (!resp.ok) {
-    throw new Error(`POST /_sovara/start-server failed: ${resp.status}`);
-  }
-
-  const started = await waitForBackendHealthy();
-  if (!started) {
-    throw new Error("Timed out waiting for local so-server to start");
-  }
+function isAbortError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
 }
 
 async function isBackendHealthy(): Promise<boolean> {
@@ -179,24 +65,155 @@ async function isBackendHealthy(): Promise<boolean> {
   }
 }
 
-async function waitForBackendHealthy(timeoutMs = 5000, intervalMs = 150): Promise<boolean> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    if (await isBackendHealthy()) {
-      return true;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function readErrorMessage(resp: Response, fallback: string): Promise<string> {
+  const jsonResponse = typeof resp.clone === "function" ? resp.clone() : resp;
+  try {
+    const data = await jsonResponse.json();
+    if (data && typeof data === "object") {
+      const detail = "detail" in data ? data.detail : null;
+      if (typeof detail === "string" && detail.trim()) {
+        return detail;
+      }
+      const error = "error" in data ? data.error : null;
+      if (typeof error === "string" && error.trim()) {
+        return error;
+      }
     }
-    await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+  } catch {
+    // Fall through to plain text parsing below.
   }
-  return false;
+
+  try {
+    const textResponse = typeof resp.clone === "function" ? resp.clone() : resp;
+    const text = await textResponse.text();
+    if (text.trim()) {
+      return text.trim();
+    }
+  } catch {
+    // Fall back to the generic status message below.
+  }
+
+  return fallback;
+}
+
+async function parseJsonResponse<T>(resp: Response, method: string, path: string): Promise<T> {
+  if (!resp.ok) {
+    throw new Error(await readErrorMessage(resp, `${method} ${path} failed: ${resp.status}`));
+  }
+  return resp.json();
+}
+
+async function ensureBackendRunning(skipInitialHealthCheck = false): Promise<void> {
+  if (!skipInitialHealthCheck && await isBackendHealthy()) {
+    return;
+  }
+
+  if (!backendStartupPromise) {
+    backendStartupPromise = (async () => {
+      const startResp = await fetch("/_sovara/start-server", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!startResp.ok) {
+        throw new Error(`POST /_sovara/start-server failed: ${startResp.status}`);
+      }
+
+      const deadline = Date.now() + BACKEND_START_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        if (await isBackendHealthy()) {
+          return;
+        }
+        await sleep(BACKEND_HEALTH_POLL_MS);
+      }
+
+      throw new Error("Timed out waiting for the Sovara backend to start");
+    })().finally(() => {
+      backendStartupPromise = null;
+    });
+  }
+
+  await backendStartupPromise;
+}
+
+async function maybeRecoverBackend(status?: number): Promise<boolean> {
+  if (status !== undefined && status < 500) {
+    return false;
+  }
+  if (await isBackendHealthy()) {
+    return false;
+  }
+  await ensureBackendRunning(true);
+  return true;
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = init?.method ?? "GET";
+
+  try {
+    const resp = await fetch(path, init);
+    if (!resp.ok && await maybeRecoverBackend(resp.status)) {
+      return parseJsonResponse<T>(await fetch(path, init), method, path);
+    }
+    return parseJsonResponse<T>(resp, method, path);
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
+    if (await maybeRecoverBackend()) {
+      return parseJsonResponse<T>(await fetch(path, init), method, path);
+    }
+    throw error;
+  }
+}
+
+async function get<T>(path: string, init?: RequestInit): Promise<T> {
+  return requestJson<T>(path, init);
+}
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  return requestJson<T>(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function put<T>(path: string, body: unknown): Promise<T> {
+  return requestJson<T>(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function del<T>(path: string): Promise<T> {
+  return requestJson<T>(path, {
+    method: "DELETE",
+  });
+}
+
+export { post };
+
+function withQuery(path: string, params: Record<string, string | number | boolean | null | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") continue;
+    search.set(key, String(value));
+  }
+  const query = search.toString();
+  return query ? `${path}?${query}` : path;
 }
 
 export async function keepBackendAlive(): Promise<void> {
-  const resp = await fetchWithBackendRetry("/health", { cache: "no-store" });
-  if (!resp.ok) {
-    throw new Error(`GET /health failed: ${resp.status}`);
-  }
+  await requestJson("/health", { cache: "no-store" });
 }
-
 // ============================================================
 // User endpoints
 // ============================================================
@@ -556,9 +573,7 @@ export async function fetchProjectRuns(
   }
   const query = qs.toString();
   const url = `/ui/projects/${projectId}/runs${query ? `?${query}` : ""}`;
-  const resp = await fetch(url, { signal });
-  if (!resp.ok) throw new Error(`GET ${url} failed: ${resp.status}`);
-  return resp.json();
+  return get<ProjectRunsResponse>(url, { signal });
 }
 
 export async function fetchProjectTags(projectId: string): Promise<Tag[]> {
@@ -596,6 +611,29 @@ export interface RunDetail {
 
 export async function fetchRunDetail(runId: string): Promise<RunDetail> {
   return get(`/ui/run/${runId}`);
+}
+
+export interface TraceChatHistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export async function fetchTraceChatHistory(runId: string): Promise<TraceChatHistoryMessage[]> {
+  const data = await get<{ history: TraceChatHistoryMessage[] }>(`/ui/trace-chat/${runId}`);
+  return data.history;
+}
+
+export async function saveTraceChatHistory(
+  runId: string,
+  history: TraceChatHistoryMessage[],
+): Promise<TraceChatHistoryMessage[]> {
+  const data = await post<{ history: TraceChatHistoryMessage[] }>(`/ui/trace-chat/${runId}`, { history });
+  return data.history;
+}
+
+export async function clearTraceChatHistory(runId: string): Promise<TraceChatHistoryMessage[]> {
+  const data = await post<{ history: TraceChatHistoryMessage[] }>(`/ui/trace-chat/${runId}/clear`, {});
+  return data.history;
 }
 
 // ============================================================
@@ -689,10 +727,5 @@ export async function chatWithTrace(
   message: string,
   history: { role: string; content: string }[],
 ): Promise<{ answer: string; edits_applied?: boolean }> {
-  try {
-    return await post(`/ui/chat/${runId}`, { message, history });
-  } catch {
-    await ensureBackendRunning();
-    return post(`/ui/chat/${runId}`, { message, history });
-  }
+  return post(`/ui/chat/${runId}`, { message, history });
 }

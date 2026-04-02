@@ -1,7 +1,10 @@
 """UI REST endpoints -- called by VS Code extension and web app."""
 
+import asyncio
 import os
+import time
 import uuid
+from typing import Literal
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -45,7 +48,6 @@ TAG_COLORS = {
     "#5e60ce",
     "#1b8a72",
 }
-
 
 def _request_error_response(exc: Exception) -> JSONResponse:
     status_code = 404 if isinstance(exc, ResourceNotFoundError) else 400
@@ -1292,6 +1294,46 @@ class ChatMessageRequest(BaseModel):
     history: list = []
 
 
+class PersistedTraceChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class PersistedTraceChatHistoryRequest(BaseModel):
+    history: list[PersistedTraceChatMessage]
+
+
+@router.get("/trace-chat/{run_id}")
+def get_trace_chat_history(run_id: str):
+    try:
+        history = DB.get_trace_chat_history(run_id)
+    except (BadRequestError, ResourceNotFoundError) as exc:
+        return _request_error_response(exc)
+    return {"history": history}
+
+
+@router.post("/trace-chat/{run_id}")
+def update_trace_chat_history(run_id: str, req: PersistedTraceChatHistoryRequest):
+    try:
+        DB.update_trace_chat_history(
+            run_id,
+            [message.model_dump() for message in req.history],
+        )
+        history = DB.get_trace_chat_history(run_id)
+    except (BadRequestError, ResourceNotFoundError) as exc:
+        return _request_error_response(exc)
+    return {"history": history}
+
+
+@router.post("/trace-chat/{run_id}/clear")
+def clear_trace_chat_history(run_id: str):
+    try:
+        DB.clear_trace_chat_history(run_id)
+    except (BadRequestError, ResourceNotFoundError) as exc:
+        return _request_error_response(exc)
+    return {"history": []}
+
+
 @router.post("/prefetch/{run_id}", status_code=202)
 async def prefetch_trace(
     run_id: str,
@@ -1318,16 +1360,148 @@ async def chat(run_id: str, req: ChatMessageRequest):
     import httpx
     from fastapi import HTTPException
     from sovara.common.constants import HOST, INFERENCE_PORT
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"http://{HOST}:{INFERENCE_PORT}/chat/{run_id}",
-            json=req.model_dump(),
-            timeout=120.0,
+
+    trace_chat_id = uuid.uuid4().hex[:8]
+    started_at = time.monotonic()
+    logger.info(
+        "Trace chat proxy start: id=%s run_id=%s history_messages=%d message_chars=%d",
+        trace_chat_id,
+        run_id,
+        len(req.history),
+        len(req.message),
+    )
+
+    persisted_history = list(req.history) + [{"role": "user", "content": req.message}]
+    try:
+        await asyncio.to_thread(DB.update_trace_chat_history, run_id, persisted_history)
+        logger.info(
+            "Trace chat proxy pre-persist complete: id=%s run_id=%s elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            time.monotonic() - started_at,
         )
+    except (BadRequestError, ResourceNotFoundError) as exc:
+        # Keep the chat proxy path authoritative for request errors. Missing or
+        # stale DB state should not mask upstream inference failures.
+        logger.warning(
+            "Trace chat proxy pre-persist failed: id=%s run_id=%s error=%s elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            exc,
+            time.monotonic() - started_at,
+        )
+    except Exception:
+        logger.exception(
+            "Trace chat proxy pre-persist crashed: id=%s run_id=%s elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            time.monotonic() - started_at,
+        )
+
+    timeout_seconds = 120.0
+    try:
+        async with httpx.AsyncClient() as client:
+            logger.info(
+                "Trace chat proxy upstream request start: id=%s run_id=%s timeout=%.1fs elapsed=%.3fs",
+                trace_chat_id,
+                run_id,
+                timeout_seconds,
+                time.monotonic() - started_at,
+            )
+            resp = await client.post(
+                f"http://{HOST}:{INFERENCE_PORT}/chat/{run_id}",
+                json=req.model_dump(),
+                headers={"x-sovara-trace-chat-id": trace_chat_id},
+                timeout=timeout_seconds,
+            )
+            logger.info(
+                "Trace chat proxy upstream response received: id=%s run_id=%s status=%d elapsed=%.3fs",
+                trace_chat_id,
+                run_id,
+                resp.status_code,
+                time.monotonic() - started_at,
+            )
+    except httpx.TimeoutException:
+        logger.error(
+            "Trace chat proxy timed out: id=%s run_id=%s timeout=%.1fs elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            timeout_seconds,
+            time.monotonic() - started_at,
+        )
+        raise HTTPException(504, f"Trace chat timed out after {int(timeout_seconds)} seconds")
+    except httpx.HTTPError as e:
+        logger.error(
+            "Trace chat proxy failed: id=%s run_id=%s error=%s elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            e,
+            time.monotonic() - started_at,
+        )
+        raise HTTPException(502, "Could not reach inference server")
     if resp.status_code != 200:
+        logger.warning(
+            "Trace chat proxy upstream returned non-200: id=%s run_id=%s status=%d detail=%s elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            resp.status_code,
+            _extract_http_error_detail(resp),
+            time.monotonic() - started_at,
+        )
         raise HTTPException(resp.status_code, _extract_http_error_detail(resp))
     try:
-        return resp.json()
+        data = resp.json()
+        logger.info(
+            "Trace chat proxy upstream JSON parsed: id=%s run_id=%s keys=%s elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            sorted(data.keys()) if isinstance(data, dict) else type(data).__name__,
+            time.monotonic() - started_at,
+        )
     except ValueError:
-        logger.error("Inference server returned invalid JSON for run %s", run_id)
+        logger.error(
+            "Trace chat proxy upstream returned invalid JSON: id=%s run_id=%s elapsed=%.3fs",
+            trace_chat_id,
+            run_id,
+            time.monotonic() - started_at,
+        )
         raise HTTPException(502, "Invalid response from inference server")
+
+    answer = data.get("answer")
+    if isinstance(answer, str):
+        try:
+            await asyncio.to_thread(
+                DB.update_trace_chat_history,
+                run_id,
+                persisted_history + [{"role": "assistant", "content": answer}],
+            )
+            logger.info(
+                "Trace chat proxy post-persist complete: id=%s run_id=%s answer_chars=%d elapsed=%.3fs",
+                trace_chat_id,
+                run_id,
+                len(answer),
+                time.monotonic() - started_at,
+            )
+        except (BadRequestError, ResourceNotFoundError) as exc:
+            logger.warning(
+                "Trace chat proxy post-persist failed: id=%s run_id=%s error=%s elapsed=%.3fs",
+                trace_chat_id,
+                run_id,
+                exc,
+                time.monotonic() - started_at,
+            )
+        except Exception:
+            logger.exception(
+                "Trace chat proxy post-persist crashed: id=%s run_id=%s elapsed=%.3fs",
+                trace_chat_id,
+                run_id,
+                time.monotonic() - started_at,
+            )
+    logger.info(
+        "Trace chat proxy complete: id=%s run_id=%s answered=%s elapsed=%.3fs",
+        trace_chat_id,
+        run_id,
+        isinstance(answer, str),
+        time.monotonic() - started_at,
+    )
+    return data

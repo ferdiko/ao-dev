@@ -5,30 +5,35 @@ Provides both:
 - execute_tool(): dispatch by name to Python functions
 """
 
-from .get_overview import get_overview
-from .get_step import get_step
+from ..logger import get_logger
+
+server_logger = get_logger()
+
+from .get_trace_overview import get_trace_overview
+from .get_step_snapshot import get_step_snapshot
+from .get_step_overview import get_step_overview
 from .verify import verify
 from .ask_step import ask_step
 from .search import search
-from .prompt_edit import (
-    list_sections, get_section, edit_section,
-    insert_section, delete_section, move_section, undo,
+from .edit_content import (
+    delete_content_unit,
+    edit_content,
+    get_content_unit,
+    undo,
 )
 
 # Maps tool name -> Python function
 # function signature: f(trace: Trace, ...) -> str
 TOOL_FUNCTIONS = {
-    "get_overview": get_overview,
-    "get_step": get_step,
+    "get_trace_overview": get_trace_overview,
+    "get_step_snapshot": get_step_snapshot,
+    "get_step_overview": get_step_overview,
     "verify": verify,
     "ask_step": ask_step,
     "search": search,
-    "list_sections": list_sections,
-    "get_section": get_section,
-    "edit_section": edit_section,
-    "insert_section": insert_section,
-    "delete_section": delete_section,
-    "move_section": move_section,
+    "get_content_unit": get_content_unit,
+    "edit_content": edit_content,
+    "delete_content_unit": delete_content_unit,
     "undo": undo,
 }
 
@@ -38,11 +43,10 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
-            "name": "get_overview",
+            "name": "get_trace_overview",
             "description": (
-                "Returns a high-level overview: step count, conversation structure "
-                "(which steps share system prompts and how message history grows), "
-                "and per-step metadata (name, message count, output size)."
+                "Returns a high-level overview of the trace: step count, conversation structure, "
+                "and per-step metadata."
             ),
             "parameters": {
                 "type": "object",
@@ -54,11 +58,11 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
-            "name": "get_step",
+            "name": "get_step_snapshot",
             "description": (
-                "Returns content for a specific step. Use view='diff' to see only "
-                "new messages since the last step in the same conversation — much "
-                "shorter for later steps."
+                "Returns a raw snapshot of one step. scope='full' returns full input "
+                "and output. scope='new_input' returns only new input plus full output. "
+                "Large requests may return a compact preview instead of raw content."
             ),
             "parameters": {
                 "type": "object",
@@ -67,10 +71,31 @@ TOOLS_SCHEMA = [
                         "type": "integer",
                         "description": "The 1-based index of the step to inspect.",
                     },
-                    "view": {
+                    "scope": {
                         "type": "string",
-                        "enum": ["full", "diff", "output"],
-                        "description": "Level of detail. Default: 'full'.",
+                        "enum": ["full", "new_input"],
+                        "description": "Which slice of the step to load. Default: 'full'.",
+                    },
+                },
+                "required": ["step_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_step_overview",
+            "description": (
+                "Best first look at a step: returns the cached step summary when available "
+                "plus visible input and output content units with step-global content_id handles. "
+                "Longer content is summarized and can be expanded with get_content_unit."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "step_id": {
+                        "type": "integer",
+                        "description": "The 1-based index of the step to inspect.",
                     },
                 },
                 "required": ["step_id"],
@@ -83,7 +108,8 @@ TOOLS_SCHEMA = [
             "name": "verify",
             "description": (
                 "Checks whether a step's output is correct given its instructions. "
-                "Returns CORRECT/WRONG/UNCERTAIN with explanation. "
+                "Returns a plain-language judgment saying the step looks correct, wrong, uncertain, "
+                "or was not evaluated when the verifier response is malformed. "
                 "If step_id is omitted, verifies ALL steps (may be slow)."
             ),
             "parameters": {
@@ -104,7 +130,7 @@ TOOLS_SCHEMA = [
             "name": "ask_step",
             "description": (
                 "Asks a specific question about a step and returns only the answer. "
-                "More context-efficient than get_step for targeted questions."
+                "Prefer this over get_step_snapshot for targeted questions."
             ),
             "parameters": {
                 "type": "object",
@@ -127,8 +153,8 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "search",
             "description": (
-                "Searches rendered trace content across input/output fields for a "
-                "substring. Returns matching steps, flattened paths, and context snippets."
+                "Searches rendered trace content for a substring. Returns matching steps, "
+                "locations, and context snippets."
             ),
             "parameters": {
                 "type": "object",
@@ -142,39 +168,13 @@ TOOLS_SCHEMA = [
             },
         },
     },
-    # -- Section editing tools --
+    # -- Content editing tools --
     {
         "type": "function",
         "function": {
-            "name": "list_sections",
+            "name": "get_content_unit",
             "description": (
-                "Lists editable input text paths for a step's newly introduced "
-                "content. Shared prompts appear only on the step where they are "
-                "first introduced. Each entry shows a flattened path, paragraph refs "
-                "like body.system::p2, detected role, and preview."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "step_id": {
-                        "type": "integer",
-                        "description": (
-                            "1-based step ID. If omitted and only one prompt exists, "
-                            "defaults to the step that introduced it."
-                        ),
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_section",
-            "description": (
-                "Returns one editable path, or one paragraph inside that path. "
-                "Use path plus paragraph, or a paragraph ref like body.system::p2."
+                "Returns one content unit from get_step_overview for a specific step by content_id."
             ),
             "parameters": {
                 "type": "object",
@@ -183,27 +183,21 @@ TOOLS_SCHEMA = [
                         "type": "integer",
                         "description": "1-based step ID.",
                     },
-                    "path": {
+                    "content_id": {
                         "type": "string",
-                        "description": "Flattened JSON path from list_sections, optionally with a ::pN paragraph suffix.",
-                    },
-                    "paragraph": {
-                        "type": "integer",
-                        "description": "Optional 0-based paragraph index within the selected path. Omit when path already includes ::pN.",
+                        "description": "Content handle from get_step_overview, like c0 or c1.",
                     },
                 },
-                "required": ["path"],
+                "required": ["step_id", "content_id"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "edit_section",
+            "name": "edit_content",
             "description": (
-                "Rewrites one editable input path, or one paragraph inside that path, "
-                "based on a natural-language instruction. Use path plus paragraph, "
-                "or a paragraph ref like body.system::p2."
+                "Rewrites one editable content unit from get_step_overview for a specific step by content_id."
             ),
             "parameters": {
                 "type": "object",
@@ -212,31 +206,26 @@ TOOLS_SCHEMA = [
                         "type": "integer",
                         "description": "1-based step ID.",
                     },
-                    "path": {
+                    "content_id": {
                         "type": "string",
-                        "description": "Flattened JSON path from list_sections, optionally with a ::pN paragraph suffix.",
-                    },
-                    "paragraph": {
-                        "type": "integer",
-                        "description": "Optional 0-based paragraph index within the selected path. Omit when path already includes ::pN.",
+                        "description": "Content handle from get_step_overview, like c0 or c1.",
                     },
                     "instruction": {
                         "type": "string",
                         "description": "What to change (e.g. 'make it more concise', 'add a rule about JSON output').",
                     },
                 },
-                "required": ["path", "instruction"],
+                "required": ["step_id", "content_id", "instruction"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "insert_section",
+            "name": "delete_content_unit",
             "description": (
-                "Inserts a new paragraph inside one editable path. Use "
-                "after_paragraph=-1 to insert at the start. You may also use a "
-                "paragraph ref in path to insert after that paragraph."
+                "Removes one content unit for a specific step identified by content_id from "
+                "get_step_overview."
             ),
             "parameters": {
                 "type": "object",
@@ -245,80 +234,12 @@ TOOLS_SCHEMA = [
                         "type": "integer",
                         "description": "1-based step ID.",
                     },
-                    "path": {
+                    "content_id": {
                         "type": "string",
-                        "description": "Flattened JSON path from list_sections, optionally with a ::pN paragraph suffix.",
-                    },
-                    "after_paragraph": {
-                        "type": "integer",
-                        "description": "Insert after this paragraph. -1 = insert at start. Omit when path already includes ::pN.",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "The text for the new paragraph.",
+                        "description": "Content handle from get_step_overview.",
                     },
                 },
-                "required": ["path", "content"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_section",
-            "description": (
-                "Removes one paragraph from an editable path. Use paragraph, or a "
-                "paragraph ref like body.system::p2."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "step_id": {
-                        "type": "integer",
-                        "description": "1-based step ID.",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Flattened JSON path from list_sections, optionally with a ::pN paragraph suffix.",
-                    },
-                    "paragraph": {
-                        "type": "integer",
-                        "description": "0-based paragraph index to delete. Omit when path already includes ::pN.",
-                    },
-                },
-                "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "move_section",
-            "description": (
-                "Moves a paragraph to another position within one editable path. "
-                "Use from_paragraph, or a paragraph ref like body.system::p2."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "step_id": {
-                        "type": "integer",
-                        "description": "1-based step ID.",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Flattened JSON path from list_sections, optionally with a ::pN paragraph suffix.",
-                    },
-                    "from_paragraph": {
-                        "type": "integer",
-                        "description": "Current paragraph index. Omit when path already includes ::pN.",
-                    },
-                    "to_paragraph": {
-                        "type": "integer",
-                        "description": "Target paragraph index.",
-                    },
-                },
-                "required": ["path", "to_paragraph"],
+                "required": ["step_id", "content_id"],
             },
         },
     },
@@ -326,7 +247,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "undo",
-            "description": "Reverts the last edit to a step's sections. Can be called repeatedly.",
+            "description": "Reverts the last edit to a step. Can be called repeatedly.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -335,14 +256,14 @@ TOOLS_SCHEMA = [
                         "description": "1-based step ID.",
                     },
                 },
-                "required": [],
+                "required": ["step_id"],
             },
         },
     },
 ]
 
 
-def execute_tool(tool_name: str, trace, params: dict = None) -> str:
+def execute_tool(tool_name: str, trace, params: dict = None, *, log_tag: str = "") -> str:
     """Look up and execute a tool by name. Returns the result string or an error message."""
     func = TOOL_FUNCTIONS.get(tool_name)
     if func is None:
@@ -352,4 +273,8 @@ def execute_tool(tool_name: str, trace, params: dict = None) -> str:
     try:
         return func(trace, **params)
     except Exception as e:
+        if log_tag:
+            server_logger.exception("%s Trace chat tool failed: %s params=%s", log_tag, tool_name, params)
+        else:
+            server_logger.exception("Trace chat tool failed: %s params=%s", tool_name, params)
         return f"Tool '{tool_name}' failed: {e}"
