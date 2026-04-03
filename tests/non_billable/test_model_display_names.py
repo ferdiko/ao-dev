@@ -2,7 +2,11 @@ from sovara.runner.monkey_patching.patching_utils import _sanitize_for_display
 
 
 def test_openai_numeric_gpt_and_o_series_are_formatted_dynamically():
+    assert _sanitize_for_display("gpt-5.4") == "GPT-5.4"
+    assert _sanitize_for_display("gpt-5.4-mini") == "GPT-5.4 Mini"
+    assert _sanitize_for_display("gpt-5.3-codex") == "GPT-5.3 Codex"
     assert _sanitize_for_display("gpt-5.2") == "GPT-5.2"
+    assert _sanitize_for_display("gpt-5.2-chat-latest") == "GPT-5.2 Chat"
     assert _sanitize_for_display("gpt-5.2-pro") == "GPT-5.2 Pro"
     assert _sanitize_for_display("gpt-5.1-codex") == "GPT-5.1 Codex"
     assert _sanitize_for_display("gpt-5.1-codex-max") == "GPT-5.1 Codex Max"
@@ -26,9 +30,17 @@ def test_anthropic_claude_models_strip_snapshot_dates_and_preserve_versions():
 
 
 def test_gemini_models_render_with_clean_family_names():
+    assert _sanitize_for_display("gemini-3-pro-preview") == "Gemini 3 Pro Preview"
     assert _sanitize_for_display("gemini-2.5-flash-lite") == "Gemini 2.5 Flash Lite"
     assert _sanitize_for_display("gemini-2.5-flash-lite-preview-09-2025") == "Gemini 2.5 Flash Lite Preview"
     assert _sanitize_for_display("gemini-1.5-pro") == "Gemini 1.5 Pro"
+
+
+def test_new_provider_families_preserve_recent_official_model_branding():
+    assert _sanitize_for_display("MiniMax-M2.5") == "MiniMax M2.5"
+    assert _sanitize_for_display("MiniMax-M2.5-highspeed") == "MiniMax M2.5 Highspeed"
+    assert _sanitize_for_display("amazon.nova-premier-v1:0") == "Amazon Nova Premier"
+    assert _sanitize_for_display("us.amazon.nova-pro-v1:0") == "Amazon Nova Pro"
 
 
 def test_open_weight_families_preserve_vendor_casing():
