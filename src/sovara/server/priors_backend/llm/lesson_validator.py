@@ -99,7 +99,6 @@ async def validate_prior(
     existing_priors: List[dict],
     existing_prior_id: Optional[str] = None,
     folder_tree_summary: Optional[str] = None,
-    model: str = "openai/gpt-5.4",
 ) -> ValidationResult:
     # The summary is generated separately after approval, so validation should
     # not evaluate or comment on summary quality.
@@ -155,8 +154,6 @@ Existing priors:
 
     try:
         result = await infer_structured_json(
-            purpose="priors_validation",
-            model=model,
             tier="expensive",
             response_format=_RESPONSE_SCHEMA,
             messages=[

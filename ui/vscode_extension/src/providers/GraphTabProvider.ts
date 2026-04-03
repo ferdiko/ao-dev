@@ -36,7 +36,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     private async _handleFolderLs(panel: vscode.WebviewPanel, reqPath: string): Promise<void> {
         if (!this._pythonClient) { panel.webview.postMessage({ type: 'prior_error', error: 'Python server not configured' }); return; }
         try {
-            const result = await this._pythonClient.httpPost('/ui/priors/folders/ls', { path: reqPath });
+            const result = await this._pythonClient.httpPost('/api/v1/priors/folders/ls', { path: reqPath });
             if (result.error) { panel.webview.postMessage({ type: 'prior_error', error: result.error || result.detail }); return; }
             panel.webview.postMessage({
                 type: 'folder_ls_result',
@@ -54,7 +54,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     private async _handleGetPrior(panel: vscode.WebviewPanel, priorId: string): Promise<void> {
         if (!this._pythonClient) { panel.webview.postMessage({ type: 'prior_error', error: 'Python server not configured' }); return; }
         try {
-            const result = await this._pythonClient.httpGet(`/ui/priors/${priorId}`);
+            const result = await this._pythonClient.httpGet(`/api/v1/priors/${priorId}`);
             if (result.error) { panel.webview.postMessage({ type: 'prior_error', error: result.error || result.detail }); return; }
             panel.webview.postMessage({ type: 'prior_content', prior: result });
         } catch (e: any) { panel.webview.postMessage({ type: 'prior_error', error: e.message }); }
@@ -63,7 +63,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
     private async _handleGetPriors(panel: vscode.WebviewPanel): Promise<void> {
         if (!this._pythonClient) { panel.webview.postMessage({ type: 'priors_list', priors: [], error: 'Python server not configured' }); return; }
         try {
-            const result = await this._pythonClient.httpGet('/ui/priors');
+            const result = await this._pythonClient.httpGet('/api/v1/priors');
             if (result.error) { panel.webview.postMessage({ type: 'priors_list', priors: [], error: result.error }); return; }
             const priors = Array.isArray(result) ? result : result.priors || [];
             panel.webview.postMessage({ type: 'priors_list', priors });
@@ -75,7 +75,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         try {
             const forceQuery = data.force ? '?force=true' : '';
             const result = await this._pythonClient.httpPost(
-                `/ui/priors${forceQuery}`,
+                `/api/v1/priors${forceQuery}`,
                 { name: data.name, summary: data.summary || '', content: data.content, path: data.path || '' },
             );
             if (result.status === 'rejected') {
@@ -108,7 +108,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         for (const f of ['name', 'summary', 'content', 'path']) { if (data[f] !== undefined) { fields[f] = data[f]; } }
         try {
             const forceQuery = data.force ? '?force=true' : '';
-            const result = await this._pythonClient.httpPut(`/ui/priors/${priorId}${forceQuery}`, fields);
+            const result = await this._pythonClient.httpPut(`/api/v1/priors/${priorId}${forceQuery}`, fields);
             if (result.status === 'rejected') {
                 let reason = result.reason || 'Validation failed';
                 if (result.hint) { reason += `\n\nHint: ${result.hint}`; }
@@ -136,7 +136,7 @@ export class GraphTabProvider implements vscode.WebviewPanelSerializer {
         const priorId = data.prior_id;
         if (!priorId) { panel.webview.postMessage({ type: 'prior_error', error: 'Missing prior_id' }); return; }
         try {
-            const result = await this._pythonClient.httpDelete(`/ui/priors/${priorId}`);
+            const result = await this._pythonClient.httpDelete(`/api/v1/priors/${priorId}`);
             if (result.error) {
                 panel.webview.postMessage({ type: 'prior_error', error: result.error });
             } else {

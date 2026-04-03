@@ -12,8 +12,6 @@ def test_http_requests_touch_server_activity(monkeypatch):
         touches.append(True)
         return original_touch(self)
 
-    monkeypatch.setattr("sovara.server.app.priors_backend_server.start", lambda: None)
-    monkeypatch.setattr("sovara.server.app.priors_backend_server.stop", lambda: None)
     monkeypatch.setattr("sovara.server.app.inference_server.start", lambda: None)
     monkeypatch.setattr("sovara.server.app.inference_server.stop", lambda: None)
     monkeypatch.setattr(ServerState, "touch_activity", fake_touch)

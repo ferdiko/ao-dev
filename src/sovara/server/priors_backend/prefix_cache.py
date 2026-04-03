@@ -16,6 +16,11 @@ _INIT_LOCK = threading.Lock()
 _INITIALIZED = False
 
 
+def _connect() -> sqlite3.Connection:
+    os.makedirs(_CACHE_DIR, exist_ok=True)
+    return sqlite3.connect(_CACHE_PATH, timeout=30.0)
+
+
 def _ensure_db() -> None:
     global _INITIALIZED
     if _INITIALIZED:
@@ -23,15 +28,21 @@ def _ensure_db() -> None:
     with _INIT_LOCK:
         if _INITIALIZED:
             return
-        os.makedirs(_CACHE_DIR, exist_ok=True)
-        conn = sqlite3.connect(_CACHE_PATH, timeout=30.0)
+        conn = _connect()
         try:
+            existing_columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(prefix_cache)").fetchall()
+            }
+            if existing_columns and "model" not in existing_columns:
+                conn.execute("DROP TABLE IF EXISTS prefix_cache")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS prefix_cache (
                     user_id TEXT NOT NULL,
                     project_id TEXT NOT NULL,
                     base_path TEXT NOT NULL,
+                    model TEXT NOT NULL,
                     first_key TEXT NOT NULL,
                     pair_count INTEGER NOT NULL,
                     clean_pairs_json TEXT NOT NULL,
@@ -39,14 +50,14 @@ def _ensure_db() -> None:
                     prior_ids_json TEXT NOT NULL DEFAULT '[]',
                     created_at TIMESTAMP DEFAULT (datetime('now')),
                     updated_at TIMESTAMP DEFAULT (datetime('now')),
-                    PRIMARY KEY (user_id, project_id, base_path, clean_pairs_json)
+                    PRIMARY KEY (user_id, project_id, base_path, model, clean_pairs_json)
                 )
                 """
             )
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS prefix_cache_scope_idx
-                ON prefix_cache(user_id, project_id, base_path, first_key, pair_count DESC)
+                ON prefix_cache(user_id, project_id, base_path, model, first_key, pair_count DESC)
                 """
             )
             conn.commit()
@@ -78,6 +89,7 @@ def lookup_longest_prefix(
     user_id: str,
     project_id: str,
     base_path: str,
+    model: str,
     clean_pairs: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     normalized_pairs = _normalize_pairs(clean_pairs)
@@ -85,7 +97,7 @@ def lookup_longest_prefix(
         return None
 
     _ensure_db()
-    conn = sqlite3.connect(_CACHE_PATH, timeout=30.0)
+    conn = _connect()
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
@@ -95,6 +107,7 @@ def lookup_longest_prefix(
             WHERE user_id=?
               AND project_id=?
               AND base_path=?
+              AND model=?
               AND first_key=?
               AND pair_count<=?
             ORDER BY pair_count DESC, updated_at DESC
@@ -103,6 +116,7 @@ def lookup_longest_prefix(
                 user_id,
                 project_id,
                 base_path,
+                model,
                 normalized_pairs[0]["key"],
                 len(normalized_pairs),
             ),
@@ -116,9 +130,9 @@ def lookup_longest_prefix(
                 """
                 UPDATE prefix_cache
                 SET updated_at=datetime('now')
-                WHERE user_id=? AND project_id=? AND base_path=? AND clean_pairs_json=?
+                WHERE user_id=? AND project_id=? AND base_path=? AND model=? AND clean_pairs_json=?
                 """,
-                (user_id, project_id, base_path, row["clean_pairs_json"]),
+                (user_id, project_id, base_path, model, row["clean_pairs_json"]),
             )
             conn.commit()
             return {
@@ -136,6 +150,7 @@ def store_prefix(
     user_id: str,
     project_id: str,
     base_path: str,
+    model: str,
     clean_pairs: list[dict[str, Any]],
     injected_pairs: list[dict[str, Any]],
     prior_ids: list[str] | None,
@@ -146,7 +161,7 @@ def store_prefix(
         return
 
     _ensure_db()
-    conn = sqlite3.connect(_CACHE_PATH, timeout=30.0)
+    conn = _connect()
     try:
         clean_pairs_json = json.dumps(normalized_clean_pairs, ensure_ascii=False, separators=(",", ":"))
         conn.execute(
@@ -155,14 +170,15 @@ def store_prefix(
                 user_id,
                 project_id,
                 base_path,
+                model,
                 first_key,
                 pair_count,
                 clean_pairs_json,
                 injected_pairs_json,
                 prior_ids_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (user_id, project_id, base_path, clean_pairs_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (user_id, project_id, base_path, model, clean_pairs_json)
             DO UPDATE SET
                 injected_pairs_json=excluded.injected_pairs_json,
                 prior_ids_json=excluded.prior_ids_json,
@@ -172,6 +188,7 @@ def store_prefix(
                 user_id,
                 project_id,
                 base_path,
+                model,
                 normalized_clean_pairs[0]["key"],
                 len(normalized_clean_pairs),
                 clean_pairs_json,
@@ -186,12 +203,22 @@ def store_prefix(
 
 def clear_scope_prefix_cache(*, user_id: str, project_id: str) -> None:
     _ensure_db()
-    conn = sqlite3.connect(_CACHE_PATH, timeout=30.0)
+    conn = _connect()
     try:
         conn.execute(
             "DELETE FROM prefix_cache WHERE user_id=? AND project_id=?",
             (user_id, project_id),
         )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def clear_all_prefix_cache() -> None:
+    _ensure_db()
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM prefix_cache")
         conn.commit()
     finally:
         conn.close()

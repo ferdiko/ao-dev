@@ -88,3 +88,20 @@ def test_start_reuses_existing_healthy_inference_server(monkeypatch, tmp_path):
         assert inference_server._process is None
     finally:
         inference_server._process = None
+
+
+def test_stop_terminates_untracked_inference_server_from_pid_file(monkeypatch, tmp_path):
+    pid_file = tmp_path / "inference_server.pid"
+    pid_file.write_text("54321\n", encoding="utf-8")
+
+    terminated = []
+
+    monkeypatch.setattr("sovara.common.constants.INFERENCE_SERVER_PID", str(pid_file))
+    monkeypatch.setattr(inference_server, "_pid_is_alive", lambda pid: pid == 54321)
+    monkeypatch.setattr(inference_server, "_terminate_pid", lambda pid, timeout=5.0: terminated.append((pid, timeout)))
+    inference_server._process = None
+
+    inference_server.stop()
+
+    assert terminated == [(54321, 5.0)]
+    assert not pid_file.exists()

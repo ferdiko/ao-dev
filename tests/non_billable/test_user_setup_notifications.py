@@ -39,3 +39,18 @@ def test_ensure_user_configured_does_not_notify_when_user_already_exists(monkeyp
 
     assert result == existing_user
     assert notifications == []
+
+
+def test_read_user_id_uses_cache_until_invalidated(tmp_path, monkeypatch):
+    user_id_path = tmp_path / ".user_id"
+    monkeypatch.setattr(user_module, "USER_ID_PATH", str(user_id_path))
+    user_module.invalidate_user_id_cache()
+
+    user_id_path.write_text("user-1\n", encoding="utf-8")
+    assert user_module.read_user_id() == "user-1"
+
+    user_id_path.write_text("user-2\n", encoding="utf-8")
+    assert user_module.read_user_id() == "user-1"
+
+    user_module.invalidate_user_id_cache()
+    assert user_module.read_user_id() == "user-2"

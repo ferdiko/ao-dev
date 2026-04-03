@@ -222,11 +222,11 @@ describe("api", () => {
 
     expect(result.id).toBe("p1");
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "/ui/priors/p1?project_id=project-1",
+      "/api/v1/priors/p1?project_id=project-1",
       "/_sovara/health",
       "/_sovara/start-server",
       "/_sovara/health",
-      "/ui/priors/p1?project_id=project-1",
+      "/api/v1/priors/p1?project_id=project-1",
     ]);
   });
 
@@ -259,11 +259,11 @@ describe("api", () => {
 
     expect(result.id).toBe("p1");
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "/ui/priors/p1?project_id=project-1",
+      "/api/v1/priors/p1?project_id=project-1",
       "/_sovara/health",
       "/_sovara/start-server",
       "/_sovara/health",
-      "/ui/priors/p1?project_id=project-1",
+      "/api/v1/priors/p1?project_id=project-1",
     ]);
   });
 

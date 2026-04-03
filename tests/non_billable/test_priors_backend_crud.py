@@ -1,8 +1,15 @@
 import uuid
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from sovara.server.priors_backend.app import create_app
+from sovara.server.priors_backend.routes import router as priors_router
+
+
+def _make_priors_test_client() -> TestClient:
+    app = FastAPI()
+    app.include_router(priors_router)
+    return TestClient(app)
 
 
 def test_priors_backend_create_list_get_update_delete_flow(monkeypatch):
@@ -30,7 +37,7 @@ def test_priors_backend_create_list_get_update_delete_flow(monkeypatch):
         fake_generate_prior_summary,
     )
 
-    client = TestClient(create_app())
+    client = _make_priors_test_client()
     headers = {
         "x-sovara-user-id": "crud-user",
         "x-sovara-project-id": "crud-project",
@@ -127,7 +134,7 @@ def test_priors_backend_folder_crud_flow(monkeypatch):
         fake_generate_prior_summary,
     )
 
-    client = TestClient(create_app())
+    client = _make_priors_test_client()
     headers = {
         "x-sovara-user-id": "folder-user",
         "x-sovara-project-id": "folder-project",
@@ -183,7 +190,7 @@ def test_priors_backend_folder_crud_flow(monkeypatch):
 
 
 def test_priors_backend_create_folder_conflicts_when_name_exists():
-    client = TestClient(create_app())
+    client = _make_priors_test_client()
     headers = {
         "x-sovara-user-id": "folder-conflict-user",
         "x-sovara-project-id": "folder-conflict-project",
@@ -231,7 +238,7 @@ def test_priors_backend_update_regenerates_summary_when_content_changes(monkeypa
         fake_generate_prior_summary,
     )
 
-    client = TestClient(create_app())
+    client = _make_priors_test_client()
     headers = {
         "x-sovara-user-id": "summary-user",
         "x-sovara-project-id": "summary-project",
@@ -287,7 +294,7 @@ def test_priors_backend_draft_create_submit_and_copy_flow(monkeypatch):
         fake_generate_prior_summary,
     )
 
-    client = TestClient(create_app())
+    client = _make_priors_test_client()
     headers = {
         "x-sovara-user-id": f"draft-user-{uuid.uuid4()}",
         "x-sovara-project-id": f"draft-project-{uuid.uuid4()}",
@@ -383,7 +390,7 @@ def test_priors_backend_metadata_only_update_skips_validation_and_summary_genera
         fake_generate_prior_summary,
     )
 
-    client = TestClient(create_app())
+    client = _make_priors_test_client()
     headers = {
         "x-sovara-user-id": "metadata-update-user",
         "x-sovara-project-id": "metadata-update-project",
@@ -470,7 +477,7 @@ def test_priors_backend_item_copy_move_delete_flow(monkeypatch):
         fake_generate_prior_summary,
     )
 
-    client = TestClient(create_app())
+    client = _make_priors_test_client()
     headers = {
         "x-sovara-user-id": f"items-user-{uuid.uuid4()}",
         "x-sovara-project-id": f"items-project-{uuid.uuid4()}",
@@ -592,7 +599,7 @@ def test_priors_backend_item_delete_logs_prior_and_folder_counts(monkeypatch):
         lambda message, *args: log_messages.append((message, args)),
     )
 
-    client = TestClient(create_app())
+    client = _make_priors_test_client()
     headers = {
         "x-sovara-user-id": f"delete-log-user-{uuid.uuid4()}",
         "x-sovara-project-id": f"delete-log-project-{uuid.uuid4()}",
@@ -654,7 +661,7 @@ def test_priors_backend_keeps_empty_folders_after_prior_delete_and_move(monkeypa
         fake_generate_prior_summary,
     )
 
-    client = TestClient(create_app())
+    client = _make_priors_test_client()
     headers = {
         "x-sovara-user-id": f"empty-folders-user-{uuid.uuid4()}",
         "x-sovara-project-id": f"empty-folders-project-{uuid.uuid4()}",

@@ -83,11 +83,46 @@ class PriorPreparationResult:
 
 def _runtime_log(level: str, message: str, **details: Any) -> None:
     log_method = getattr(logger, level)
+    details = {"source": "automatic", **details}
     if details:
         detail_text = json.dumps(details, sort_keys=True, ensure_ascii=False)
         log_method("%s | %s", message, detail_text)
     else:
         log_method(message)
+
+
+def _manual_log(level: str, message: str, **details: Any) -> None:
+    log_method = getattr(logger, level)
+    details = {"source": "manual", **details}
+    if details:
+        detail_text = json.dumps(details, sort_keys=True, ensure_ascii=False)
+        log_method("%s | %s", message, detail_text)
+    else:
+        log_method(message)
+
+
+def _httpx_response_detail(exc: Any) -> str | None:
+    response = getattr(exc, "response", None)
+    if response is None:
+        return None
+    try:
+        payload = response.json()
+    except Exception:
+        text = getattr(response, "text", None)
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+        return None
+    if isinstance(payload, dict):
+        detail = payload.get("detail")
+        if detail is not None:
+            try:
+                return json.dumps(detail, sort_keys=True, ensure_ascii=False)
+            except Exception:
+                return str(detail)
+    try:
+        return json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    except Exception:
+        return str(payload)
 
 def _unique_prior_ids(prior_ids: list[str]) -> list[str]:
     # Preserve first-seen order so replayed/inherited priors stay stable.
@@ -170,13 +205,6 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
             injection_anchor=None,
             warning_message=manual_priors_reason,
         )
-        _runtime_log(
-            "info",
-            "[PRIORS RUNTIME] skipping retrieval",
-            status="manual",
-            api_type=api_type,
-            warning=manual_priors_reason,
-        )
         return PriorPreparationResult(
             executed_input_dict=input_dict,
             prompt_suffix_json="[]",
@@ -218,30 +246,11 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
         warning_message="\n".join(warnings) if warnings else None,
     )
 
-    _runtime_log(
-        "info",
-        "[PRIORS RUNTIME] prepare",
-        api_type=api_type,
-        run_id=run_id or "(none)",
-        inherited_ids=inherited_prior_ids,
-        prompt_pairs=len(clean_prompt_pairs),
-        prefix_pairs=matched_prefix_len,
-        suffix_pairs=len(suffix_pairs),
-        context_chars=len(retrieval_context),
-    )
-
     if not clean_prompt_pairs:
         metadata.status = "uninjectable"
         metadata.warning_message = _append_message(
             metadata.warning_message,
             "No prompt-bearing fields found for priors injection.",
-        )
-        _runtime_log(
-            "info",
-            "[PRIORS RUNTIME] skipping retrieval",
-            status="uninjectable",
-            api_type=api_type,
-            warning=metadata.warning_message,
         )
         return PriorPreparationResult(
             executed_input_dict=cleaned_input_dict,
@@ -258,18 +267,6 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
             api_type,
             restore_complete_to_show_from_flattened(executed_flattened),
         )
-        _store_prefix_cache_entry(
-            run_id,
-            clean_prompt_pairs,
-            extract_prompt_bearing_pairs(executed_flattened, api_type),
-            inherited_prior_ids,
-        )
-        _runtime_log(
-            "info",
-            "[PRIORS RUNTIME] skipping retrieval",
-            status="none",
-            reason="prefix_hit_covers_entire_prompt",
-        )
         return PriorPreparationResult(
             executed_input_dict=executed_input_dict,
             prompt_suffix_json=prompt_suffix_json,
@@ -283,18 +280,6 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
             api_type,
             restore_complete_to_show_from_flattened(executed_flattened),
         )
-        _store_prefix_cache_entry(
-            run_id,
-            clean_prompt_pairs,
-            extract_prompt_bearing_pairs(executed_flattened, api_type),
-            inherited_prior_ids,
-        )
-        _runtime_log(
-            "info",
-            "[PRIORS RUNTIME] skipping retrieval",
-            status="empty_context",
-            api_type=api_type,
-        )
         return PriorPreparationResult(
             executed_input_dict=executed_input_dict,
             prompt_suffix_json=prompt_suffix_json,
@@ -304,13 +289,7 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
     if not run_id:
         metadata.status = "unavailable"
         metadata.error_message = "No active run id available for priors retrieval."
-        _runtime_log(
-            "warning",
-            "[PRIORS RUNTIME] skipping retrieval",
-            status="unavailable",
-            api_type=api_type,
-            error=metadata.error_message,
-        )
+        _runtime_log("warning", "[PRIORS RUNTIME] retrieval unavailable", error=metadata.error_message)
         return PriorPreparationResult(
             executed_input_dict=replace_to_show_in_input_dict(
                 cleaned_input_dict,
@@ -402,11 +381,13 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
         metadata.error_message = str(exc)
         status_code = exc.response.status_code if exc.response is not None else None
         metadata.status = "unavailable" if status_code in {502, 503, 504} else "error"
+        response_detail = _httpx_response_detail(exc)
         _runtime_log(
             "warning",
             "[PRIORS RUNTIME] retrieval http error",
             status_code=status_code,
             error=metadata.error_message,
+            detail=response_detail,
         )
     except Exception as exc:
         metadata.status = "error"
@@ -417,12 +398,6 @@ def prepare_llm_call_for_priors(input_dict: dict[str, Any], api_type: str) -> Pr
         cleaned_input_dict,
         api_type,
         restore_complete_to_show_from_flattened(executed_flattened),
-    )
-    _store_prefix_cache_entry(
-        run_id,
-        clean_prompt_pairs,
-        extract_prompt_bearing_pairs(executed_flattened, api_type),
-        inherited_prior_ids,
     )
     return PriorPreparationResult(
         executed_input_dict=executed_input_dict,
@@ -493,7 +468,7 @@ def _query_priors(path: Optional[str] = None) -> tuple[List[dict], str]:
     return result.get("priors", []), result.get("injected_context", "")
 
 
-def _retrieve_priors(path: Optional[str], context: str, model: Optional[str] = None) -> List[dict]:
+def _retrieve_priors(path: Optional[str], context: str) -> List[dict]:
     """Retrieve relevant priors via the LLM-backed retriever."""
     run_id = get_run_id()
     if run_id:
@@ -503,7 +478,6 @@ def _retrieve_priors(path: Optional[str], context: str, model: Optional[str] = N
                 "run_id": run_id,
                 "context": context,
                 "base_path": path,
-                "model": model,
                 "ignore_prior_ids": [],
             },
             timeout=_INTERNAL_PRIORS_HTTP_TIMEOUT_S,
@@ -512,8 +486,6 @@ def _retrieve_priors(path: Optional[str], context: str, model: Optional[str] = N
         payload = {"context": context}
         if path is not None:
             payload["base_path"] = path
-        if model is not None:
-            payload["model"] = model
         result = _priors_request("/priors/retrieve", payload)
     return result.get("priors", [])
 
@@ -537,6 +509,15 @@ def _format_priors(priors: List[dict]) -> str:
         + "\n\n".join(blocks)
         + "\n</sovara-priors>"
     )
+
+
+def _stringify_context(context: Any) -> str:
+    if isinstance(context, str):
+        return context
+    try:
+        return json.dumps(context, indent=2, ensure_ascii=False)
+    except TypeError:
+        return str(context)
 
 
 def _track_priors(prior_ids: List[str]) -> None:
@@ -586,19 +567,17 @@ def _http_error_detail(exc: urllib.error.HTTPError) -> str | None:
 
 def inject_priors(
     path: Optional[str] = None,
-    context: Optional[str] = None,
+    context: Any = None,
     method: str = "retrieve",
-    model: Optional[str] = None,
 ) -> str:
     """
     Retrieve priors from the priors server and return them as injected context.
 
     Args:
         path: Folder path to retrieve priors from (e.g. 'beaver/retriever/').
-        context: Context string for LLM-based retrieval (required when method="retrieve").
+        context: Retrieval context. Supports str, dict, list, or other JSON-serializable
+            values, which are stringified before retrieval.
         method: "retrieve" (LLM-filtered), "all" (all priors in path), or "none".
-        model: Optional retriever model override.
-
     Returns:
         Formatted priors string, or empty string if the priors server is unavailable.
 
@@ -606,14 +585,26 @@ def inject_priors(
         ValueError: When the requested priors folder path is invalid for the current scope.
         RuntimeError: When the priors request fails with a non-recoverable HTTP error.
     """
+    path_label = path or "<root>"
     if method == "none":
         return ""
 
+    context_text: str | None = None
+    if method == "retrieve":
+        if context is None:
+            raise ValueError("context is required when method='retrieve'")
+        context_text = _stringify_context(context)
+    _manual_log(
+        "info",
+        "[PRIORS MANUAL] fetching",
+        path=path_label,
+        method=method,
+        context_chars=len(context_text) if context_text is not None else 0,
+    )
+
     try:
         if method == "retrieve":
-            if context is None:
-                raise ValueError("context is required when method='retrieve'")
-            priors = _retrieve_priors(path, context, model=model)
+            priors = _retrieve_priors(path, context_text or "")
             injected_context = _format_priors(priors)
         elif method == "all":
             priors, _unused_injected_context = _query_priors(path)
@@ -622,6 +613,14 @@ def inject_priors(
             raise ValueError(f"Unknown method: {method}")
     except urllib.error.HTTPError as e:
         detail = _http_error_detail(e) or e.reason
+        _manual_log(
+            "warning",
+            "[PRIORS MANUAL] fetch http error",
+            path=path_label,
+            method=method,
+            status_code=e.code,
+            detail=detail,
+        )
         if e.code == 404 and path:
             raise ValueError(
                 f"inject_priors(path={path!r}, method={method!r}) failed because the prior folder "
@@ -633,16 +632,36 @@ def inject_priors(
             f"inject_priors(path={path!r}, method={method!r}) failed with HTTP {e.code}: {detail}"
         ) from e
     except (urllib.error.URLError, ConnectionError) as e:
-        logger.warning(f"Priors server unavailable: {e}")
+        _manual_log(
+            "warning",
+            "[PRIORS MANUAL] fetch unavailable",
+            path=path_label,
+            method=method,
+            error=str(e),
+        )
         return ""
     except ValueError:
         raise
     except Exception as e:
-        logger.warning(f"Failed to fetch priors: {e}")
+        _manual_log(
+            "warning",
+            "[PRIORS MANUAL] fetch failed",
+            path=path_label,
+            method=method,
+            error=str(e),
+        )
         return ""
 
     prior_ids = [prior.get("id") for prior in priors if prior.get("id")]
     if prior_ids:
         _track_priors(prior_ids)
+    _manual_log(
+        "info",
+        "[PRIORS MANUAL] fetch complete",
+        path=path_label,
+        method=method,
+        status="applied" if prior_ids else "none",
+        applied_ids=prior_ids,
+    )
 
     return injected_context

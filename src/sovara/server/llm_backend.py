@@ -1,13 +1,15 @@
 import logging
 import json
+import re
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Any, Callable, Sequence, TypeVar
 
 import litellm
-from sovara.common.constants import TRACE_CHAT_SCATTER_BUDGET_SECONDS
+from sovara.common.constants import MAIN_SERVER_LOG, TRACE_CHAT_SCATTER_BUDGET_SECONDS
+from sovara.common.logger import create_file_logger
 
-logger = logging.getLogger("sovara_agent")
+logger = create_file_logger(MAIN_SERVER_LOG, logger_name="sovara_agent", level=logging.INFO)
 T = TypeVar("T")
 R = TypeVar("R")
 
@@ -22,14 +24,17 @@ litellm.suppress_debug_info = True
 # TODO: Get from settings in UI
 # MODEL = "anthropic/claude-sonnet-4-6"
 # CHEAP_MODEL = "anthropic/claude-haiku-4-5-20251001"
+# MODEL = "together_ai/Qwen/Qwen3.5-397B-A17B"
+# CHEAP_MODEL = "together_ai/Qwen/Qwen3.5-9B"
 MODEL = "together_ai/Qwen/Qwen3.5-397B-A17B"
-CHEAP_MODEL = "together_ai/Qwen/Qwen3.5-9B"
+CHEAP_MODEL = "gpt-5.4-mini"
 
 _TIER_MODELS = {
     "expensive": MODEL,
     "cheap": CHEAP_MODEL,
 }
 NO_THINKING_EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": False}}
+_QWEN_REASONING_MAX_TOKENS = 1024
 
 
 def _log_preview(value, max_len: int = 800) -> str:
@@ -37,6 +42,111 @@ def _log_preview(value, max_len: int = 800) -> str:
     if len(text) <= max_len:
         return text
     return text[: max_len - 3] + "..."
+
+
+def _preview_text(value: str, max_len: int = 2000) -> str:
+    text = (value or "").strip()
+    if len(text) <= max_len:
+        return text
+    return f"{text[: max_len - 3]}..."
+
+
+def _preview_json(value: Any, max_len: int = 2000) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        text = repr(value)
+    return _preview_text(text, max_len=max_len)
+
+
+def _safe_token_counter(model: str, messages: list[dict[str, Any]]) -> int | None:
+    try:
+        return int(litellm.token_counter(model=model, messages=messages))
+    except Exception:
+        return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_usage_metrics(response: Any) -> dict[str, int | None]:
+    usage = _get_field(response, "usage")
+    if usage is None:
+        return {
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "reasoning_tokens": None,
+            "total_tokens": None,
+        }
+
+    completion_details = _get_field(usage, "completion_tokens_details")
+    reasoning_tokens = _coerce_int(_get_field(completion_details, "reasoning_tokens"))
+    return {
+        "prompt_tokens": _coerce_int(_get_field(usage, "prompt_tokens")),
+        "completion_tokens": _coerce_int(_get_field(usage, "completion_tokens")),
+        "reasoning_tokens": reasoning_tokens,
+        "total_tokens": _coerce_int(_get_field(usage, "total_tokens")),
+    }
+
+
+def _bounded_max_tokens(kwargs: dict[str, Any], cap: int) -> int:
+    existing = _coerce_int(kwargs.get("max_tokens"))
+    if existing is None:
+        return cap
+    return min(existing, cap)
+
+
+def _merge_extra_body(kwargs: dict[str, Any], extra_body: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(kwargs)
+    existing = merged.get("extra_body")
+    if isinstance(existing, dict):
+        merged["extra_body"] = {**existing, **extra_body}
+    else:
+        merged["extra_body"] = dict(extra_body)
+    return merged
+
+
+def _provider_name(model: str) -> str | None:
+    try:
+        _, provider, _, _ = litellm.get_llm_provider(model)
+        return provider
+    except Exception:
+        return None
+
+
+def _supports_reasoning_effort(model: str) -> bool:
+    provider = _provider_name(model)
+    return provider in {"openai", "anthropic"}
+
+
+def _is_qwen_model(model: str) -> bool:
+    return "qwen" in (model or "").lower()
+
+
+def _with_structured_reasoning_kwargs(model: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+    if "reasoning_effort" in kwargs or not _supports_reasoning_effort(model):
+        return dict(kwargs)
+    updated = dict(kwargs)
+    updated["reasoning_effort"] = "low"
+    return updated
+
+
+def _is_non_retryable_infer_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code is None:
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int):
+        return 400 <= status_code < 500 and status_code != 429
+    return type(exc).__name__ == "BadRequestError"
 
 
 # --- Inference ---
@@ -66,22 +176,44 @@ def resolve_model(model: str | None, tier: str) -> str:
 
 def infer(messages, model=None, tier="expensive", **kwargs):
     """Sync LLM call via litellm. Returns the full response object."""
-    kwargs.setdefault("temperature", 0)
     resolved = resolve_model(model, tier)
+    kwargs.pop("purpose", None)
+    if kwargs.get("reasoning_effort") not in {None, "none"}:
+        kwargs.pop("temperature", None)
+    else:
+        kwargs.setdefault("temperature", 0)
 
     # Normalize system= kwarg into a system message for cross-provider compat
     system = kwargs.pop("system", None)
     if system:
         messages = [{"role": "system", "content": system}] + list(messages)
 
+    prompt_tokens_estimate = _safe_token_counter(resolved, list(messages))
+
     for attempt in range(MAX_RETRIES):
+        started_at = time.perf_counter()
         try:
-            return litellm.completion(
+            response = litellm.completion(
                 model=resolved,
                 messages=messages,
                 **kwargs,
             )
-        except Exception:
+            return response
+        except Exception as exc:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.warning(
+                "infer failed model=%s tier=%s messages=%d prompt_tokens_est=%s completion_tokens=%s reasoning_tokens=%s total_tokens=%s elapsed_ms=%d attempt=%d/%d",
+                resolved,
+                tier,
+                len(messages),
+                prompt_tokens_estimate,
+                None,
+                None,
+                None,
+                elapsed_ms,
+                attempt + 1,
+                MAX_RETRIES,
+            )
             delay = RETRY_BASE_DELAY * (2 ** attempt)
             logger.exception(
                 "infer error attempt=%d/%d model=%s tier=%s messages=%d kwargs=%s",
@@ -92,6 +224,8 @@ def infer(messages, model=None, tier="expensive", **kwargs):
                 len(messages),
                 _log_preview(kwargs),
             )
+            if _is_non_retryable_infer_error(exc):
+                raise
             if attempt + 1 == MAX_RETRIES:
                 raise
             logger.warning(
@@ -195,6 +329,34 @@ def _extract_json_schema(response_format: dict[str, Any] | None) -> dict[str, An
     return schema if isinstance(schema, dict) else None
 
 
+def _supports_native_response_format(model: str, response_format: dict[str, Any] | None) -> bool:
+    if not response_format:
+        return False
+
+    try:
+        _, provider, _, _ = litellm.get_llm_provider(model)
+        support_kwargs = {"model": model, "custom_llm_provider": provider}
+    except Exception:
+        support_kwargs = {"model": model}
+
+    try:
+        if response_format.get("type") == "json_schema":
+            return bool(litellm.supports_response_schema(**support_kwargs))
+
+        supported_params = litellm.get_supported_openai_params(
+            request_type="chat_completion",
+            **support_kwargs,
+        ) or []
+        return "response_format" in supported_params
+    except Exception as exc:
+        logger.debug(
+            "Could not determine native structured-output support for model=%s: %s",
+            model,
+            exc,
+        )
+        return False
+
+
 def _validate_schema_type(value: Any, expected_type: str, path: str) -> None:
     if expected_type == "object":
         if not isinstance(value, dict):
@@ -265,27 +427,185 @@ def _validate_json_schema_subset(value: Any, schema: dict[str, Any] | None, path
                 _validate_json_schema_subset(item, item_schema, f"{path}[{idx}]")
 
 
-def _parse_and_validate_json(raw_text: str, schema: dict[str, Any] | None) -> Any:
+def _strip_code_fences(raw_text: str) -> str:
+    text = (raw_text or "").strip()
+    match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text
+
+
+def _extract_first_balanced_json(raw_text: str) -> str | None:
+    text = raw_text or ""
+    start = None
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+
+    for index, char in enumerate(text):
+        if start is None:
+            if char in "{[":
+                start = index
+                stack = ["}" if char == "{" else "]"]
+            continue
+
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+            continue
+
+        if char in "{[":
+            stack.append("}" if char == "{" else "]")
+            continue
+
+        if char in "}]":
+            if not stack or char != stack[-1]:
+                return None
+            stack.pop()
+            if not stack and start is not None:
+                return text[start : index + 1]
+
+    return None
+
+
+def _candidate_json_strings(raw_text: str) -> list[tuple[str, str]]:
+    candidates: list[tuple[str, str]] = []
+
+    def add(label: str, candidate: str | None) -> None:
+        if not candidate:
+            return
+        normalized = candidate.strip()
+        if not normalized:
+            return
+        if any(existing == normalized for _, existing in candidates):
+            return
+        candidates.append((label, normalized))
+
+    stripped = _strip_code_fences(raw_text)
+    add("raw", raw_text)
+    if stripped != (raw_text or "").strip():
+        add("stripped_fence", stripped)
+    add("balanced_raw", _extract_first_balanced_json(raw_text))
+    add("balanced_stripped", _extract_first_balanced_json(stripped))
+    return candidates
+
+
+def _schema_example_value(schema: dict[str, Any] | None) -> Any:
+    if not schema:
+        return {}
+    schema_type = schema.get("type")
+    if schema_type == "string":
+        return "example"
+    if schema_type == "integer":
+        return 0
+    if schema_type == "number":
+        return 0
+    if schema_type == "boolean":
+        return False
+    if schema_type == "array":
+        item_schema = schema.get("items") if isinstance(schema.get("items"), dict) else None
+        item_type = item_schema.get("type") if item_schema else None
+        if item_type == "string":
+            return ["p1", "p2"]
+        return [_schema_example_value(item_schema)]
+    if schema_type == "object":
+        properties = schema.get("properties") or {}
+        return {key: _schema_example_value(sub_schema) for key, sub_schema in properties.items()}
+    return {}
+
+
+def _schema_example(schema: dict[str, Any] | None) -> str | None:
+    if not schema:
+        return None
     try:
-        parsed = json.loads(raw_text)
-    except json.JSONDecodeError as exc:
-        raise StructuredInferenceError(f"LLM output was not valid JSON: {exc.msg}", raw_text=raw_text) from exc
-    _validate_json_schema_subset(parsed, schema)
-    return parsed
+        return json.dumps(_schema_example_value(schema), ensure_ascii=False)
+    except Exception:
+        return None
+
+
+def _coerce_to_schema_shape(parsed: Any, schema: dict[str, Any] | None) -> Any:
+    if not schema or isinstance(parsed, dict) or schema.get("type") != "object":
+        return parsed
+    properties = schema.get("properties") or {}
+    if len(properties) != 1:
+        return parsed
+    key, sub_schema = next(iter(properties.items()))
+    try:
+        _validate_json_schema_subset(parsed, sub_schema, f"$.{key}")
+    except StructuredInferenceError:
+        return parsed
+    return {key: parsed}
+
+
+def _parse_and_validate_json(raw_text: str, schema: dict[str, Any] | None) -> Any:
+    last_decode_error: json.JSONDecodeError | None = None
+    for strategy, candidate in _candidate_json_strings(raw_text):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_decode_error = exc
+            logger.warning(
+                "structured parse failed stage=json_decode strategy=%s error=%s raw_text=%s",
+                strategy,
+                exc.msg,
+                _preview_text(candidate),
+            )
+            continue
+
+        coerced = _coerce_to_schema_shape(parsed, schema)
+        if coerced is not parsed:
+            parsed = coerced
+        try:
+            _validate_json_schema_subset(parsed, schema)
+        except StructuredInferenceError as exc:
+            logger.warning(
+                "structured parse failed stage=schema_validation strategy=%s error=%s raw_text=%s parsed=%s",
+                strategy,
+                str(exc),
+                _preview_text(candidate),
+                _preview_json(parsed),
+            )
+            raise StructuredInferenceError(str(exc), raw_text=candidate, structured_mode=exc.structured_mode) from exc
+        return parsed
+
+    error = last_decode_error.msg if last_decode_error is not None else "no JSON object or array found"
+    raise StructuredInferenceError(f"LLM output was not valid JSON: {error}", raw_text=raw_text)
 
 
 def _structured_instruction(schema: dict[str, Any] | None) -> str:
     if schema:
         schema_text = json.dumps(schema, indent=2, sort_keys=True)
-        return (
+        instruction = (
             "Return ONLY valid JSON. Do not include markdown fences or explanation.\n"
             f"The JSON must satisfy this schema:\n{schema_text}"
         )
+        example = _schema_example(schema)
+        if example:
+            instruction += f"\nExample valid JSON:\n{example}"
+        return instruction
     return "Return ONLY valid JSON. Do not include markdown fences or explanation."
 
 
 def _with_json_instruction(messages: list[dict[str, Any]], schema: dict[str, Any] | None) -> list[dict[str, Any]]:
-    return [{"role": "system", "content": _structured_instruction(schema)}] + list(messages)
+    instruction = _structured_instruction(schema)
+    normalized = list(messages)
+    if normalized and normalized[0].get("role") == "system":
+        merged = dict(normalized[0])
+        original = merged.get("content")
+        if isinstance(original, str) and original:
+            merged["content"] = f"{instruction}\n\n{original}"
+        else:
+            merged["content"] = instruction
+        return [merged, *normalized[1:]]
+    return [{"role": "system", "content": instruction}, *normalized]
 
 
 def _with_repair_instruction(
@@ -307,9 +627,38 @@ def _with_repair_instruction(
     ]
 
 
+def _with_qwen_reflection_prompt(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return list(messages) + [
+        {
+            "role": "user",
+            "content": (
+                "Think through the answer carefully before responding. "
+                "Use this turn only for reasoning and keep it concise."
+            ),
+        }
+    ]
+
+
+def _with_qwen_answer_prompt(
+    messages: list[dict[str, Any]],
+    schema: dict[str, Any] | None,
+    reflection_text: str,
+) -> list[dict[str, Any]]:
+    return list(messages) + [
+        {"role": "assistant", "content": reflection_text},
+        {
+            "role": "user",
+            "content": (
+                "Now that you have thought about it, give the final answer.\n"
+                f"{_structured_instruction(schema)}"
+            ),
+        },
+    ]
+
+
 def infer_structured_json(
     messages,
-    model,
+    model: str | None,
     tier="expensive",
     response_format: dict[str, Any] | None = None,
     repair_attempts: int = 1,
@@ -318,10 +667,12 @@ def infer_structured_json(
     """Run a structured inference request with native-first, local-validated fallback."""
     schema = _extract_json_schema(response_format)
     resolved_model = resolve_model(model, tier)
+    native_supported = _supports_native_response_format(resolved_model, response_format)
+    structured_kwargs = _with_structured_reasoning_kwargs(resolved_model, dict(kwargs))
 
-    if response_format is not None:
+    if response_format is not None and native_supported:
         try:
-            response = infer(messages, model=model, tier=tier, response_format=response_format, **kwargs)
+            response = infer(messages, model=model, tier=tier, response_format=response_format, **structured_kwargs)
             raw_text = _extract_response_text(response)
             parsed = _parse_and_validate_json(raw_text, schema)
             return {
@@ -334,15 +685,54 @@ def infer_structured_json(
             native_error = exc
         except Exception as exc:
             native_error = StructuredInferenceError(str(exc))
+    elif response_format is not None:
+        native_error = StructuredInferenceError(
+            f"Native structured output unsupported for model {resolved_model}",
+            structured_mode="failed",
+        )
     else:
         native_error = StructuredInferenceError("No response_format provided", structured_mode="failed")
+
+    if _is_qwen_model(resolved_model):
+        reflection_kwargs = dict(structured_kwargs)
+        reflection_kwargs["max_tokens"] = _bounded_max_tokens(reflection_kwargs, _QWEN_REASONING_MAX_TOKENS)
+        try:
+            reflection_messages = _with_qwen_reflection_prompt(list(messages))
+            reflection_response = infer(
+                reflection_messages,
+                model=model,
+                tier=tier,
+                **reflection_kwargs,
+            )
+            reflection_text = _extract_response_text(reflection_response)
+            answer_kwargs = _merge_extra_body(structured_kwargs, NO_THINKING_EXTRA_BODY)
+            answer_kwargs["max_tokens"] = _bounded_max_tokens(answer_kwargs, _QWEN_REASONING_MAX_TOKENS)
+            answer_messages = _with_qwen_answer_prompt(list(messages), schema, reflection_text)
+            response = infer(
+                answer_messages,
+                model=model,
+                tier=tier,
+                **answer_kwargs,
+            )
+            raw_text = _extract_response_text(response)
+            parsed = _parse_and_validate_json(raw_text, schema)
+            return {
+                "raw_text": raw_text,
+                "parsed": parsed,
+                "structured_mode": "qwen_two_turn",
+                "model_used": resolved_model,
+            }
+        except StructuredInferenceError as exc:
+            native_error = exc
+        except Exception as exc:
+            native_error = StructuredInferenceError(str(exc))
 
     fallback_messages = _with_json_instruction(list(messages), schema)
     last_error: StructuredInferenceError = native_error
 
     for attempt in range(repair_attempts + 1):
         try:
-            response = infer(fallback_messages, model=model, tier=tier, **kwargs)
+            response = infer(fallback_messages, model=model, tier=tier, **structured_kwargs)
             raw_text = _extract_response_text(response)
             parsed = _parse_and_validate_json(raw_text, schema)
             return {

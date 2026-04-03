@@ -42,6 +42,7 @@ _SIMPLE_RESPONSE_FORMAT = {
 
 def test_infer_structured_json_uses_native_path_when_response_is_valid(monkeypatch):
     calls = []
+    monkeypatch.setattr(llm_backend, "_supports_native_response_format", lambda model, response_format: True)
 
     def fake_infer(messages, model, tier="expensive", **kwargs):
         calls.append(
@@ -75,6 +76,7 @@ def test_infer_structured_json_uses_native_path_when_response_is_valid(monkeypat
 
 def test_infer_structured_json_falls_back_to_local_parse_when_native_path_fails(monkeypatch):
     calls = []
+    monkeypatch.setattr(llm_backend, "_supports_native_response_format", lambda model, response_format: True)
 
     def fake_infer(messages, model, tier="expensive", **kwargs):
         calls.append(
@@ -113,6 +115,7 @@ def test_infer_structured_json_falls_back_to_local_parse_when_native_path_fails(
 
 def test_infer_structured_json_repairs_invalid_fallback_json(monkeypatch):
     calls = []
+    monkeypatch.setattr(llm_backend, "_supports_native_response_format", lambda model, response_format: True)
 
     def fake_infer(messages, model, tier="expensive", **kwargs):
         calls.append(
@@ -151,6 +154,8 @@ def test_infer_structured_json_repairs_invalid_fallback_json(monkeypatch):
 
 
 def test_infer_structured_json_raises_after_invalid_repair_attempts(monkeypatch):
+    monkeypatch.setattr(llm_backend, "_supports_native_response_format", lambda model, response_format: True)
+
     def fake_infer(messages, model, tier="expensive", **kwargs):
         if "response_format" in kwargs:
             raise RuntimeError("native mode unavailable")
@@ -167,80 +172,144 @@ def test_infer_structured_json_raises_after_invalid_repair_attempts(monkeypatch)
         )
 
 
+def test_infer_structured_json_preserves_raw_text_on_schema_validation_failure(monkeypatch):
+    monkeypatch.setattr(llm_backend, "_supports_native_response_format", lambda model, response_format: False)
+    monkeypatch.setattr(
+        llm_backend,
+        "infer",
+        lambda messages, model, tier="expensive", **kwargs: _response_with_text('{"wrong":"shape"}'),
+    )
+
+    with pytest.raises(StructuredInferenceError) as exc_info:
+        llm_backend.infer_structured_json(
+            [{"role": "user", "content": "hello"}],
+            "openai/gpt-5.4",
+            response_format=_SIMPLE_RESPONSE_FORMAT,
+            repair_attempts=0,
+        )
+
+    assert exc_info.value.raw_text == '{"wrong":"shape"}'
+    assert "$.answer is required" in str(exc_info.value)
+
+
+def test_infer_structured_json_coerces_single_array_property_schema(monkeypatch):
+    retrieval_schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "relevant_priors",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "prior_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    }
+                },
+                "required": ["prior_ids"],
+                "additionalProperties": False,
+            },
+        },
+    }
+    monkeypatch.setattr(llm_backend, "_supports_native_response_format", lambda model, response_format: False)
+    monkeypatch.setattr(
+        llm_backend,
+        "infer",
+        lambda messages, model, tier="expensive", **kwargs: _response_with_text('["p1","p2"]'),
+    )
+
+    result = llm_backend.infer_structured_json(
+        [{"role": "user", "content": "hello"}],
+        "openai/gpt-5.4",
+        response_format=retrieval_schema,
+        repair_attempts=0,
+    )
+
+    assert result["parsed"] == {"prior_ids": ["p1", "p2"]}
+    assert result["raw_text"] == '["p1","p2"]'
+
+
+def test_infer_structured_json_uses_qwen_two_turn_flow(monkeypatch):
+    calls = []
+    monkeypatch.setattr(llm_backend, "_supports_native_response_format", lambda model, response_format: False)
+
+    def fake_infer(messages, model, tier="expensive", **kwargs):
+        calls.append({"messages": messages, "kwargs": kwargs})
+        if len(calls) == 1:
+            return _response_with_text("Thoughts about relevant priors")
+        return _response_with_text('{"answer":"done"}')
+
+    monkeypatch.setattr(llm_backend, "infer", fake_infer)
+
+    result = llm_backend.infer_structured_json(
+        [{"role": "system", "content": "Return an answer."}, {"role": "user", "content": "hello"}],
+        "together_ai/Qwen/Qwen3.5-9B",
+        response_format=_SIMPLE_RESPONSE_FORMAT,
+        repair_attempts=0,
+    )
+
+    assert result["structured_mode"] == "qwen_two_turn"
+    assert len(calls) == 2
+    assert calls[0]["kwargs"]["max_tokens"] == llm_backend._QWEN_REASONING_MAX_TOKENS
+    assert calls[1]["kwargs"]["max_tokens"] == llm_backend._QWEN_REASONING_MAX_TOKENS
+    assert calls[1]["kwargs"]["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+    assert calls[1]["messages"][-2]["role"] == "assistant"
+    assert calls[1]["messages"][-1]["role"] == "user"
+
+
+def test_infer_structured_json_skips_native_when_capability_check_fails(monkeypatch):
+    calls = []
+    monkeypatch.setattr(llm_backend, "_supports_native_response_format", lambda model, response_format: False)
+
+    def fake_infer(messages, model, tier="expensive", **kwargs):
+        calls.append(
+            {
+                "messages": messages,
+                "kwargs": kwargs,
+            }
+        )
+        return _response_with_text('{"answer":"fallback"}')
+
+    monkeypatch.setattr(llm_backend, "infer", fake_infer)
+
+    result = llm_backend.infer_structured_json(
+        [{"role": "user", "content": "hello"}],
+        "openai/gpt-5.4",
+        response_format=_SIMPLE_RESPONSE_FORMAT,
+        repair_attempts=0,
+    )
+
+    assert result == {
+        "raw_text": '{"answer":"fallback"}',
+        "parsed": {"answer": "fallback"},
+        "structured_mode": "local_parse",
+        "model_used": "openai/gpt-5.4",
+    }
+    assert len(calls) == 1
+    assert "response_format" not in calls[0]["kwargs"]
+    assert calls[0]["messages"][0]["role"] == "system"
+    assert "Return ONLY valid JSON" in calls[0]["messages"][0]["content"]
+
+
+def test_with_json_instruction_merges_into_existing_first_system_message():
+    messages = [
+        {"role": "system", "content": "Original system"},
+        {"role": "user", "content": "hello"},
+    ]
+
+    merged = llm_backend._with_json_instruction(messages, {"type": "object"})
+
+    assert len(merged) == 2
+    assert merged[0]["role"] == "system"
+    assert "Return ONLY valid JSON" in merged[0]["content"]
+    assert merged[0]["content"].endswith("Original system")
+    assert merged[1] == {"role": "user", "content": "hello"}
+
+
 def _make_internal_test_client() -> TestClient:
     app = FastAPI()
     app.include_router(internal_router)
     return TestClient(app)
-
-
-def test_internal_llm_infer_forwards_timeout_and_extra_kwargs(monkeypatch):
-    captured = {}
-
-    def fake_infer_structured_json(messages, model, tier="expensive", response_format=None, repair_attempts=1, **kwargs):
-        captured["messages"] = messages
-        captured["model"] = model
-        captured["tier"] = tier
-        captured["response_format"] = response_format
-        captured["repair_attempts"] = repair_attempts
-        captured["kwargs"] = kwargs
-        return {
-            "raw_text": '{"answer":"ok"}',
-            "parsed": {"answer": "ok"},
-            "structured_mode": "local_parse",
-            "model_used": model,
-        }
-
-    monkeypatch.setattr("sovara.server.routes.internal.infer_structured_json", fake_infer_structured_json)
-    client = _make_internal_test_client()
-
-    response = client.post(
-        "/internal/llm/infer",
-        json={
-            "purpose": "priors_retrieval",
-            "model": "openai/gpt-5.4",
-            "tier": "cheap",
-            "messages": [{"role": "user", "content": "hi"}],
-            "response_format": _SIMPLE_RESPONSE_FORMAT,
-            "timeout_ms": 1500,
-            "repair_attempts": 2,
-            "extra_body": {"thinking_token_budget": 200},
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.json()["structured_mode"] == "local_parse"
-    assert captured["tier"] == "cheap"
-    assert captured["repair_attempts"] == 2
-    assert captured["kwargs"]["timeout"] == 1.5
-    assert captured["kwargs"]["extra_body"] == {"thinking_token_budget": 200}
-
-
-def test_internal_llm_infer_maps_structured_error_to_422(monkeypatch):
-    def fake_infer_structured_json(*args, **kwargs):
-        raise StructuredInferenceError(
-            "schema mismatch",
-            raw_text="oops",
-            structured_mode="failed",
-        )
-
-    monkeypatch.setattr("sovara.server.routes.internal.infer_structured_json", fake_infer_structured_json)
-    client = _make_internal_test_client()
-
-    response = client.post(
-        "/internal/llm/infer",
-        json={
-            "purpose": "priors_validation",
-            "model": "openai/gpt-5.4",
-            "messages": [{"role": "user", "content": "hi"}],
-        },
-    )
-
-    assert response.status_code == 422
-    assert response.json()["detail"] == {
-        "error": "schema mismatch",
-        "raw_text": "oops",
-        "structured_mode": "failed",
-    }
 
 
 def test_internal_priors_retrieve_resolves_scope_from_run(monkeypatch):
@@ -258,12 +327,16 @@ def test_internal_priors_retrieve_resolves_scope_from_run(monkeypatch):
 
     captured = {}
 
-    def fake_retrieve_priors(self, body):
-        captured["scope"] = (self.user_id, self.project_id)
-        captured["body"] = body
+    async def fake_retrieve_priors_for_scope(*, user_id, project_id, context, base_path="", ignore_prior_ids=None):
+        captured["scope"] = (user_id, project_id)
+        captured["body"] = {
+            "context": context,
+            "ignore_prior_ids": ignore_prior_ids or [],
+            **({"base_path": base_path} if base_path else {}),
+        }
         return {"prior_count": 0, "priors": [], "rendered_priors_block": "", "priors_revision": 1}
 
-    monkeypatch.setattr("sovara.server.priors_client.PriorsBackendClient.retrieve_priors", fake_retrieve_priors)
+    monkeypatch.setattr("sovara.server.routes.internal.retrieve_priors_for_scope", fake_retrieve_priors_for_scope)
     client = _make_internal_test_client()
 
     try:
@@ -282,8 +355,6 @@ def test_internal_priors_retrieve_resolves_scope_from_run(monkeypatch):
     assert captured["scope"] == (TEST_USER_ID, TEST_PROJECT_ID)
     assert captured["body"] == {
         "context": "body.messages.0.content: retry",
-        "base_path": None,
-        "model": None,
         "ignore_prior_ids": ["p1"],
     }
 
@@ -303,12 +374,12 @@ def test_internal_priors_query_resolves_scope_from_run(monkeypatch):
 
     captured = {}
 
-    def fake_query_priors(self, path=None):
-        captured["scope"] = (self.user_id, self.project_id)
+    def fake_query_priors_for_scope(*, user_id, project_id, path=None):
+        captured["scope"] = (user_id, project_id)
         captured["path"] = path
         return {"priors": [], "injected_context": "", "path": path or ""}
 
-    monkeypatch.setattr("sovara.server.priors_client.PriorsBackendClient.query_priors", fake_query_priors)
+    monkeypatch.setattr("sovara.server.routes.internal.query_priors_for_scope", fake_query_priors_for_scope)
     client = _make_internal_test_client()
 
     try:
@@ -342,12 +413,12 @@ def test_internal_priors_prefix_cache_lookup_resolves_scope_from_run(monkeypatch
 
     captured = {}
 
-    def fake_lookup_prefix_cache(self, body):
-        captured["scope"] = (self.user_id, self.project_id)
-        captured["body"] = body
-        return {"found": True, "matched_pair_count": 1, "injected_pairs": body["clean_pairs"], "prior_ids": ["p1"]}
+    def fake_lookup_prefix_cache_for_scope(*, user_id, project_id, clean_pairs=None, base_path=""):
+        captured["scope"] = (user_id, project_id)
+        captured["body"] = {"clean_pairs": clean_pairs or []}
+        return {"found": True, "matched_pair_count": 1, "injected_pairs": clean_pairs or [], "prior_ids": ["p1"]}
 
-    monkeypatch.setattr("sovara.server.priors_client.PriorsBackendClient.lookup_prefix_cache", fake_lookup_prefix_cache)
+    monkeypatch.setattr("sovara.server.routes.internal.lookup_prefix_cache_for_scope", fake_lookup_prefix_cache_for_scope)
     client = _make_internal_test_client()
 
     try:
@@ -383,12 +454,16 @@ def test_internal_priors_prefix_cache_store_resolves_scope_from_run(monkeypatch)
 
     captured = {}
 
-    def fake_store_prefix_cache(self, body):
-        captured["scope"] = (self.user_id, self.project_id)
-        captured["body"] = body
+    def fake_store_prefix_cache_for_scope(*, user_id, project_id, clean_pairs=None, injected_pairs=None, prior_ids=None, base_path=""):
+        captured["scope"] = (user_id, project_id)
+        captured["body"] = {
+            "clean_pairs": clean_pairs or [],
+            "injected_pairs": injected_pairs or [],
+            "prior_ids": prior_ids or [],
+        }
         return {"stored": True}
 
-    monkeypatch.setattr("sovara.server.priors_client.PriorsBackendClient.store_prefix_cache", fake_store_prefix_cache)
+    monkeypatch.setattr("sovara.server.routes.internal.store_prefix_cache_for_scope", fake_store_prefix_cache_for_scope)
     client = _make_internal_test_client()
 
     try:

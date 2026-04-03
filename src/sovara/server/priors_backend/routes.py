@@ -1,18 +1,20 @@
-"""API routes for the priors backend child service."""
+"""Public priors API and shared priors service helpers."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from sovara.server.priors_backend.deps import get_prior_store, get_scope_from_request
-from sovara.server.priors_backend.events import publish
+from sovara.server.priors_backend.events import publish, subscribe
+from sovara.server.priors_backend.storage import PriorStore
 from sovara.server.llm_backend import resolve_model
+from sovara.server.priors_scope import resolve_priors_scope_from_request
 from sovara.server.priors_backend.llm.lesson_retriever import (
     build_folder_tree_summary,
     retrieve_relevant_priors,
@@ -34,6 +36,7 @@ from sovara.server.priors_backend.prefix_cache import (
 )
 
 router = APIRouter(prefix="/api/v1")
+_RETRIEVAL_LOG_CONTEXT_LIMIT = 4000
 
 
 def _normalize_path(path: str) -> str:
@@ -67,6 +70,13 @@ def _build_injected_context(priors: list[dict]) -> str:
         + "\n\n".join(blocks)
         + "\n</sovara-priors>"
     )
+
+
+def _preview_log_context(value: str, limit: int = _RETRIEVAL_LOG_CONTEXT_LIMIT) -> str:
+    text = value or ""
+    if len(text) <= limit:
+        return text or "(empty)"
+    return f"{text[:limit]}... ({len(text) - limit} chars truncated)"
 
 
 def _validation_to_feedback(validation) -> dict:
@@ -169,7 +179,6 @@ class PriorItemsDeleteRequest(BaseModel):
 class PriorRetrieveRequest(BaseModel):
     context: str = Field(..., min_length=1)
     base_path: str = ""
-    model: Optional[str] = None
     ignore_prior_ids: list[str] = Field(default_factory=list)
 
 
@@ -276,57 +285,278 @@ def _items_affect_active_world(store, items: list[PriorItemRef]) -> bool:
     return False
 
 
-def _clear_scope_prefix_cache_for_request(request: Request) -> None:
-    user_id, project_id = get_scope_from_request(request)
+def _get_prior_store_for_scope(user_id: str, project_id: str) -> PriorStore:
+    return PriorStore(user_id, project_id)
+
+
+def _resolve_store(
+    request: Request,
+    *,
+    project_id: str | None = None,
+) -> tuple[str, str, PriorStore]:
+    user_id, resolved_project_id = resolve_priors_scope_from_request(request, project_id=project_id)
+    return user_id, resolved_project_id, _get_prior_store_for_scope(user_id, resolved_project_id)
+
+
+def _clear_scope_prefix_cache(user_id: str, project_id: str) -> None:
     clear_scope_prefix_cache(user_id=user_id, project_id=project_id)
 
 
-@router.get("/priors/scope")
-def get_scope(request: Request):
-    store = get_prior_store(request)
+def _schedule_ui_priors_refresh(request: Request) -> None:
+    state = getattr(request.app.state, "server_state", None)
+    if state is not None:
+        state.schedule_broadcast({"type": "priors_refresh"})
+
+
+def get_scope_metadata_for_scope(user_id: str, project_id: str) -> dict:
+    store = _get_prior_store_for_scope(user_id, project_id)
     return store.read_scope_metadata()
 
 
-@router.post("/priors/prefix-cache/lookup")
-def lookup_prefix_cache_endpoint(request: Request, body: PrefixCacheLookupRequest):
-    user_id, project_id = get_scope_from_request(request)
-    base_path = _normalize_path(body.base_path)
+def lookup_prefix_cache_for_scope(
+    *,
+    user_id: str,
+    project_id: str,
+    base_path: str = "",
+    clean_pairs: list[dict[str, str]] | None = None,
+) -> dict:
+    normalized_base_path = _normalize_path(base_path)
+    model_used = resolve_model(None, "cheap")
     match = lookup_longest_prefix(
         user_id=user_id,
         project_id=project_id,
-        base_path=base_path,
-        clean_pairs=body.clean_pairs,
+        base_path=normalized_base_path,
+        model=model_used,
+        clean_pairs=clean_pairs or [],
     )
     if match is None:
         return {"found": False}
     return {"found": True, **match}
 
 
-@router.post("/priors/prefix-cache/store")
-def store_prefix_cache_endpoint(request: Request, body: PrefixCacheStoreRequest):
-    user_id, project_id = get_scope_from_request(request)
-    base_path = _normalize_path(body.base_path)
+def store_prefix_cache_for_scope(
+    *,
+    user_id: str,
+    project_id: str,
+    base_path: str = "",
+    clean_pairs: list[dict[str, str]] | None = None,
+    injected_pairs: list[dict[str, str]] | None = None,
+    prior_ids: list[str] | None = None,
+) -> dict:
+    normalized_base_path = _normalize_path(base_path)
+    model_used = resolve_model(None, "cheap")
     store_prefix(
         user_id=user_id,
         project_id=project_id,
-        base_path=base_path,
-        clean_pairs=body.clean_pairs,
-        injected_pairs=body.injected_pairs,
-        prior_ids=body.prior_ids,
+        base_path=normalized_base_path,
+        model=model_used,
+        clean_pairs=clean_pairs or [],
+        injected_pairs=injected_pairs or [],
+        prior_ids=prior_ids or [],
     )
     return {"stored": True}
 
 
+def query_priors_for_scope(
+    *,
+    user_id: str,
+    project_id: str,
+    path: str | None = None,
+) -> dict:
+    store = _get_prior_store_for_scope(user_id, project_id)
+    normalized_path = _normalize_path(path) if path else ""
+    if path is not None and not store.folder_exists(normalized_path):
+        raise HTTPException(status_code=404, detail="Folder not found")
+    priors = _active_only(store.list_all(path=normalized_path if path is not None else None, include_content=True))
+    return {
+        "path": normalized_path,
+        "priors": priors,
+        "injected_context": _build_injected_context(priors),
+    }
+
+
+async def retrieve_priors_for_scope(
+    *,
+    user_id: str,
+    project_id: str,
+    context: str,
+    base_path: str = "",
+    ignore_prior_ids: list[str] | None = None,
+    disconnect_checker: Callable[[], Awaitable[bool]] | None = None,
+) -> dict:
+    store = _get_prior_store_for_scope(user_id, project_id)
+    normalized_base_path = _normalize_path(base_path)
+    if base_path and not store.folder_exists(normalized_base_path):
+        raise HTTPException(status_code=404, detail="Folder not found")
+    scope = store.read_scope_metadata()
+    priors_revision = int(scope["revision"])
+    model_used = resolve_model(None, "cheap")
+    ignore_ids = sorted({prior_id for prior_id in (ignore_prior_ids or []) if prior_id})
+
+    logger.info(
+        "[PRIORS ROUTE] retrieve start user=%s project=%s revision=%s base_path=%s model=%s ignore_ids=%s\n"
+        "[PRIORS ROUTE] context (%d chars):\n%s",
+        scope["user_id"],
+        scope["project_id"],
+        priors_revision,
+        normalized_base_path or "(root)",
+        model_used,
+        ignore_ids,
+        len(context or ""),
+        _preview_log_context(context or ""),
+    )
+
+    cached = get_cached_retrieval(
+        user_id=str(scope["user_id"]),
+        project_id=str(scope["project_id"]),
+        priors_revision=priors_revision,
+        base_path=normalized_base_path,
+        model=model_used,
+        context=context,
+        ignore_prior_ids=ignore_prior_ids or [],
+    )
+    if cached is not None:
+        logger.info(
+            "[PRIORS ROUTE] cache hit revision=%s base_path=%s model=%s prior_count=%s ids=%s",
+            priors_revision,
+            normalized_base_path or "(root)",
+            model_used,
+            cached.get("prior_count"),
+            [prior.get("id") for prior in cached.get("priors", [])],
+        )
+        return PriorRetrieveResponse(**cached).model_dump()
+
+    logger.info(
+        "[PRIORS ROUTE] cache miss revision=%s base_path=%s model=%s",
+        priors_revision,
+        normalized_base_path or "(root)",
+        model_used,
+    )
+
+    retrieve_task = asyncio.create_task(
+        retrieve_relevant_priors(
+            store=store,
+            context=context,
+            base_path=normalized_base_path,
+            ignore_prior_ids=ignore_prior_ids or [],
+        )
+    )
+
+    wait_tasks = [retrieve_task]
+    disconnect_task: asyncio.Task | None = None
+    if disconnect_checker is not None:
+        async def _wait_disconnect():
+            while not await disconnect_checker():
+                await asyncio.sleep(1)
+        disconnect_task = asyncio.create_task(_wait_disconnect())
+        wait_tasks.append(disconnect_task)
+
+    done, pending = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED)
+    for task in pending:
+        task.cancel()
+
+    if disconnect_task is not None and disconnect_task in done:
+        logger.info("Client disconnected during priors retrieval, cancelled LLM calls")
+        raise asyncio.CancelledError()
+
+    priors = retrieve_task.result()
+    response = PriorRetrieveResponse(
+        context=context,
+        base_path=normalized_base_path,
+        priors=[
+            RetrievedPrior(**{key: prior[key] for key in ("id", "name", "summary", "content", "path")})
+            for prior in priors
+        ],
+        prior_count=len(priors),
+        priors_revision=priors_revision,
+        rendered_priors_block=_build_injected_context(priors),
+        model_used=model_used,
+    )
+    logger.info(
+        "[PRIORS ROUTE] retrieve complete prior_count=%s ids=%s rendered_block_chars=%d",
+        response.prior_count,
+        [prior.id for prior in response.priors],
+        len(response.rendered_priors_block),
+    )
+    store_cached_retrieval(
+        user_id=str(scope["user_id"]),
+        project_id=str(scope["project_id"]),
+        priors_revision=priors_revision,
+        base_path=normalized_base_path,
+        model=model_used,
+        context=context,
+        ignore_prior_ids=ignore_prior_ids or [],
+        response=response.model_dump(),
+    )
+    return response.model_dump()
+
+
+@router.get("/priors/scope")
+def get_scope(request: Request, project_id: str | None = Query(default=None)):
+    user_id, resolved_project_id = resolve_priors_scope_from_request(request, project_id=project_id)
+    return get_scope_metadata_for_scope(user_id, resolved_project_id)
+
+
+@router.get("/info")
+def info():
+    return {
+        "status": "bootstrapped",
+        "service": "priors",
+        "message": "Priors API is served directly by the main Sovara server.",
+    }
+
+
+@router.get("/events")
+async def events():
+    return await subscribe()
+
+
+@router.post("/priors/prefix-cache/lookup")
+def lookup_prefix_cache_endpoint(
+    request: Request,
+    body: PrefixCacheLookupRequest,
+    project_id: str | None = Query(default=None),
+):
+    user_id, resolved_project_id = resolve_priors_scope_from_request(request, project_id=project_id)
+    return lookup_prefix_cache_for_scope(
+        user_id=user_id,
+        project_id=resolved_project_id,
+        base_path=body.base_path,
+        clean_pairs=body.clean_pairs,
+    )
+
+
+@router.post("/priors/prefix-cache/store")
+def store_prefix_cache_endpoint(
+    request: Request,
+    body: PrefixCacheStoreRequest,
+    project_id: str | None = Query(default=None),
+):
+    user_id, resolved_project_id = resolve_priors_scope_from_request(request, project_id=project_id)
+    return store_prefix_cache_for_scope(
+        user_id=user_id,
+        project_id=resolved_project_id,
+        base_path=body.base_path,
+        clean_pairs=body.clean_pairs,
+        injected_pairs=body.injected_pairs,
+        prior_ids=body.prior_ids,
+    )
+
+
 @router.get("/priors")
-def list_priors(request: Request, path: Optional[str] = Query(default=None)):
-    store = get_prior_store(request)
+def list_priors(
+    request: Request,
+    path: Optional[str] = Query(default=None),
+    project_id: str | None = Query(default=None),
+):
+    _user_id, _project_id, store = _resolve_store(request, project_id=project_id)
     priors = store.list_all(path=_normalize_path(path) if path else None, include_content=True)
     return {"priors": priors}
 
 
 @router.get("/priors/{prior_id}")
-def get_prior(request: Request, prior_id: str):
-    store = get_prior_store(request)
+def get_prior(request: Request, prior_id: str, project_id: str | None = Query(default=None)):
+    _user_id, _project_id, store = _resolve_store(request, project_id=project_id)
     prior = store.get(prior_id)
     if prior is None:
         raise HTTPException(status_code=404, detail="Prior not found")
@@ -334,22 +564,14 @@ def get_prior(request: Request, prior_id: str):
 
 
 @router.post("/query/priors")
-def query_priors(request: Request, body: PriorQueryRequest):
-    store = get_prior_store(request)
-    path = _normalize_path(body.path) if body.path else ""
-    if body.path is not None and not store.folder_exists(path):
-        raise HTTPException(status_code=404, detail="Folder not found")
-    priors = _active_only(store.list_all(path=path if body.path is not None else None, include_content=True))
-    return {
-        "path": path,
-        "priors": priors,
-        "injected_context": _build_injected_context(priors),
-    }
+def query_priors(request: Request, body: PriorQueryRequest, project_id: str | None = Query(default=None)):
+    user_id, resolved_project_id = resolve_priors_scope_from_request(request, project_id=project_id)
+    return query_priors_for_scope(user_id=user_id, project_id=resolved_project_id, path=body.path)
 
 
 @router.post("/priors/folders/ls")
-def folder_ls(request: Request, body: FolderLsRequest):
-    store = get_prior_store(request)
+def folder_ls(request: Request, body: FolderLsRequest, project_id: str | None = Query(default=None)):
+    _user_id, _project_id, store = _resolve_store(request, project_id=project_id)
     path = _normalize_path(body.path)
     result = store.list_folders(path, include_content=False)
     return {
@@ -361,8 +583,8 @@ def folder_ls(request: Request, body: FolderLsRequest):
 
 
 @router.post("/priors/folders")
-def create_folder(request: Request, body: FolderCreateRequest):
-    store = get_prior_store(request)
+def create_folder(request: Request, body: FolderCreateRequest, project_id: str | None = Query(default=None)):
+    user_id, resolved_project_id, store = _resolve_store(request, project_id=project_id)
     path = _normalize_path(body.path)
     if not path:
         raise HTTPException(status_code=400, detail="Folder path is required")
@@ -371,13 +593,14 @@ def create_folder(request: Request, body: FolderCreateRequest):
     except FileExistsError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     publish("folder_created", {"path": path, "revision": None})
+    _schedule_ui_priors_refresh(request)
     logger.info("Created prior folder '%s'", path)
     return {"status": "created", **result}
 
 
 @router.put("/priors/folders")
-def move_folder(request: Request, body: FolderMoveRequest):
-    store = get_prior_store(request)
+def move_folder(request: Request, body: FolderMoveRequest, project_id: str | None = Query(default=None)):
+    user_id, resolved_project_id, store = _resolve_store(request, project_id=project_id)
     path = _normalize_path(body.path)
     new_path = _normalize_path(body.new_path)
     if not path or not new_path:
@@ -396,17 +619,18 @@ def move_folder(request: Request, body: FolderMoveRequest):
 
     revision = None
     if active_affected:
-        _clear_scope_prefix_cache_for_request(request)
+        _clear_scope_prefix_cache(user_id, resolved_project_id)
         scope = store.bump_scope_revision()
         revision = scope["revision"]
     publish("folder_moved", {"path": path, "new_path": new_path, "revision": revision})
+    _schedule_ui_priors_refresh(request)
     logger.info("Moved prior folder '%s' -> '%s'", path, new_path)
     return {"status": "updated", "path": path, "new_path": new_path}
 
 
 @router.post("/priors/folders/delete")
-def delete_folder(request: Request, body: FolderDeleteRequest):
-    store = get_prior_store(request)
+def delete_folder(request: Request, body: FolderDeleteRequest, project_id: str | None = Query(default=None)):
+    user_id, resolved_project_id, store = _resolve_store(request, project_id=project_id)
     path = _normalize_path(body.path)
     if not path:
         raise HTTPException(status_code=400, detail="Folder path is required")
@@ -415,17 +639,18 @@ def delete_folder(request: Request, body: FolderDeleteRequest):
         raise HTTPException(status_code=404, detail="Folder not found")
     revision = None
     if active_affected:
-        _clear_scope_prefix_cache_for_request(request)
+        _clear_scope_prefix_cache(user_id, resolved_project_id)
         scope = store.bump_scope_revision()
         revision = scope["revision"]
     publish("folder_deleted", {"path": path, "revision": revision})
+    _schedule_ui_priors_refresh(request)
     logger.info("Deleted prior folder '%s'", path)
     return {"status": "deleted", "path": path}
 
 
 @router.post("/priors/items/copy")
-def copy_items(request: Request, body: PriorItemsCopyRequest):
-    store = get_prior_store(request)
+def copy_items(request: Request, body: PriorItemsCopyRequest, project_id: str | None = Query(default=None)):
+    user_id, resolved_project_id, store = _resolve_store(request, project_id=project_id)
     destination_path = _normalize_path(body.destination_path)
     items = _normalize_item_refs(body.items)
     if not items:
@@ -447,17 +672,18 @@ def copy_items(request: Request, body: PriorItemsCopyRequest):
 
     revision = None
     if active_affected:
-        _clear_scope_prefix_cache_for_request(request)
+        _clear_scope_prefix_cache(user_id, resolved_project_id)
         scope = store.bump_scope_revision()
         revision = scope["revision"]
     publish("items_copied", {"count": len(copied_items), "revision": revision})
+    _schedule_ui_priors_refresh(request)
     logger.info("Copied %s prior items into '%s'%s", len(copied_items), destination_path, " as drafts" if body.as_draft else "")
     return {"status": "copied", "items": copied_items, "count": len(copied_items)}
 
 
 @router.post("/priors/drafts")
-def create_prior_draft(request: Request, prior: PriorDraftCreate):
-    store = get_prior_store(request)
+def create_prior_draft(request: Request, prior: PriorDraftCreate, project_id: str | None = Query(default=None)):
+    _user_id, _project_id, store = _resolve_store(request, project_id=project_id)
     path = _normalize_path(prior.path)
     prior_id = str(uuid.uuid4())[:8]
     result = store.create(
@@ -470,13 +696,14 @@ def create_prior_draft(request: Request, prior: PriorDraftCreate):
         validation_metadata=None,
     )
     publish("prior_created", {"id": prior_id, "path": path, "status": "draft"})
+    _schedule_ui_priors_refresh(request)
     logger.info("Created draft prior %s at '%s'", prior_id, path)
     return {"status": "created", **result}
 
 
 @router.post("/priors/items/move")
-def move_items(request: Request, body: PriorItemsMoveRequest):
-    store = get_prior_store(request)
+def move_items(request: Request, body: PriorItemsMoveRequest, project_id: str | None = Query(default=None)):
+    user_id, resolved_project_id, store = _resolve_store(request, project_id=project_id)
     destination_path = _normalize_path(body.destination_path)
     items = _normalize_item_refs(body.items)
     if not items:
@@ -506,17 +733,18 @@ def move_items(request: Request, body: PriorItemsMoveRequest):
 
     revision = None
     if active_affected:
-        _clear_scope_prefix_cache_for_request(request)
+        _clear_scope_prefix_cache(user_id, resolved_project_id)
         scope = store.bump_scope_revision()
         revision = scope["revision"]
     publish("items_moved", {"count": len(moved_items), "revision": revision})
+    _schedule_ui_priors_refresh(request)
     logger.info("Moved %s prior items into '%s'", len(moved_items), destination_path)
     return {"status": "moved", "items": moved_items, "count": len(moved_items)}
 
 
 @router.post("/priors/items/delete")
-def delete_items(request: Request, body: PriorItemsDeleteRequest):
-    store = get_prior_store(request)
+def delete_items(request: Request, body: PriorItemsDeleteRequest, project_id: str | None = Query(default=None)):
+    user_id, resolved_project_id, store = _resolve_store(request, project_id=project_id)
     items = _normalize_item_refs(body.items)
     if not items:
         raise HTTPException(status_code=400, detail="At least one item is required")
@@ -543,7 +771,7 @@ def delete_items(request: Request, body: PriorItemsDeleteRequest):
 
     revision = None
     if active_affected:
-        _clear_scope_prefix_cache_for_request(request)
+        _clear_scope_prefix_cache(user_id, resolved_project_id)
         scope = store.bump_scope_revision()
         revision = scope["revision"]
     publish(
@@ -561,6 +789,7 @@ def delete_items(request: Request, body: PriorItemsDeleteRequest):
         deleted_priors,
         deleted_folders,
     )
+    _schedule_ui_priors_refresh(request)
     return {"status": "deleted", "count": deleted}
 
 
@@ -569,8 +798,9 @@ async def create_prior(
     request: Request,
     prior: PriorCreate,
     force: bool = Query(default=False),
+    project_id: str | None = Query(default=None),
 ):
-    store = get_prior_store(request)
+    user_id, resolved_project_id, store = _resolve_store(request, project_id=project_id)
     prior.path = _normalize_path(prior.path)
     summary_for_validation = (prior.summary or "").strip() or fallback_prior_summary(
         name=prior.name,
@@ -634,9 +864,10 @@ async def create_prior(
         trace_source=prior.trace_source,
         validation_metadata=validation_metadata,
     )
-    _clear_scope_prefix_cache_for_request(request)
+    _clear_scope_prefix_cache(user_id, resolved_project_id)
     scope = store.bump_scope_revision()
     publish("prior_created", {"id": prior_id, "path": prior.path, "revision": scope["revision"]})
+    _schedule_ui_priors_refresh(request)
     logger.info("Created prior %s at '%s'", prior_id, prior.path)
     return {
         "status": "created",
@@ -651,8 +882,9 @@ async def submit_prior(
     prior_id: str,
     submission: PriorSubmitRequest,
     force: bool = Query(default=False),
+    project_id: str | None = Query(default=None),
 ):
-    store = get_prior_store(request)
+    user_id, resolved_project_id, store = _resolve_store(request, project_id=project_id)
     existing = store.get(prior_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Prior not found")
@@ -741,9 +973,10 @@ async def submit_prior(
         status="active",
         validation_metadata=validation_metadata,
     )
-    _clear_scope_prefix_cache_for_request(request)
+    _clear_scope_prefix_cache(user_id, resolved_project_id)
     scope = store.bump_scope_revision()
     publish("prior_updated", {"id": prior_id, "path": result_path, "revision": scope["revision"]})
+    _schedule_ui_priors_refresh(request)
     logger.info("Submitted draft prior %s", prior_id)
     return {
         "status": "submitted",
@@ -758,8 +991,9 @@ async def update_prior(
     prior_id: str,
     update: PriorUpdate,
     force: bool = Query(default=False),
+    project_id: str | None = Query(default=None),
 ):
-    store = get_prior_store(request)
+    user_id, resolved_project_id, store = _resolve_store(request, project_id=project_id)
     existing = store.get(prior_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Prior not found")
@@ -822,10 +1056,11 @@ async def update_prior(
     )
     revision = None
     if existing_status == "active":
-        _clear_scope_prefix_cache_for_request(request)
+        _clear_scope_prefix_cache(user_id, resolved_project_id)
         scope = store.bump_scope_revision()
         revision = scope["revision"]
     publish("prior_updated", {"id": prior_id, "path": result_path, "revision": revision})
+    _schedule_ui_priors_refresh(request)
     logger.info("Updated prior %s", prior_id)
     return {
         "status": "updated",
@@ -835,8 +1070,8 @@ async def update_prior(
 
 
 @router.delete("/priors/{prior_id}")
-def delete_prior(request: Request, prior_id: str):
-    store = get_prior_store(request)
+def delete_prior(request: Request, prior_id: str, project_id: str | None = Query(default=None)):
+    user_id, resolved_project_id, store = _resolve_store(request, project_id=project_id)
     existing = store.get(prior_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Prior not found")
@@ -844,123 +1079,28 @@ def delete_prior(request: Request, prior_id: str):
         raise HTTPException(status_code=404, detail="Prior not found")
     revision = None
     if existing.get("prior_status", "active") == "active":
-        _clear_scope_prefix_cache_for_request(request)
+        _clear_scope_prefix_cache(user_id, resolved_project_id)
         scope = store.bump_scope_revision()
         revision = scope["revision"]
     publish("prior_deleted", {"id": prior_id, "revision": revision})
+    _schedule_ui_priors_refresh(request)
     logger.info("Deleted prior %s", prior_id)
     return {"status": "deleted", "id": prior_id}
 
 
 @router.post("/priors/retrieve", response_model=PriorRetrieveResponse)
-async def retrieve_priors_endpoint(request: Request, body: PriorRetrieveRequest):
-    store = get_prior_store(request)
-    base_path = _normalize_path(body.base_path)
-    if body.base_path and not store.folder_exists(base_path):
-        raise HTTPException(status_code=404, detail="Folder not found")
-    scope = store.read_scope_metadata()
-    priors_revision = int(scope["revision"])
-    requested_model = body.model or "openai/gpt-5.4"
-    model_used = resolve_model(requested_model, "cheap")
-    ignore_ids = sorted({prior_id for prior_id in body.ignore_prior_ids if prior_id}) if body.ignore_prior_ids else []
-
-    logger.info(
-        "[PRIORS ROUTE] retrieve start user=%s project=%s revision=%s base_path=%s requested_model=%s resolved_model=%s ignore_ids=%s\n"
-        "[PRIORS ROUTE] context (%d chars):\n%s",
-        scope["user_id"],
-        scope["project_id"],
-        priors_revision,
-        base_path or "(root)",
-        requested_model,
-        model_used,
-        ignore_ids,
-        len(body.context or ""),
-        body.context or "(empty)",
-    )
-
-    cached = get_cached_retrieval(
-        user_id=str(scope["user_id"]),
-        project_id=str(scope["project_id"]),
-        priors_revision=priors_revision,
-        base_path=base_path,
-        model=model_used,
+async def retrieve_priors_endpoint(
+    request: Request,
+    body: PriorRetrieveRequest,
+    project_id: str | None = Query(default=None),
+):
+    user_id, resolved_project_id = resolve_priors_scope_from_request(request, project_id=project_id)
+    response = await retrieve_priors_for_scope(
+        user_id=user_id,
+        project_id=resolved_project_id,
         context=body.context,
+        base_path=body.base_path,
         ignore_prior_ids=body.ignore_prior_ids,
+        disconnect_checker=request.is_disconnected,
     )
-    if cached is not None:
-        logger.info(
-            "[PRIORS ROUTE] cache hit revision=%s base_path=%s requested_model=%s resolved_model=%s prior_count=%s ids=%s",
-            priors_revision,
-            base_path or "(root)",
-            requested_model,
-            model_used,
-            cached.get("prior_count"),
-            [prior.get("id") for prior in cached.get("priors", [])],
-        )
-        return PriorRetrieveResponse(**cached)
-
-    logger.info(
-        "[PRIORS ROUTE] cache miss revision=%s base_path=%s requested_model=%s resolved_model=%s",
-        priors_revision,
-        base_path or "(root)",
-        requested_model,
-        model_used,
-    )
-
-    retrieve_task = asyncio.create_task(
-        retrieve_relevant_priors(
-            store=store,
-            context=body.context,
-            base_path=base_path,
-            model=requested_model,
-            ignore_prior_ids=body.ignore_prior_ids,
-        )
-    )
-
-    async def _wait_disconnect():
-        while not await request.is_disconnected():
-            await asyncio.sleep(1)
-
-    disconnect_task = asyncio.create_task(_wait_disconnect())
-
-    done, pending = await asyncio.wait(
-        [retrieve_task, disconnect_task],
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-    for task in pending:
-        task.cancel()
-
-    if disconnect_task in done:
-        logger.info("Client disconnected during priors retrieval, cancelled LLM calls")
-        raise asyncio.CancelledError()
-
-    priors = retrieve_task.result()
-    response = PriorRetrieveResponse(
-        context=body.context,
-        base_path=base_path,
-        priors=[
-            RetrievedPrior(**{key: prior[key] for key in ("id", "name", "summary", "content", "path")})
-            for prior in priors
-        ],
-        prior_count=len(priors),
-        priors_revision=priors_revision,
-        rendered_priors_block=_build_injected_context(priors),
-        model_used=model_used,
-    )
-    logger.info(
-        "[PRIORS ROUTE] retrieve complete prior_count=%s ids=%s rendered_block_chars=%d",
-        response.prior_count,
-        [prior.id for prior in response.priors],
-        len(response.rendered_priors_block),
-    )
-    store_cached_retrieval(
-        user_id=str(scope["user_id"]),
-        project_id=str(scope["project_id"]),
-        priors_revision=priors_revision,
-        base_path=base_path,
-        model=model_used,
-        context=body.context,
-        ignore_prior_ids=body.ignore_prior_ids,
-        response=response.model_dump(),
-    )
-    return response
+    return PriorRetrieveResponse(**response)

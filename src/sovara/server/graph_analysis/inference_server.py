@@ -11,9 +11,11 @@ Lifecycle (called by main server lifespan in app.py):
 """
 
 import asyncio
+import atexit
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -308,6 +310,80 @@ async def chat(run_id: str, req: ChatRequest, request: Request):
 _process: Optional[subprocess.Popen] = None
 
 
+def _read_pid_file() -> Optional[int]:
+    from sovara.common.constants import INFERENCE_SERVER_PID
+
+    try:
+        with open(INFERENCE_SERVER_PID, encoding="utf-8") as f:
+            raw = f.read().strip()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _write_pid_file(pid: int) -> None:
+    from sovara.common.constants import INFERENCE_SERVER_PID
+
+    os.makedirs(os.path.dirname(INFERENCE_SERVER_PID), exist_ok=True)
+    with open(INFERENCE_SERVER_PID, "w", encoding="utf-8") as f:
+        f.write(f"{pid}\n")
+
+
+def _remove_pid_file() -> None:
+    from sovara.common.constants import INFERENCE_SERVER_PID
+
+    try:
+        os.remove(INFERENCE_SERVER_PID)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _wait_for_pid_exit(pid: int, timeout: float) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _pid_is_alive(pid):
+            return True
+        time.sleep(0.05)
+    return not _pid_is_alive(pid)
+
+
+def _terminate_pid(pid: int, timeout: float = 5.0) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except OSError:
+        return
+    if _wait_for_pid_exit(pid, timeout):
+        return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except OSError:
+        return
+    _wait_for_pid_exit(pid, timeout)
+
+
 def _is_inference_server_running(host: str, port: int, timeout: float = 1.0) -> bool:
     try:
         with urlopen(f"http://{host}:{port}/health", timeout=timeout) as response:
@@ -323,6 +399,8 @@ def start() -> None:
 
     if _process is not None and _process.poll() is None:
         return
+    if (tracked_pid := _read_pid_file()) is not None and not _pid_is_alive(tracked_pid):
+        _remove_pid_file()
     if _is_inference_server_running(HOST, INFERENCE_PORT):
         return
 
@@ -340,14 +418,39 @@ def start() -> None:
 def stop() -> None:
     """Terminate the inference server child process."""
     global _process
-    if _process is None:
+    process = _process
+    if process is not None and process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        finally:
+            _process = None
+            _remove_pid_file()
         return
-    _process.terminate()
-    try:
-        _process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        _process.kill()
     _process = None
+    pid = _read_pid_file()
+    if pid is None:
+        return
+    if not _pid_is_alive(pid):
+        _remove_pid_file()
+        return
+    _terminate_pid(pid, timeout=5.0)
+    _remove_pid_file()
+
+
+def _install_pid_file_cleanup() -> None:
+    _write_pid_file(os.getpid())
+
+    def _cleanup(*_args) -> None:
+        _remove_pid_file()
+        raise SystemExit(0)
+
+    atexit.register(_remove_pid_file)
+    signal.signal(signal.SIGTERM, _cleanup)
+    signal.signal(signal.SIGINT, _cleanup)
 
 
 # ============================================================
@@ -364,5 +467,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     logger = configure_inference_process_logging()
+    _install_pid_file_cleanup()
     logger.info("Inference server starting on %s:%s", args.host, args.port)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

@@ -181,3 +181,94 @@ def test_prepare_llm_call_for_priors_skips_automation_for_manual_priors(monkeypa
     assert json.loads(result.prompt_suffix_json) == []
     assert executed_payload["to_show"]["body.instructions"].startswith("<sovara-priors>")
     assert executed_payload["to_show"]["body.instructions"].endswith("Answer briefly.")
+
+
+def test_prepare_llm_call_for_priors_does_not_store_prefix_cache_on_full_prefix_hit(monkeypatch):
+    input_dict = _make_chat_input(
+        [
+            {"role": "developer", "content": "You are helpful."},
+            {"role": "user", "content": "Question"},
+        ]
+    )
+    captured = {"calls": []}
+
+    monkeypatch.setattr(priors_runtime, "get_run_id", lambda: "run-123")
+
+    def fake_http_post(endpoint, data, timeout=None):
+        captured["calls"].append((endpoint, data, timeout))
+        if endpoint == "/internal/priors/prefix-cache/lookup":
+            return {
+                "found": True,
+                "matched_pair_count": 2,
+                "injected_pairs": [
+                    {
+                        "key": "body.messages.0.content",
+                        "value": (
+                            "<sovara-priors>\n"
+                            '<!-- {"priors":[{"id":"p-old"}]} -->\n'
+                            "## Existing\nAlready known.\n"
+                            "</sovara-priors>\n\n"
+                            "You are helpful."
+                        ),
+                    },
+                    {"key": "body.messages.1.content", "value": "Question"},
+                ],
+                "prior_ids": ["p-old"],
+            }
+        raise AssertionError(f"Unexpected endpoint: {endpoint}")
+
+    monkeypatch.setattr(priors_runtime, "http_post", fake_http_post)
+
+    result = priors_runtime.prepare_llm_call_for_priors(input_dict, "httpx.Client.send")
+    executed_payload = json.loads(func_kwargs_to_json_str(result.executed_input_dict, "httpx.Client.send")[0])
+
+    assert result.metadata.status == "none"
+    assert result.metadata.inherited_prior_ids == ["p-old"]
+    assert executed_payload["to_show"]["body.messages"][0]["content"].startswith("<sovara-priors>")
+    assert [call[0] for call in captured["calls"]] == ["/internal/priors/prefix-cache/lookup"]
+
+
+def test_prepare_llm_call_for_priors_does_not_store_prefix_cache_on_retrieval_failure(monkeypatch):
+    input_dict = _make_responses_input("New ask")
+    captured = {"calls": []}
+
+    monkeypatch.setattr(priors_runtime, "get_run_id", lambda: "run-123")
+
+    def fake_http_post(endpoint, data, timeout=None):
+        captured["calls"].append((endpoint, data, timeout))
+        if endpoint == "/internal/priors/prefix-cache/lookup":
+            return {"found": False}
+        if endpoint == "/internal/priors/retrieve":
+            raise httpx.TimeoutException("timed out")
+        raise AssertionError(f"Unexpected endpoint: {endpoint}")
+
+    monkeypatch.setattr(priors_runtime, "http_post", fake_http_post)
+
+    result = priors_runtime.prepare_llm_call_for_priors(input_dict, "httpx.Client.send")
+
+    assert result.metadata.status == "timeout"
+    assert result.metadata.error_message == "timed out"
+    assert [call[0] for call in captured["calls"]] == [
+        "/internal/priors/prefix-cache/lookup",
+        "/internal/priors/retrieve",
+    ]
+
+
+def test_httpx_response_detail_extracts_nested_detail_dict():
+    request = httpx.Request("POST", "http://127.0.0.1:5959/internal/priors/retrieve")
+    response = httpx.Response(
+        422,
+        request=request,
+        json={
+            "detail": {
+                "error": "schema failed",
+                "raw_text": "[]",
+                "structured_mode": "local_parse",
+            }
+        },
+    )
+    exc = httpx.HTTPStatusError("bad", request=request, response=response)
+
+    assert priors_runtime._httpx_response_detail(exc) == (
+        '{"error": "schema failed", "raw_text": "[]", "structured_mode": "local_parse"}'
+    )

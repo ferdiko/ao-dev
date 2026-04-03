@@ -42,6 +42,20 @@ def _clear_server_logs() -> None:
         _truncate_log_file(log_path)
 
 
+def _clear_priors_caches() -> None:
+    from sovara.server.priors_backend.prefix_cache import clear_all_prefix_cache
+    from sovara.server.priors_backend.retrieval_cache import clear_all_retrieval_cache
+
+    clear_all_prefix_cache()
+    clear_all_retrieval_cache()
+
+
+def _stop_child_servers() -> None:
+    from sovara.server.graph_analysis import inference_server
+
+    inference_server.stop()
+
+
 def _release_startup_lock() -> None:
     try:
         os.remove(MAIN_SERVER_STARTUP_LOCK)
@@ -129,7 +143,7 @@ def launch_daemon_server() -> bool:
 
 def server_command_parser():
     parser = ArgumentParser(
-        usage="so-server {start, stop, restart, clear, logs, priors-logs, infer-logs, clear-logs}",
+        usage="so-server {start, stop, restart, clear, logs, priors-logs, infer-logs, clear-logs, _clear_cache}",
         description="Server utilities.",
         allow_abbrev=False,
     )
@@ -145,6 +159,7 @@ def server_command_parser():
             "priors-logs",
             "infer-logs",
             "clear-logs",
+            "_clear_cache",
             "_serve",
         ],
         help="The command to execute for the server.",
@@ -162,7 +177,10 @@ def execute_server_command(args):
         return
 
     elif args.command == "stop":
-        if not _server_http_request("POST", "/ui/shutdown"):
+        stopped_main = _server_http_request("POST", "/ui/shutdown")
+        time.sleep(SHUTDOWN_WAIT)
+        _stop_child_servers()
+        if not stopped_main:
             logger.warning("No running server found.")
             sys.exit(1)
         logger.info("Main server stop signal sent.")
@@ -170,6 +188,7 @@ def execute_server_command(args):
     elif args.command == "restart":
         _server_http_request("POST", "/ui/shutdown")
         time.sleep(SHUTDOWN_WAIT)
+        _stop_child_servers()
         try:
             _clear_server_logs()
         except Exception as e:
@@ -222,6 +241,15 @@ def execute_server_command(args):
         logger.info("Server log files cleared.")
         return
 
+    elif args.command == "_clear_cache":
+        try:
+            _clear_priors_caches()
+        except Exception as e:
+            logger.error(f"Error clearing priors caches: {e}")
+            raise
+        logger.info("Priors cache entries cleared.")
+        return
+
     elif args.command == "_serve":
         _server_logger.info(f"Imports completed in {_time.time() - _import_start:.2f}s")
 
@@ -255,6 +283,10 @@ def execute_server_command(args):
         try:
             uv_server.run()
         finally:
+            try:
+                _stop_child_servers()
+            except Exception as exc:
+                _server_logger.warning(f"Could not stop child servers during shutdown: {exc}")
             _release_startup_lock()
 
 

@@ -401,7 +401,7 @@ priors_context = inject_priors(
 
 ### CLI
 
-`so-cli priors` mirrors the public SovaraDB API exposed by `so-priors`.
+`so-cli priors` mirrors the public priors API exposed by the main `so-server`.
 
 ```
 usage: so-cli priors [-h] {start-server,list,get,create,update,delete,query,retrieve,migrate,restructure,ls,mkdir,mv,cp,rm} ...
@@ -597,9 +597,9 @@ because it moves the default config, DB, and logs out of `~/.sovara`. The other 
 
 ### Priors server not reachable
 
-**Problem:** `so-cli priors ...` fails because the priors server cannot be reached.
+**Problem:** `so-cli priors ...` fails because the main Sovara server cannot be reached.
 
-**Check:** Confirm the on-prem priors server is running and that `PRIORS_SERVER_URL` points at the correct host. If you set `PRIORS_SERVER_URL` in your shell config, remember that non-interactive shells may not load files like `~/.zshrc`.
+**Check:** Confirm the main Sovara server is running and that `PRIORS_SERVER_URL` points at the correct host. If you set `PRIORS_SERVER_URL` in your shell config, remember that non-interactive shells may not load files like `~/.zshrc`.
 
 **Solution:** Put your `PRIORS_SERVER_URL` export in a file that is sourced for all shell invocations:
 
@@ -608,7 +608,7 @@ because it moves the default config, DB, and logs out of `~/.sovara`. The other 
 | macOS (zsh) | `~/.zshenv` |
 | Linux (zsh) | `~/.zshenv` |
 | Linux (bash) | `~/.bashrc` or `~/.profile` |
-| Windows | System Environment Variables (GUI or `[System.Environment]::SetEnvironmentVariable("PRIORS_SERVER_URL", "http://your-host:5960", "User")` in PowerShell) |
+| Windows | System Environment Variables (GUI or `[System.Environment]::SetEnvironmentVariable("PRIORS_SERVER_URL", "http://your-host:5959", "User")` in PowerShell) |
 
 After making this change, restart your agent shell/session for the new environment to take effect.
 

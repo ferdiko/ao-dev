@@ -3,6 +3,7 @@ FastAPI application factory.
 """
 
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 
@@ -12,7 +13,6 @@ from sovara.common.logger import create_file_logger
 from sovara.common.constants import MAIN_SERVER_LOG, MAIN_SERVER_STARTUP_LOCK
 from sovara.server.state import ServerState
 from sovara.server.graph_analysis import inference_server
-from sovara.server.priors_backend import server as priors_backend_server
 
 logger = create_file_logger(MAIN_SERVER_LOG)
 
@@ -24,6 +24,36 @@ def _clear_startup_lock() -> None:
         pass
     except Exception as exc:
         logger.warning("Could not remove startup lock %s: %s", MAIN_SERVER_STARTUP_LOCK, exc)
+
+
+def _request_target(request: Request) -> str:
+    query = request.url.query
+    return f"{request.url.path}?{query}" if query else request.url.path
+
+
+def _response_detail(response) -> str | None:
+    body = getattr(response, "body", None)
+    if not isinstance(body, (bytes, bytearray)) or not body:
+        return None
+
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except Exception:
+        try:
+            text = body.decode("utf-8").strip()
+        except Exception:
+            return None
+        return text or None
+
+    if isinstance(data, dict):
+        detail = data.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            return detail
+        error = data.get("error")
+        if isinstance(error, str) and error.strip():
+            return error
+
+    return None
 
 
 @asynccontextmanager
@@ -42,7 +72,6 @@ async def lifespan(app: FastAPI):
     state.load_finished_runs()
 
     # Start child sub-servers
-    priors_backend_server.start()
     inference_server.start()
 
     # Start inactivity monitor
@@ -67,7 +96,6 @@ async def lifespan(app: FastAPI):
         pass
 
     inference_server.stop()
-    priors_backend_server.stop()
 
 
 def create_app() -> FastAPI:
@@ -78,17 +106,46 @@ def create_app() -> FastAPI:
         state = getattr(request.app.state, "server_state", None)
         if state is not None:
             state.touch_activity()
-        return await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            logger.exception(
+                "HTTP request crashed method=%s path=%s",
+                request.method,
+                _request_target(request),
+            )
+            raise
+
+        if response.status_code >= 400:
+            detail = _response_detail(response)
+            if detail:
+                logger.warning(
+                    "HTTP request failed method=%s path=%s status=%s detail=%s",
+                    request.method,
+                    _request_target(request),
+                    response.status_code,
+                    detail,
+                )
+            else:
+                logger.warning(
+                    "HTTP request failed method=%s path=%s status=%s",
+                    request.method,
+                    _request_target(request),
+                    response.status_code,
+                )
+        return response
 
     from sovara.server.routes.runner import router as runner_router
     from sovara.server.routes.ui import router as ui_router
     from sovara.server.routes.events import router as events_router
     from sovara.server.routes.internal import router as internal_router
+    from sovara.server.priors_backend.routes import router as priors_router
 
     app.include_router(runner_router)
     app.include_router(ui_router)
     app.include_router(events_router)
     app.include_router(internal_router)
+    app.include_router(priors_router)
 
     @app.get("/health")
     async def health():

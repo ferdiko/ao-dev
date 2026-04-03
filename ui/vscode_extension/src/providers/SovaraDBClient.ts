@@ -1,8 +1,7 @@
 /**
- * Direct HTTP+SSE client for SovaraDB.
+ * Direct HTTP+SSE client for the main Sovara priors API.
  *
- * Handles prior CRUD via HTTP and real-time change notifications via SSE,
- * bypassing so-server entirely for prior operations.
+ * Handles prior CRUD via HTTP and real-time change notifications via SSE.
  */
 
 import * as http from 'http';
@@ -91,6 +90,19 @@ export class SovaraDBClient extends EventEmitter {
             }
 
             const req = mod.request(url, { method, headers }, (res) => {
+                const contentType = `${res.headers['content-type'] || ''}`;
+                if (!contentType.includes('text/event-stream')) {
+                    const chunks: Buffer[] = [];
+                    res.on('data', (chunk: Buffer) => chunks.push(chunk));
+                    res.on('end', () => {
+                        const raw = Buffer.concat(chunks).toString('utf-8');
+                        if (!raw) { resolve({}); return; }
+                        try { resolve(JSON.parse(raw)); }
+                        catch { reject(new Error(`Invalid JSON: ${raw.slice(0, 200)}`)); }
+                    });
+                    return;
+                }
+
                 let buffer = '';
                 let currentEvent = '';
 

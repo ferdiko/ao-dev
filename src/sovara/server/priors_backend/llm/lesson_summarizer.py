@@ -50,7 +50,6 @@ async def generate_prior_summary(
     name: str,
     content: str,
     path: str,
-    model: str = "openai/gpt-5.4",
 ) -> str:
     system_prompt = """You write short, precise summaries for priors.
 
@@ -67,8 +66,6 @@ Content:
 
     try:
         result = await infer_structured_json(
-            purpose="priors_summary",
-            model=model,
             tier="cheap",
             response_format=_RESPONSE_SCHEMA,
             messages=[

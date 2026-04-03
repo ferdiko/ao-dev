@@ -405,11 +405,11 @@ export interface PriorRunsResponse {
 }
 
 export async function fetchPriorsFolder(projectId: string, path = ""): Promise<FolderLsResponse> {
-  return post(withQuery("/ui/priors/folders/ls", { project_id: projectId }), { path });
+  return post(withQuery("/api/v1/priors/folders/ls", { project_id: projectId }), { path });
 }
 
 export async function createPriorFolder(projectId: string, path: string): Promise<FolderMutationResponse> {
-  return post(withQuery("/ui/priors/folders", { project_id: projectId }), { path });
+  return post(withQuery("/api/v1/priors/folders", { project_id: projectId }), { path });
 }
 
 export async function movePriorFolder(
@@ -417,11 +417,11 @@ export async function movePriorFolder(
   path: string,
   newPath: string,
 ): Promise<FolderMutationResponse> {
-  return put(withQuery("/ui/priors/folders", { project_id: projectId }), { path, new_path: newPath });
+  return put(withQuery("/api/v1/priors/folders", { project_id: projectId }), { path, new_path: newPath });
 }
 
 export async function deletePriorFolder(projectId: string, path: string): Promise<FolderMutationResponse> {
-  return post(withQuery("/ui/priors/folders/delete", { project_id: projectId }), { path });
+  return post(withQuery("/api/v1/priors/folders/delete", { project_id: projectId }), { path });
 }
 
 export async function copyPriorItems(
@@ -430,7 +430,7 @@ export async function copyPriorItems(
   destinationPath: string,
   asDraft = false,
 ): Promise<PriorBatchMutationResponse> {
-  return post(withQuery("/ui/priors/items/copy", { project_id: projectId }), {
+  return post(withQuery("/api/v1/priors/items/copy", { project_id: projectId }), {
     items,
     destination_path: destinationPath,
     as_draft: asDraft,
@@ -442,7 +442,7 @@ export async function movePriorItems(
   items: PriorItemRef[],
   destinationPath: string,
 ): Promise<PriorBatchMutationResponse> {
-  return post(withQuery("/ui/priors/items/move", { project_id: projectId }), {
+  return post(withQuery("/api/v1/priors/items/move", { project_id: projectId }), {
     items,
     destination_path: destinationPath,
   });
@@ -452,11 +452,11 @@ export async function deletePriorItems(
   projectId: string,
   items: PriorItemRef[],
 ): Promise<PriorBatchMutationResponse> {
-  return post(withQuery("/ui/priors/items/delete", { project_id: projectId }), { items });
+  return post(withQuery("/api/v1/priors/items/delete", { project_id: projectId }), { items });
 }
 
 export async function fetchPrior(projectId: string, priorId: string): Promise<PriorRecord> {
-  return get(withQuery(`/ui/priors/${priorId}`, { project_id: projectId }));
+  return get(withQuery(`/api/v1/priors/${priorId}`, { project_id: projectId }));
 }
 
 export async function createPrior(
@@ -464,14 +464,14 @@ export async function createPrior(
   body: { name: string; summary?: string; content: string; path?: string },
   force = false,
 ): Promise<PriorMutationResponse> {
-  return post(withQuery("/ui/priors", { project_id: projectId, force }), body);
+  return post(withQuery("/api/v1/priors", { project_id: projectId, force }), body);
 }
 
 export async function createDraftPrior(
   projectId: string,
   body: { name: string; content: string; path?: string },
 ): Promise<PriorMutationResponse> {
-  return post(withQuery("/ui/priors/drafts", { project_id: projectId }), body);
+  return post(withQuery("/api/v1/priors/drafts", { project_id: projectId }), body);
 }
 
 export async function updatePrior(
@@ -480,7 +480,7 @@ export async function updatePrior(
   body: Partial<{ name: string; summary: string; content: string; path?: string }>,
   force = false,
 ): Promise<PriorMutationResponse> {
-  return put(withQuery(`/ui/priors/${priorId}`, { project_id: projectId, force }), body);
+  return put(withQuery(`/api/v1/priors/${priorId}`, { project_id: projectId, force }), body);
 }
 
 export async function submitPrior(
@@ -489,11 +489,11 @@ export async function submitPrior(
   body: Partial<{ name: string; content: string; path?: string }>,
   force = false,
 ): Promise<PriorMutationResponse> {
-  return post(withQuery(`/ui/priors/${priorId}/submit`, { project_id: projectId, force }), body);
+  return post(withQuery(`/api/v1/priors/${priorId}/submit`, { project_id: projectId, force }), body);
 }
 
 export async function deletePrior(projectId: string, priorId: string): Promise<{ status: string; id: string }> {
-  return del(withQuery(`/ui/priors/${priorId}`, { project_id: projectId }));
+  return del(withQuery(`/api/v1/priors/${priorId}`, { project_id: projectId }));
 }
 
 export async function fetchRunsForPrior(priorId: string): Promise<PriorRunsResponse> {

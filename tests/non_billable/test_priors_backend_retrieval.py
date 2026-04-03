@@ -1,7 +1,17 @@
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from sovara.server.priors_backend.app import create_app
+from sovara.server.llm_backend import resolve_model
+from sovara.server.priors_backend.llm import lesson_retriever
+from sovara.server.priors_backend import prefix_cache
+from sovara.server.priors_backend.routes import router as priors_router
 from sovara.server.priors_backend.storage import PriorStore
+
+
+def _make_priors_test_client() -> TestClient:
+    app = FastAPI()
+    app.include_router(priors_router)
+    return TestClient(app)
 
 
 def test_prior_store_scopes_files_and_metadata_by_user_and_project():
@@ -26,7 +36,7 @@ def test_prior_store_scopes_files_and_metadata_by_user_and_project():
 
 
 def test_priors_scope_endpoint_uses_header_scope():
-    client = TestClient(create_app())
+    client = _make_priors_test_client()
 
     response = client.get(
         "/api/v1/priors/scope",
@@ -48,7 +58,7 @@ def test_priors_retrieve_endpoint_returns_selected_priors_and_scope_revision(mon
     store.create("p2", "Cache", "Caching", "Cache stable responses.", path="ops/")
     calls = {"count": 0}
 
-    async def fake_infer_structured_json(*, purpose, messages, model, tier, response_format, timeout_ms, repair_attempts, **extra):
+    async def fake_infer_structured_json(*, messages, tier, response_format, timeout_ms, repair_attempts, **extra):
         calls["count"] += 1
         priors_message = messages[-1]["content"]
         if "ID: p1" in priors_message and "ID: p2" not in priors_message:
@@ -56,13 +66,13 @@ def test_priors_retrieve_endpoint_returns_selected_priors_and_scope_revision(mon
                 "raw_text": '{"prior_ids":["p1"]}',
                 "parsed": {"prior_ids": ["p1"]},
                 "structured_mode": "local_parse",
-                "model_used": model,
+                "model_used": resolve_model(None, tier),
             }
         return {
             "raw_text": '{"prior_ids":[]}',
             "parsed": {"prior_ids": []},
             "structured_mode": "local_parse",
-            "model_used": model,
+            "model_used": resolve_model(None, tier),
         }
 
     monkeypatch.setattr(
@@ -70,7 +80,7 @@ def test_priors_retrieve_endpoint_returns_selected_priors_and_scope_revision(mon
         fake_infer_structured_json,
     )
 
-    client = TestClient(create_app())
+    client = _make_priors_test_client()
     payload = {
         "context": "Need guidance for transient API failures",
         "base_path": "ops/",
@@ -91,7 +101,7 @@ def test_priors_retrieve_endpoint_returns_selected_priors_and_scope_revision(mon
     assert data["prior_count"] == 1
     assert [prior["id"] for prior in data["priors"]] == ["p1"]
     assert data["priors"][0]["path"] == "ops/"
-    assert data["model_used"] == "openai/gpt-5.4-mini"
+    assert data["model_used"] == resolve_model(None, "cheap")
     assert data["rendered_priors_block"].startswith('<sovara-priors>\n<!-- {"priors":[{"id":"p1"}]} -->')
     assert calls["count"] == 1
 
@@ -123,8 +133,28 @@ def test_priors_retrieve_endpoint_returns_selected_priors_and_scope_revision(mon
     assert calls["count"] == 2
 
 
+def test_fit_context_to_token_budget_trims_only_middle(monkeypatch):
+    context = "A" * 2000 + "B" * 2000
+    priors_context = "ID: p1\nSummary: something"
+
+    estimates = iter([10000, 4800])
+    monkeypatch.setattr(lesson_retriever, "_estimate_prompt_tokens", lambda model, messages: next(estimates))
+
+    trimmed, original_estimate, trimmed_estimate = lesson_retriever._fit_context_to_token_budget(
+        context,
+        priors_context,
+        resolve_model(None, "cheap"),
+    )
+
+    assert original_estimate == 10000
+    assert trimmed_estimate == 4800
+    assert trimmed.startswith("A" * 100)
+    assert trimmed.endswith("B" * 100)
+    assert lesson_retriever._RETRIEVAL_TRIM_MARKER in trimmed
+
+
 def test_query_priors_returns_404_for_missing_folder():
-    client = TestClient(create_app())
+    client = _make_priors_test_client()
 
     response = client.post(
         "/api/v1/query/priors",
@@ -140,7 +170,7 @@ def test_query_priors_returns_404_for_missing_folder():
 
 
 def test_priors_retrieve_endpoint_returns_404_for_missing_base_path():
-    client = TestClient(create_app())
+    client = _make_priors_test_client()
 
     response = client.post(
         "/api/v1/priors/retrieve",
@@ -156,3 +186,43 @@ def test_priors_retrieve_endpoint_returns_404_for_missing_base_path():
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Folder not found"
+
+
+def test_prefix_cache_is_scoped_by_model():
+    user_id = "prefix-model-user"
+    project_id = "prefix-model-project"
+    base_path = ""
+    clean_pairs = [{"key": "body.messages.0.content", "value": "Question"}]
+    injected_pairs = [{"key": "body.messages.0.content", "value": "<sovara-priors>...</sovara-priors>\n\nQuestion"}]
+
+    prefix_cache.store_prefix(
+        user_id=user_id,
+        project_id=project_id,
+        base_path=base_path,
+        model="model-a",
+        clean_pairs=clean_pairs,
+        injected_pairs=injected_pairs,
+        prior_ids=["p1"],
+    )
+
+    assert prefix_cache.lookup_longest_prefix(
+        user_id=user_id,
+        project_id=project_id,
+        base_path=base_path,
+        model="model-a",
+        clean_pairs=clean_pairs,
+    ) == {
+        "matched_pair_count": 1,
+        "injected_pairs": injected_pairs,
+        "prior_ids": ["p1"],
+    }
+
+    assert prefix_cache.lookup_longest_prefix(
+        user_id=user_id,
+        project_id=project_id,
+        base_path=base_path,
+        model="model-b",
+        clean_pairs=clean_pairs,
+    ) is None
+
+    prefix_cache.clear_scope_prefix_cache(user_id=user_id, project_id=project_id)

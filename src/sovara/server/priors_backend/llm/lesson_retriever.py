@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+import litellm
 
+from sovara.server.llm_backend import resolve_model
 from sovara.server.priors_backend.llm_client import infer_structured_json
 from sovara.server.priors_backend.logger import logger
+_RETRIEVAL_LOG_CONTEXT_LIMIT = 4000
+_RETRIEVAL_INPUT_TOKEN_LIMIT = 5000
+_RETRIEVAL_TRIM_MARKER = "\n\n...[middle omitted for priors token budget]...\n\n"
 
 _RETRIEVER_SYSTEM_PROMPT = """You are a prior retrieval system.
 
@@ -53,6 +57,13 @@ def _preview_text(value: str, limit: int = 400) -> str:
     return f"{text[:limit]}..."
 
 
+def _preview_log_context(value: str, limit: int = _RETRIEVAL_LOG_CONTEXT_LIMIT) -> str:
+    text = value or ""
+    if len(text) <= limit:
+        return text or "(empty)"
+    return f"{text[:limit]}... ({len(text) - limit} chars truncated)"
+
+
 def _format_prior_refs(priors: list[dict]) -> str:
     if not priors:
         return "(none)"
@@ -76,6 +87,81 @@ def _format_selected_priors(priors: list[dict]) -> str:
             f"  content: {_preview_text(str(prior.get('content', '')), 260)}"
         )
     return "\n".join(lines)
+
+
+def _build_priors_context(priors: list[dict], ignore_prior_ids: set[str]) -> str:
+    return "\n\n---\n\n".join(
+        (
+            f"ID: {prior['id']}\n"
+            f"Path: {prior.get('path', '')}\n"
+            f"Summary: {prior.get('summary', '')}"
+        )
+        for prior in priors
+        if prior["id"] not in ignore_prior_ids
+    )
+
+
+def _build_retrieval_messages(context: str, priors_context: str) -> list[dict[str, str]]:
+    return [
+        {"role": "system", "content": _RETRIEVER_SYSTEM_PROMPT},
+        {"role": "user", "content": context},
+        {
+            "role": "user",
+            "content": (
+                "Available Priors:\n"
+                f"{priors_context}\n\n"
+                "Which prior IDs are relevant to this query?"
+            ),
+        },
+    ]
+
+
+def _estimate_prompt_tokens(model: str, messages: list[dict[str, str]]) -> int | None:
+    try:
+        return int(litellm.token_counter(model=model, messages=messages))
+    except Exception:
+        return None
+
+
+def _trim_context_middle(text: str, keep_chars: int) -> str:
+    if keep_chars >= len(text):
+        return text
+    if keep_chars <= len(_RETRIEVAL_TRIM_MARKER):
+        return text[:keep_chars]
+    head = keep_chars // 2
+    tail = keep_chars - head
+    return f"{text[:head].rstrip()}{_RETRIEVAL_TRIM_MARKER}{text[-tail:].lstrip()}"
+
+
+def _fit_context_to_token_budget(context: str, priors_context: str, model: str) -> tuple[str, int | None, int | None]:
+    original_messages = _build_retrieval_messages(context, priors_context)
+    original_estimate = _estimate_prompt_tokens(model, original_messages)
+    if original_estimate is None or original_estimate <= _RETRIEVAL_INPUT_TOKEN_LIMIT:
+        return context, original_estimate, original_estimate
+
+    ratio = min(1.0, _RETRIEVAL_INPUT_TOKEN_LIMIT / max(original_estimate, 1))
+    current_ratio = max(ratio, 0.05)
+    trimmed_context = context
+    trimmed_estimate = original_estimate
+
+    for _ in range(4):
+        keep_chars = max(200, int(len(context) * current_ratio))
+        trimmed_context = _trim_context_middle(context, keep_chars)
+        trimmed_estimate = _estimate_prompt_tokens(model, _build_retrieval_messages(trimmed_context, priors_context))
+        if trimmed_estimate is None or trimmed_estimate <= _RETRIEVAL_INPUT_TOKEN_LIMIT:
+            break
+        current_ratio *= _RETRIEVAL_INPUT_TOKEN_LIMIT / max(trimmed_estimate, 1)
+
+    logger.warning(
+        "[PRIORS RETRIEVER] trimmed context for token budget model=%s original_chars=%d trimmed_chars=%d original_prompt_tokens_est=%s trimmed_prompt_tokens_est=%s limit=%d",
+        model,
+        len(context),
+        len(trimmed_context),
+        original_estimate,
+        trimmed_estimate,
+        _RETRIEVAL_INPUT_TOKEN_LIMIT,
+    )
+    return trimmed_context, original_estimate, trimmed_estimate
 
 
 def collect_folder_priors(store, path: str = "") -> tuple[list[tuple[str, list[dict]]], dict[str, dict]]:
@@ -111,21 +197,12 @@ def build_folder_tree_summary(store, path: str = "", indent: int = 0) -> str:
 async def _query_llm_for_folder(
     priors: list[dict],
     context: str,
-    model: str,
     *,
     ignore_prior_ids: set[str],
     folder_path: str,
 ) -> list[str]:
     considered_priors = [prior for prior in priors if prior["id"] not in ignore_prior_ids]
-    priors_context = "\n\n---\n\n".join(
-        (
-            f"ID: {prior['id']}\n"
-            f"Path: {prior.get('path', '')}\n"
-            f"Summary: {prior.get('summary', '')}"
-        )
-        for prior in priors
-        if prior["id"] not in ignore_prior_ids
-    )
+    priors_context = _build_priors_context(priors, ignore_prior_ids)
 
     if not priors_context:
         logger.info(
@@ -143,23 +220,11 @@ async def _query_llm_for_folder(
         _format_prior_refs(considered_priors),
     )
 
+    messages = _build_retrieval_messages(context, priors_context)
     result = await infer_structured_json(
-        purpose="priors_retrieval",
-        model=model,
         tier="cheap",
         response_format=_RESPONSE_SCHEMA,
-        messages=[
-            {"role": "system", "content": _RETRIEVER_SYSTEM_PROMPT},
-            {"role": "user", "content": context},
-            {
-                "role": "user",
-                "content": (
-                    "Available Priors:\n"
-                    f"{priors_context}\n\n"
-                    "Which prior IDs are relevant to this query?"
-                ),
-            },
-        ],
+        messages=messages,
         timeout_ms=30000,
         repair_attempts=2,
     )
@@ -169,7 +234,7 @@ async def _query_llm_for_folder(
         folder_path or "(root)",
         selected_ids,
         result.get("structured_mode"),
-        result.get("model_used") or model,
+        result.get("model_used") or resolve_model(None, "cheap"),
     )
     return selected_ids
 
@@ -178,7 +243,6 @@ async def retrieve_relevant_priors(
     store,
     context: str,
     base_path: str = "",
-    model: Optional[str] = None,
     ignore_prior_ids: Optional[list[str]] = None,
 ) -> list[dict]:
     folder_priors, all_priors_lookup = collect_folder_priors(store, base_path)
@@ -189,25 +253,36 @@ async def retrieve_relevant_priors(
         )
         return []
 
-    resolved_model = model or "openai/gpt-5.4"
     ignored = set(ignore_prior_ids or [])
+    model_used = resolve_model(None, "cheap")
+    max_priors_context = max(
+        (_build_priors_context(priors, ignored) for _, priors in folder_priors),
+        key=len,
+        default="",
+    )
+    trimmed_context, original_prompt_tokens_est, trimmed_prompt_tokens_est = _fit_context_to_token_budget(
+        context,
+        max_priors_context,
+        model_used,
+    )
 
     logger.info(
-        "[PRIORS RETRIEVER] start: folders=%s model=%s base_path=%s ignored_ids=%s\n"
+        "[PRIORS RETRIEVER] start: folders=%s model=%s base_path=%s ignored_ids=%s prompt_tokens_est=%s trimmed_prompt_tokens_est=%s\n"
         "[PRIORS RETRIEVER] context (%d chars):\n%s",
         len(folder_priors),
-        resolved_model,
+        model_used,
         base_path or "(root)",
         sorted(ignored),
-        len(context or ""),
-        context or "(empty)",
+        original_prompt_tokens_est,
+        trimmed_prompt_tokens_est,
+        len(trimmed_context or ""),
+        _preview_log_context(trimmed_context or ""),
     )
 
     tasks = [
         _query_llm_for_folder(
             priors,
-            context,
-            resolved_model,
+            trimmed_context,
             ignore_prior_ids=ignored,
             folder_path=folder_path,
         )

@@ -40,6 +40,7 @@ config = Config.from_yaml_file(SOVARA_CONFIG)
 # server-related constants
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PYTHON_PORT", 5959))
+SOVARA_SERVER_URL = f"http://{HOST}:{PORT}"
 SERVER_START_TIMEOUT = 2
 PROCESS_TERMINATE_TIMEOUT = 5
 MESSAGE_POLL_INTERVAL = 0.1
@@ -120,8 +121,9 @@ MAIN_SERVER_LOG = os.path.join(SOVARA_LOG_DIR, "main_server.log")
 PRIORS_SERVER_LOG = os.path.join(SOVARA_LOG_DIR, "priors_server.log")
 INFERENCE_SERVER_LOG = os.path.join(SOVARA_LOG_DIR, "inference_server.log")
 MAIN_SERVER_STARTUP_LOCK = os.path.join(SOVARA_HOME, "server.starting.lock")
+INFERENCE_SERVER_PID = os.path.join(SOVARA_HOME, "inference_server.pid")
 
-# Inference sub-server port (5959=main, 5960=priors, 5961=inference)
+# Inference sub-server port (5959=main, 5961=inference)
 INFERENCE_PORT = PORT + 2
 
 
@@ -528,7 +530,7 @@ COMPILED_MODEL_NAME_FORMATTERS = [
 INVALID_LABEL_CHARS = set("{[<>%$#@")
 
 # Priors server constants
-DEFAULT_PRIORS_SERVER_URL = "http://127.0.0.1:5960"
+DEFAULT_PRIORS_SERVER_URL = SOVARA_SERVER_URL
 PRIORS_SERVER_URL = os.environ.get("PRIORS_SERVER_URL", DEFAULT_PRIORS_SERVER_URL).rstrip("/")
 
 PRIORS_SERVER_TIMEOUT = 30  # Seconds to wait for server startup

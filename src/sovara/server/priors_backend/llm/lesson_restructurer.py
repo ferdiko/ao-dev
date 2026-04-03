@@ -73,7 +73,6 @@ async def propose_restructure(
     store,
     base_path: str = "",
     comments: Optional[str] = None,
-    model: str = "openai/gpt-5.4",
 ) -> tuple[RestructureProposal, str, dict[str, dict]]:
     folder_priors, all_priors = collect_folder_priors(store, base_path)
     if not all_priors:
@@ -110,8 +109,6 @@ async def propose_restructure(
         prompt += f"\n\nUSER GUIDANCE:\n{comments}"
 
     result = await infer_structured_json(
-        purpose="priors_restructure",
-        model=model,
         tier="expensive",
         response_format=_RESTRUCTURE_RESPONSE_SCHEMA,
         messages=[

@@ -17,6 +17,11 @@ _INIT_LOCK = threading.Lock()
 _INITIALIZED = False
 
 
+def _connect() -> sqlite3.Connection:
+    os.makedirs(_CACHE_DIR, exist_ok=True)
+    return sqlite3.connect(_CACHE_PATH, timeout=30.0)
+
+
 def _ensure_db() -> None:
     global _INITIALIZED
     if _INITIALIZED:
@@ -24,8 +29,7 @@ def _ensure_db() -> None:
     with _INIT_LOCK:
         if _INITIALIZED:
             return
-        os.makedirs(_CACHE_DIR, exist_ok=True)
-        conn = sqlite3.connect(_CACHE_PATH, timeout=30.0)
+        conn = _connect()
         try:
             conn.execute(
                 """
@@ -84,7 +88,7 @@ def get_cached_retrieval(
     ignore_prior_ids: list[str] | None = None,
 ) -> dict[str, Any] | None:
     _ensure_db()
-    conn = sqlite3.connect(_CACHE_PATH, timeout=30.0)
+    conn = _connect()
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute(
@@ -128,7 +132,7 @@ def store_cached_retrieval(
     response: dict[str, Any],
 ) -> None:
     _ensure_db()
-    conn = sqlite3.connect(_CACHE_PATH, timeout=30.0)
+    conn = _connect()
     try:
         conn.execute(
             """
@@ -167,6 +171,16 @@ def store_cached_retrieval(
                 json.dumps(response, sort_keys=True),
             ),
         )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def clear_all_retrieval_cache() -> None:
+    _ensure_db()
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM retrieval_cache")
         conn.commit()
     finally:
         conn.close()

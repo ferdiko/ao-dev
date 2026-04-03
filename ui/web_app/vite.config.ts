@@ -7,6 +7,8 @@ import react from '@vitejs/plugin-react'
 
 const BACKEND_START_TIMEOUT_MS = 10_000
 const BACKEND_HEALTH_POLL_MS = 250
+const BACKEND_HTTP_TARGET = 'http://127.0.0.1:5959'
+const BACKEND_WS_TARGET = 'ws://127.0.0.1:5959'
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -16,7 +18,7 @@ function sleep(ms: number): Promise<void> {
 
 async function isBackendHealthy(): Promise<boolean> {
   try {
-    const resp = await fetch('http://127.0.0.1:5959/health')
+    const resp = await fetch(`${BACKEND_HTTP_TARGET}/health`)
     return resp.ok
   } catch {
     return false
@@ -121,12 +123,20 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      '/api/v1': {
+        target: BACKEND_HTTP_TARGET,
+        changeOrigin: true,
+      },
+      '/health': {
+        target: BACKEND_HTTP_TARGET,
+        changeOrigin: true,
+      },
       '/ui': {
-        target: 'http://127.0.0.1:5959',
+        target: BACKEND_HTTP_TARGET,
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://127.0.0.1:5959',
+        target: BACKEND_WS_TARGET,
         ws: true,
       },
     },

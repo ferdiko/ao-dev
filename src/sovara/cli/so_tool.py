@@ -582,7 +582,7 @@ def _install_skill_files(target_root: Path, install_targets: list[str]) -> list[
 
 
 def _is_priors_server_running() -> bool:
-    """Check if the priors server is already running."""
+    """Check if the main server's priors API is already running."""
     import urllib.request
     import urllib.error
 
@@ -595,24 +595,23 @@ def _is_priors_server_running() -> bool:
 
 
 def priors_start_server_command(args) -> None:
-    """Start the SovaraDB daemon."""
+    """Start the main Sovara server that hosts the priors API."""
     # Check if already running
     if _is_priors_server_running():
         output_json({
             "status": "success",
-            "message": "SovaraDB server is already running",
+            "message": "Sovara priors API is already running",
             "url": PRIORS_SERVER_URL,
         })
 
-    # Run the server start command (it handles its own daemonization)
-    cmd = ["uv", "run", "so-priors", "start"]
+    cmd = ["uv", "run", "so-server", "start"]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=PRIORS_SERVER_TIMEOUT)
         if result.returncode == 0:
             output_json({
                 "status": "success",
-                "message": "SovaraDB server started successfully",
+                "message": "Sovara server started successfully",
                 "url": PRIORS_SERVER_URL,
             })
         else:
@@ -620,10 +619,7 @@ def priors_start_server_command(args) -> None:
             output_json({
                 "status": "error",
                 "error": error_output,
-                "hint": "SovaraDB may not be installed. To install:\n"
-                        "  - With uv: add the local so-priors checkout as an editable path dependency\n"
-                        "    (for example: sovara-priorsdb = { path = \"../so-priors\", editable = true })\n"
-                        "  - With pip: pip install -e ../so-priors",
+                "hint": "Try starting the main server directly with `uv run so-server start`.",
             })
     except FileNotFoundError:
         output_json({
@@ -638,7 +634,7 @@ def priors_start_server_command(args) -> None:
     except Exception as e:
         output_json({
             "status": "error",
-            "error": f"Failed to start priors server: {e}",
+            "error": f"Failed to start Sovara server: {e}",
         })
 
 
@@ -852,8 +848,6 @@ def priors_retrieve_command(args) -> None:
     data = {"context": args.context}
     if args.path:
         data["base_path"] = args.path
-    if args.model:
-        data["model"] = args.model
     output_json(_priors_request("POST", "/api/v1/priors/retrieve", data))
 
 
@@ -1230,11 +1224,6 @@ def create_parser() -> ArgumentParser:
         "--path", "-p",
         default=None,
         help="Root folder path to search from",
-    )
-    priors_retrieve.add_argument(
-        "--model",
-        default=None,
-        help="Optional retriever model override",
     )
 
     priors_migrate = priors_subparsers.add_parser(

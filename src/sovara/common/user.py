@@ -6,26 +6,50 @@ User data (full_name, email) lives in the database's users table.
 """
 
 import os
+import threading
 import uuid
 
 from sovara.common.config import _ask_field, green
 from sovara.common.constants import USER_ID_PATH
 
 
+_USER_ID_UNSET = object()
+_cached_user_id: object | str | None = _USER_ID_UNSET
+_user_id_lock = threading.Lock()
+
+
+def invalidate_user_id_cache() -> None:
+    global _cached_user_id
+    with _user_id_lock:
+        _cached_user_id = _USER_ID_UNSET
+
+
 def read_user_id() -> str | None:
     """Read user UUID from SOVARA_HOME/.user_id. Returns None if not configured."""
+    global _cached_user_id
+    with _user_id_lock:
+        if _cached_user_id is not _USER_ID_UNSET:
+            return _cached_user_id  # type: ignore[return-value]
     if not os.path.isfile(USER_ID_PATH):
+        with _user_id_lock:
+            _cached_user_id = None
         return None
     with open(USER_ID_PATH, encoding="utf-8") as f:
         user_id = f.read().strip()
-    return user_id if user_id else None
+    cached = user_id if user_id else None
+    with _user_id_lock:
+        _cached_user_id = cached
+    return cached
 
 
 def write_user_id(user_id: str) -> None:
     """Write user UUID to SOVARA_HOME/.user_id."""
+    global _cached_user_id
     os.makedirs(os.path.dirname(USER_ID_PATH), exist_ok=True)
     with open(USER_ID_PATH, "w", encoding="utf-8") as f:
         f.write(user_id + "\n")
+    with _user_id_lock:
+        _cached_user_id = user_id
 
 
 def _prompt_user_metadata(existing: dict = None) -> tuple[str, str]:

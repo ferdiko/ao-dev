@@ -103,7 +103,7 @@ def test_inject_priors_formats_context_and_tracks_ids(monkeypatch):
     monkeypatch.setattr(
         priors,
         "_retrieve_priors",
-        lambda path, context, model=None: [{"id": "p1", "name": "Prior 1", "content": "Use retries"}],
+        lambda path, context: [{"id": "p1", "name": "Prior 1", "content": "Use retries"}],
     )
     monkeypatch.setattr(priors, "_track_priors", lambda prior_ids: tracked.setdefault("ids", prior_ids))
 
@@ -116,6 +116,28 @@ def test_inject_priors_formats_context_and_tracks_ids(monkeypatch):
         "</sovara-priors>"
     )
     assert tracked["ids"] == ["p1"]
+
+
+def test_inject_priors_stringifies_structured_context(monkeypatch):
+    captured = {}
+
+    def fake_retrieve(path, context):
+        captured["path"] = path
+        captured["context"] = context
+        return [{"id": "p1", "name": "Prior 1", "content": "Use retries"}]
+
+    monkeypatch.setattr(priors, "_retrieve_priors", fake_retrieve)
+    monkeypatch.setattr(priors, "_track_priors", lambda prior_ids: None)
+
+    context = [
+        {"role": "system", "content": "You are helpful."},
+        {"role": "user", "content": "Need SQL guidance"},
+    ]
+
+    priors.inject_priors(path="demo/", context=context)
+
+    assert captured["path"] == "demo/"
+    assert captured["context"] == json.dumps(context, indent=2, ensure_ascii=False)
 
 
 def test_inject_priors_formats_manual_block_for_method_all(monkeypatch):
@@ -152,14 +174,13 @@ def test_retrieve_priors_uses_current_backend_route(monkeypatch):
 
     monkeypatch.setattr(priors, "_priors_request", fake_priors_request)
 
-    result = priors._retrieve_priors(path="demo/", context="Need SQL guidance", model="openai/gpt-5.4-mini")
+    result = priors._retrieve_priors(path="demo/", context="Need SQL guidance")
 
     assert result == []
     assert captured["endpoint"] == "/priors/retrieve"
     assert captured["payload"] == {
         "context": "Need SQL guidance",
         "base_path": "demo/",
-        "model": "openai/gpt-5.4-mini",
     }
 
 
@@ -197,7 +218,7 @@ def test_retrieve_priors_uses_internal_route_when_run_is_active(monkeypatch):
 
     monkeypatch.setattr(priors, "http_post", fake_http_post)
 
-    result = priors._retrieve_priors(path="demo/", context="Need SQL guidance", model="openai/gpt-5.4-mini")
+    result = priors._retrieve_priors(path="demo/", context="Need SQL guidance")
 
     assert result == []
     assert captured["endpoint"] == "/internal/priors/retrieve"
@@ -205,14 +226,13 @@ def test_retrieve_priors_uses_internal_route_when_run_is_active(monkeypatch):
         "run_id": "run-123",
         "context": "Need SQL guidance",
         "base_path": "demo/",
-        "model": "openai/gpt-5.4-mini",
         "ignore_prior_ids": [],
     }
     assert captured["timeout"] == 35.0
 
 
 def test_inject_priors_raises_actionable_error_for_missing_folder(monkeypatch):
-    def fail_retrieve(path, context, model=None):
+    def fail_retrieve(path, context):
         raise urllib.error.HTTPError(
             url="http://127.0.0.1:5960/api/v1/priors/retrieve",
             code=404,
@@ -246,7 +266,6 @@ def test_cli_priors_retrieve_command_uses_current_backend_route(monkeypatch):
         SimpleNamespace(
             context="Need SQL guidance",
             path="demo/",
-            model="openai/gpt-5.4-mini",
         )
     )
 
@@ -255,7 +274,6 @@ def test_cli_priors_retrieve_command_uses_current_backend_route(monkeypatch):
     assert captured["data"] == {
         "context": "Need SQL guidance",
         "base_path": "demo/",
-        "model": "openai/gpt-5.4-mini",
     }
     assert captured["output"] == {"status": "ok"}
 
