@@ -261,6 +261,7 @@ MODEL_TOKEN_OVERRIDES = {
     "llama": "Llama",
     "magistral": "Magistral",
     "medgemma": "MedGemma",
+    "minimax": "MiniMax",
     "mistral": "Mistral",
     "mixtral": "Mixtral",
     "ministral": "Ministral",
@@ -367,6 +368,11 @@ def _format_gemini(match: re.Match[str]) -> str:
     return f"Gemini {version}{_format_tail(tail, strip_gemini_preview_date=True)}"
 
 
+def _format_amazon_nova(match: re.Match[str]) -> str:
+    (family,) = match.groups()
+    return f"Amazon Nova {_format_model_token(family)}"
+
+
 def _format_prefixed_family(match: re.Match[str], display_family: str) -> str:
     tail = match.group(1)
     return f"{display_family}{_format_tail(tail)}"
@@ -387,7 +393,9 @@ def _format_slug_family(match: re.Match[str]) -> str:
 # These are matched against the raw model name before cleanup rules are applied
 # Order matters: more specific patterns should come before general ones.
 # Keep this list for truly irregular aliases that cannot be derived from family formatters.
-MODEL_NAME_PATTERNS: list[tuple[str, str]] = []
+MODEL_NAME_PATTERNS: list[tuple[str, str]] = [
+    (r"^(?:openai/)?gpt-5\.2-chat-latest$", "GPT-5.2 Chat"),
+]
 COMPILED_MODEL_NAME_PATTERNS = [
     (re.compile(pattern), name) for pattern, name in MODEL_NAME_PATTERNS
 ]
@@ -411,7 +419,10 @@ MODEL_NAME_FORMATTERS = [
     ),
     # Google
     (r"^gemini-(\d+(?:\.\d+)?)(?:-([a-z0-9]+(?:-[a-z0-9]+)*))?$", _format_gemini),
+    # Amazon Bedrock
+    (r"^(?:[a-z]+\.)?amazon\.nova-(micro|lite|pro|premier|sonic|canvas|reel)-v\d+:\d+$", _format_amazon_nova),
     # Hugging Face / open-weight families
+    (r"^(minimax)(?:-(.+))?$", _format_captured_family),
     (r"^(qwen[\w.]*|qwq)(?:-(.+))?$", _format_captured_family),
     (r"^llama(?:-(.+))?$", lambda m: _format_prefixed_family(m, "Llama")),
     (r"^(glm[\w.]*|chatglm[\w.]*)(?:-(.+))?$", _format_captured_family),
