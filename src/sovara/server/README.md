@@ -31,7 +31,7 @@ Note that all server logs are printed to files and not visible from any terminal
 
 ## Database
 
-The database uses SQLite. Amongst other things, it stores cached LLM results and user input overrides (see `llm_calls` table). See [sqlite.py](/src/sovara/server/database_backends/sqlite.py) for the DB schema.
+The database uses SQLite. Amongst other things, it stores cached LLM results and user input overrides (see `llm_calls` table). See [schema.py](/src/sovara/server/database/sqlite/schema.py) for the DB schema.
 
 ## Edge Detection via Content Matching
 
@@ -46,4 +46,4 @@ This approach:
 - Works with any LLM library (OpenAI, Anthropic, etc.)
 - Is simple and robust
 
-The matching logic is implemented in [string_matching.py](/src/sovara/runner/string_matching.py). The content registry (storing outputs for matching) lives in [database_manager.py](/src/sovara/server/database_manager.py).
+The matching logic is implemented in [string_matching.py](/src/sovara/runner/string_matching.py). The content registry (storing outputs for matching) lives in [llm_calls.py](/src/sovara/server/database/llm_calls.py).

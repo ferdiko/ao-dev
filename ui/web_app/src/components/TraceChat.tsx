@@ -127,37 +127,27 @@ export function TraceChat({
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [activeRequestId, setActiveRequestId] = useState<number | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
+  const [isPendingReplySuppressed, setIsPendingReplySuppressed] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const isMountedRef = useRef(true);
   const activeAbortControllerRef = useRef<AbortController | null>(null);
-  const requestCounterRef = useRef(0);
-  const activeRequestIdRef = useRef<number | null>(null);
-  const activeRequestHistoryRef = useRef<TraceChatHistoryMessage[] | null>(null);
-  const suppressedPendingUserMessageIdRef = useRef<string | null>(null);
   const lastMessage = messages[messages.length - 1];
-  const hasPendingPersistedReply = (
-    lastMessage?.role === "user"
-    && suppressedPendingUserMessageIdRef.current !== lastMessage.id
-  );
-  const isLoading = activeRequestId !== null;
+  const hasPendingPersistedReply = lastMessage?.role === "user" && !isPendingReplySuppressed;
 
-  const clearActiveRequest = () => {
-    activeAbortControllerRef.current = null;
-    activeRequestIdRef.current = null;
-    activeRequestHistoryRef.current = null;
-    if (isMountedRef.current) {
-      setActiveRequestId(null);
+  const clearActiveRequest = (abortController?: AbortController) => {
+    if (abortController && activeAbortControllerRef.current !== abortController) {
+      return;
     }
+    activeAbortControllerRef.current = null;
+    setIsLoading(false);
   };
 
-  useEffect(() => {
-    return () => {
-      isMountedRef.current = false;
-    };
+  useEffect(() => () => {
+    activeAbortControllerRef.current?.abort();
+    activeAbortControllerRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -178,10 +168,13 @@ export function TraceChat({
 
   useEffect(() => {
     let cancelled = false;
+    activeAbortControllerRef.current?.abort();
+    activeAbortControllerRef.current = null;
+    setIsLoading(false);
     setMessages([]);
     setInput("");
     setIsHistoryLoading(true);
-    suppressedPendingUserMessageIdRef.current = null;
+    setIsPendingReplySuppressed(false);
 
     fetchTraceChatHistory(runId)
       .then((history) => {
@@ -211,12 +204,12 @@ export function TraceChat({
       return;
     }
     if (!hasPendingPersistedReply) {
-      suppressedPendingUserMessageIdRef.current = null;
       return;
     }
 
     let cancelled = false;
     const deadline = Date.now() + PENDING_HISTORY_POLL_TIMEOUT_MS;
+    const expectedHistory = buildPersistedHistory(messages);
 
     const poll = async () => {
       while (!cancelled && Date.now() < deadline) {
@@ -231,20 +224,14 @@ export function TraceChat({
           if (cancelled) {
             return;
           }
-          const pendingHistory = activeRequestHistoryRef.current;
-          if (
-            pendingHistory !== null
-            && !historyStartsWith(history, pendingHistory)
-          ) {
+          if (!historyStartsWith(history, expectedHistory)) {
             continue;
           }
           if (!historiesMatch(messages, history)) {
             setMessages(hydrateMessages(history));
-            if (
-              activeRequestIdRef.current !== null
-              && history[history.length - 1]?.role === "assistant"
-            ) {
-              clearActiveRequest();
+            if (isLoading && history[history.length - 1]?.role === "assistant") {
+              activeAbortControllerRef.current = null;
+              setIsLoading(false);
             }
             return;
           }
@@ -260,7 +247,7 @@ export function TraceChat({
     return () => {
       cancelled = true;
     };
-  }, [hasPendingPersistedReply, isClearing, isHistoryLoading, messages, runId]);
+  }, [hasPendingPersistedReply, isClearing, isHistoryLoading, isLoading, messages, runId]);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading || isHistoryLoading || isClearing) return;
@@ -268,15 +255,11 @@ export function TraceChat({
     const history = buildPersistedHistory(messages);
     const messagesWithUser = [...messages, userMsg];
     const abortController = new AbortController();
-    const requestId = requestCounterRef.current + 1;
-    requestCounterRef.current = requestId;
     activeAbortControllerRef.current = abortController;
-    activeRequestIdRef.current = requestId;
-    activeRequestHistoryRef.current = buildPersistedHistory(messagesWithUser);
-    suppressedPendingUserMessageIdRef.current = null;
+    setIsPendingReplySuppressed(false);
     setMessages(messagesWithUser);
     setInput("");
-    setActiveRequestId(requestId);
+    setIsLoading(true);
     try {
       const { history: nextHistory, edits_applied } = await chatWithTrace(
         runId,
@@ -284,7 +267,7 @@ export function TraceChat({
         history,
         abortController.signal,
       );
-      if (isMountedRef.current && activeRequestIdRef.current === requestId) {
+      if (activeAbortControllerRef.current === abortController) {
         setMessages(hydrateMessages(nextHistory, { editsApplied: edits_applied }));
       }
     } catch (error) {
@@ -298,24 +281,22 @@ export function TraceChat({
         ? error.message
         : "could not reach the chat backend.";
       const content = detail.startsWith("Error:") ? detail : `Error: ${detail}`;
-      if (isMountedRef.current && activeRequestIdRef.current === requestId) {
+      if (activeAbortControllerRef.current === abortController) {
         setMessages([...messagesWithUser, { id: `e-${Date.now()}`, role: "assistant", content }]);
       }
     } finally {
-      if (activeRequestIdRef.current === requestId) {
-        clearActiveRequest();
-      }
+      clearActiveRequest(abortController);
     }
   };
 
   const handleStop = () => {
-    if (activeRequestIdRef.current === null) return;
-    const lastMessage = messages[messages.length - 1];
+    const abortController = activeAbortControllerRef.current;
+    if (!abortController) return;
     if (lastMessage?.role === "user") {
-      suppressedPendingUserMessageIdRef.current = lastMessage.id;
+      setIsPendingReplySuppressed(true);
     }
-    activeAbortControllerRef.current?.abort();
-    clearActiveRequest();
+    abortController.abort();
+    clearActiveRequest(abortController);
     void abortTraceChat(runId).catch((error) => {
       console.error("Failed to abort trace chat:", error);
     });
@@ -324,7 +305,7 @@ export function TraceChat({
   const handleClear = async () => {
     if (isLoading || isHistoryLoading || isClearing) return;
     const previousMessages = messages;
-    suppressedPendingUserMessageIdRef.current = null;
+    setIsPendingReplySuppressed(false);
     setMessages([]);
     setInput("");
     setIsClearing(true);

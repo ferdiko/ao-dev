@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -25,6 +26,38 @@ afterEach(() => {
 });
 
 describe("TraceChat", () => {
+  it("returns control after a response in Strict Mode", async () => {
+    vi.mocked(fetchTraceChatHistory).mockResolvedValue([]);
+    vi.mocked(chatWithTrace).mockResolvedValue({
+      history: [
+        { role: "user", content: "What happened?" },
+        { role: "assistant", content: "Here is the answer." },
+      ],
+      edits_applied: false,
+    });
+    vi.mocked(abortTraceChat).mockResolvedValue();
+    vi.mocked(clearTraceChatHistory).mockResolvedValue([]);
+    vi.mocked(restartRun).mockResolvedValue();
+
+    render(
+      <StrictMode>
+        <TraceChat runId="run-1" />
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(fetchTraceChatHistory).toHaveBeenCalledWith("run-1");
+    });
+
+    const input = screen.getByPlaceholderText("Ask about this trace…");
+    fireEvent.change(input, { target: { value: "What happened?" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    expect(await screen.findByText("Here is the answer.")).toBeInTheDocument();
+    expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Ask about this trace…")).toBeEnabled();
+  });
+
   it("links ampersand-separated step references", async () => {
     vi.mocked(fetchTraceChatHistory).mockResolvedValue([]);
     vi.mocked(chatWithTrace).mockResolvedValue({
@@ -272,5 +305,42 @@ describe("TraceChat", () => {
     expect(screen.queryByTitle("Stop trace chat")).not.toBeInTheDocument();
     expect(screen.getByText("Please take a while")).toBeInTheDocument();
     expect(screen.queryByText(/^Error:/)).not.toBeInTheDocument();
+  }, 10000);
+
+  it("returns control after stop in Strict Mode", async () => {
+    vi.mocked(fetchTraceChatHistory).mockResolvedValue([]);
+    vi.mocked(abortTraceChat).mockResolvedValue();
+    vi.mocked(clearTraceChatHistory).mockResolvedValue([]);
+    vi.mocked(restartRun).mockResolvedValue();
+    vi.mocked(chatWithTrace).mockImplementation((_runId, _message, _history, signal) => (
+      new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => {
+          reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+        });
+      }) as Promise<{ history: { role: "user" | "assistant"; content: string }[]; edits_applied?: boolean }>
+    ));
+
+    render(
+      <StrictMode>
+        <TraceChat runId="run-1" />
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(fetchTraceChatHistory).toHaveBeenCalledWith("run-1");
+    });
+
+    const input = screen.getByPlaceholderText("Ask about this trace…");
+    fireEvent.change(input, { target: { value: "Please take a while" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    expect(screen.getByText("Thinking…")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Stop trace chat"));
+
+    expect(abortTraceChat).toHaveBeenCalledWith("run-1");
+    await waitFor(() => {
+      expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
+      expect(screen.getByPlaceholderText("Ask about this trace…")).toBeEnabled();
+    });
   }, 10000);
 });

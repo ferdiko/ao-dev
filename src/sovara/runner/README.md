@@ -60,7 +60,7 @@ We write monkey patches at a level as low as possible. I.e., we try to not patch
 
 When an LLM call is intercepted (e.g., in [httpx_patch.py](/src/sovara/runner/monkey_patching/patches/httpx_patch.py)), the following happens:
 
-1. **Cache lookup**: `DB.get_in_out()` hashes the input and looks it up by `(run_id, input_hash)`. The [database_manager.py](/src/sovara/server/database_manager.py) handles all cache operations.
+1. **Cache lookup**: `DB.get_in_out()` hashes the input and looks it up by `(run_id, input_hash)`. The [llm_calls.py](/src/sovara/server/database/llm_calls.py) module handles cache operations.
 
 2. **Cache hit**: If a matching entry exists:
    - If `input_overwrite` is set (user edited input in UI), use the modified input instead
