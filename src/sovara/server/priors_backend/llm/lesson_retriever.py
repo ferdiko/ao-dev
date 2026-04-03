@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ProcessPoolExecutor
 import litellm
+import multiprocessing
+import os
+import threading
+from typing import Optional
 
 from sovara.server.llm_backend import resolve_model
 from sovara.server.priors_backend.llm_client import infer_structured_json
@@ -11,6 +16,9 @@ from sovara.server.priors_backend.logger import logger
 _RETRIEVAL_LOG_CONTEXT_LIMIT = 4000
 _RETRIEVAL_INPUT_TOKEN_LIMIT = 5000
 _RETRIEVAL_TRIM_MARKER = "\n\n...[middle omitted for priors token budget]...\n\n"
+_RETRIEVAL_WORKER_COUNT = max(1, int(os.environ.get("SOVARA_PRIORS_RETRIEVAL_WORKERS", "4")))
+_RETRIEVAL_PROCESS_POOL: ProcessPoolExecutor | None = None
+_RETRIEVAL_PROCESS_POOL_LOCK = threading.Lock()
 
 _RETRIEVER_SYSTEM_PROMPT = """You are a prior retrieval system.
 
@@ -48,6 +56,28 @@ _RESPONSE_SCHEMA = {
         },
     },
 }
+
+
+def _get_retrieval_process_pool() -> ProcessPoolExecutor:
+    global _RETRIEVAL_PROCESS_POOL
+    if _RETRIEVAL_PROCESS_POOL is None:
+        with _RETRIEVAL_PROCESS_POOL_LOCK:
+            if _RETRIEVAL_PROCESS_POOL is None:
+                ctx = multiprocessing.get_context("spawn")
+                _RETRIEVAL_PROCESS_POOL = ProcessPoolExecutor(
+                    max_workers=_RETRIEVAL_WORKER_COUNT,
+                    mp_context=ctx,
+                )
+    return _RETRIEVAL_PROCESS_POOL
+
+
+def shutdown_retrieval_process_pool() -> None:
+    global _RETRIEVAL_PROCESS_POOL
+    with _RETRIEVAL_PROCESS_POOL_LOCK:
+        pool = _RETRIEVAL_PROCESS_POOL
+        _RETRIEVAL_PROCESS_POOL = None
+    if pool is not None:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def _preview_text(value: str, limit: int = 400) -> str:
@@ -237,6 +267,57 @@ async def _query_llm_for_folder(
         result.get("model_used") or resolve_model(None, "cheap"),
     )
     return selected_ids
+
+
+def _retrieve_relevant_priors_sync(
+    user_id: str,
+    project_id: str,
+    context: str,
+    base_path: str,
+    ignore_prior_ids: Optional[list[str]] = None,
+) -> list[dict]:
+    from sovara.server.priors_backend.storage import PriorStore
+
+    store = PriorStore(user_id, project_id)
+    return asyncio.run(
+        retrieve_relevant_priors(
+            store=store,
+            context=context,
+            base_path=base_path,
+            ignore_prior_ids=ignore_prior_ids,
+        )
+    )
+
+
+async def retrieve_relevant_priors_for_scope(
+    *,
+    user_id: str,
+    project_id: str,
+    context: str,
+    base_path: str = "",
+    ignore_prior_ids: Optional[list[str]] = None,
+) -> list[dict]:
+    if os.environ.get("_SOVARA_TESTING") == "1":
+        from sovara.server.priors_backend.storage import PriorStore
+
+        store = PriorStore(user_id, project_id)
+        return await retrieve_relevant_priors(
+            store=store,
+            context=context,
+            base_path=base_path,
+            ignore_prior_ids=ignore_prior_ids,
+        )
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _get_retrieval_process_pool(),
+        _retrieve_relevant_priors_sync,
+        user_id,
+        project_id,
+        context,
+        base_path,
+        ignore_prior_ids,
+    )
 
 
 async def retrieve_relevant_priors(

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Optional, Any
 
 from sovara.common.custom_metrics import MetricColumn, get_metric_kind
+from sovara.common.utils import hash_input
 from sovara.common.logger import logger
 
 from sovara.runner.monkey_patching.api_parser import (
@@ -1038,6 +1039,182 @@ class DatabaseManager:
             "error_message": row["error_message"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+        }
+
+    @staticmethod
+    def _normalize_cache_pairs(pairs: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+        normalized: list[dict[str, str]] = []
+        for pair in pairs or []:
+            key = pair.get("key")
+            value = pair.get("value")
+            if isinstance(key, str) and isinstance(value, str):
+                normalized.append({"key": key, "value": value})
+        return normalized
+
+    @staticmethod
+    def _normalize_prior_ids(prior_ids: list[str] | None) -> list[str]:
+        ordered_unique: list[str] = []
+        for prior_id in prior_ids or []:
+            if prior_id and prior_id not in ordered_unique:
+                ordered_unique.append(prior_id)
+        return ordered_unique
+
+    @staticmethod
+    def _normalized_ignore_prior_ids_json(ignore_prior_ids: list[str] | None) -> str:
+        unique_sorted = sorted({prior_id for prior_id in (ignore_prior_ids or []) if prior_id})
+        return json.dumps(unique_sorted)
+
+    def lookup_prefix_cache(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        base_path: str,
+        model: str,
+        clean_pairs: list[dict[str, Any]] | None,
+    ) -> dict[str, Any] | None:
+        normalized_pairs = self._normalize_cache_pairs(clean_pairs)
+        if not normalized_pairs:
+            return None
+
+        rows = self.backend.get_prefix_cache_candidates_query(
+            user_id,
+            project_id,
+            base_path,
+            model,
+            normalized_pairs[0]["key"],
+            len(normalized_pairs),
+        )
+        for row in rows:
+            cached_clean_pairs = self._decode_json_column(row["clean_pairs_json"], [])
+            pair_count = int(row["pair_count"])
+            if normalized_pairs[:pair_count] != cached_clean_pairs:
+                continue
+            return {
+                "matched_pair_count": pair_count,
+                "injected_pairs": self._decode_json_column(row["injected_pairs_json"], []),
+                "prior_ids": self._decode_json_column(row["prior_ids_json"], []),
+            }
+        return None
+
+    def store_prefix_cache(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        base_path: str,
+        model: str,
+        clean_pairs: list[dict[str, Any]] | None,
+        injected_pairs: list[dict[str, Any]] | None,
+        prior_ids: list[str] | None,
+    ) -> None:
+        normalized_clean_pairs = self._normalize_cache_pairs(clean_pairs)
+        normalized_injected_pairs = self._normalize_cache_pairs(injected_pairs)
+        if not normalized_clean_pairs or len(normalized_clean_pairs) != len(normalized_injected_pairs):
+            return
+
+        self.backend.upsert_prefix_cache_query(
+            user_id,
+            project_id,
+            base_path,
+            model,
+            normalized_clean_pairs[0]["key"],
+            len(normalized_clean_pairs),
+            json.dumps(normalized_clean_pairs, ensure_ascii=False, separators=(",", ":")),
+            json.dumps(normalized_injected_pairs, ensure_ascii=False, separators=(",", ":")),
+            json.dumps(self._normalize_prior_ids(prior_ids), ensure_ascii=False, separators=(",", ":")),
+        )
+
+    def clear_scope_prefix_cache(self, *, user_id: str, project_id: str) -> None:
+        self.backend.clear_scope_prefix_cache_query(user_id, project_id)
+
+    def clear_all_prefix_cache(self) -> None:
+        self.backend.clear_all_prefix_cache_query()
+
+    def get_cached_retrieval(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        priors_revision: int,
+        base_path: str,
+        model: str,
+        context: str,
+        ignore_prior_ids: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        row = self.backend.get_cached_retrieval_query(
+            user_id,
+            project_id,
+            priors_revision,
+            base_path,
+            model,
+            hash_input(context or ""),
+            self._normalized_ignore_prior_ids_json(ignore_prior_ids),
+        )
+        if row is None:
+            return None
+        return self._decode_json_column(row["response_json"], None)
+
+    def store_cached_retrieval(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        priors_revision: int,
+        base_path: str,
+        model: str,
+        context: str,
+        ignore_prior_ids: list[str] | None,
+        response: dict[str, Any],
+    ) -> None:
+        self.backend.upsert_retrieval_cache_query(
+            user_id,
+            project_id,
+            priors_revision,
+            base_path,
+            model,
+            hash_input(context or ""),
+            self._normalized_ignore_prior_ids_json(ignore_prior_ids),
+            json.dumps(response, sort_keys=True),
+        )
+
+    def clear_all_retrieval_cache(self) -> None:
+        self.backend.clear_all_retrieval_cache_query()
+
+    def get_priors_scope(self, *, user_id: str, project_id: str) -> dict[str, Any] | None:
+        row = self.backend.get_priors_scope_query(user_id, project_id)
+        if row is None:
+            return None
+        return {
+            "user_id": str(row["user_id"]),
+            "project_id": str(row["project_id"]),
+            "revision": int(row["revision"]),
+            "updated_at": str(row["updated_at"]),
+        }
+
+    def ensure_priors_scope(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        revision: int = 1,
+        updated_at: str,
+    ) -> dict[str, Any]:
+        row = self.backend.ensure_priors_scope_query(user_id, project_id, revision, updated_at)
+        return {
+            "user_id": str(row["user_id"]),
+            "project_id": str(row["project_id"]),
+            "revision": int(row["revision"]),
+            "updated_at": str(row["updated_at"]),
+        }
+
+    def bump_priors_scope_revision(self, *, user_id: str, project_id: str, updated_at: str) -> dict[str, Any]:
+        row = self.backend.bump_priors_scope_revision_query(user_id, project_id, updated_at)
+        return {
+            "user_id": str(row["user_id"]),
+            "project_id": str(row["project_id"]),
+            "revision": int(row["revision"]),
+            "updated_at": str(row["updated_at"]),
         }
 
     def get_prior_retrieval(self, run_id, node_uuid):

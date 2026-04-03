@@ -1,5 +1,6 @@
 import logging
 import json
+import math
 import re
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -57,6 +58,82 @@ def _preview_json(value: Any, max_len: int = 2000) -> str:
     except Exception:
         text = repr(value)
     return _preview_text(text, max_len=max_len)
+
+
+def _payload_issue_paths(value: Any, path: str = "$") -> list[str]:
+    issues: list[str] = []
+    if isinstance(value, float) and not math.isfinite(value):
+        issues.append(f"{path}=non_finite_float({value!r})")
+        return issues
+    if isinstance(value, str):
+        surrogate_count = sum(1 for ch in value if 0xD800 <= ord(ch) <= 0xDFFF)
+        control_count = sum(1 for ch in value if ord(ch) < 32 and ch not in "\n\r\t")
+        if surrogate_count:
+            issues.append(f"{path}=contains_{surrogate_count}_surrogates")
+        if control_count:
+            issues.append(f"{path}=contains_{control_count}_control_chars")
+        return issues
+    if isinstance(value, dict):
+        for key, sub_value in value.items():
+            issues.extend(_payload_issue_paths(sub_value, f"{path}.{key}"))
+        return issues
+    if isinstance(value, list):
+        for idx, item in enumerate(value):
+            issues.extend(_payload_issue_paths(item, f"{path}[{idx}]"))
+        return issues
+    return issues
+
+
+def _message_debug_summary(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    summary: list[dict[str, Any]] = []
+    for idx, message in enumerate(messages):
+        content = message.get("content")
+        if isinstance(content, str):
+            summary.append(
+                {
+                    "index": idx,
+                    "role": message.get("role"),
+                    "content_type": "str",
+                    "content_chars": len(content),
+                    "content_preview": _preview_text(content, 600),
+                }
+            )
+        else:
+            summary.append(
+                {
+                    "index": idx,
+                    "role": message.get("role"),
+                    "content_type": type(content).__name__,
+                    "content_preview": _preview_json(content, 600),
+                }
+            )
+    return summary
+
+
+def _serialize_payload_debug(model: str, messages: list[dict[str, Any]], kwargs: dict[str, Any]) -> tuple[str | None, str | None]:
+    payload = {"model": model, "messages": messages, **kwargs}
+    try:
+        return json.dumps(payload, ensure_ascii=False, allow_nan=False), None
+    except Exception as exc:
+        return None, str(exc)
+
+
+def _is_invalid_json_body_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "could not parse the json body" in text
+
+
+def _log_invalid_json_body_diagnostics(model: str, messages: list[dict[str, Any]], kwargs: dict[str, Any]) -> None:
+    payload_json, serialization_error = _serialize_payload_debug(model, messages, kwargs)
+    payload = {"model": model, "messages": messages, **kwargs}
+    logger.error(
+        "infer invalid-json-body diagnostics model=%s payload_serialization_error=%s payload_issues=%s message_summary=%s payload_preview=%s",
+        model,
+        serialization_error,
+        _payload_issue_paths(payload),
+        _preview_json(_message_debug_summary(messages), 4000),
+        _preview_text(payload_json, 8000) if payload_json is not None else _preview_json(payload, 8000),
+    )
 
 
 def _safe_token_counter(model: str, messages: list[dict[str, Any]]) -> int | None:
@@ -214,6 +291,8 @@ def infer(messages, model=None, tier="expensive", **kwargs):
                 attempt + 1,
                 MAX_RETRIES,
             )
+            if _is_invalid_json_body_error(exc):
+                _log_invalid_json_body_diagnostics(resolved, list(messages), dict(kwargs))
             delay = RETRY_BASE_DELAY * (2 ** attempt)
             logger.exception(
                 "infer error attempt=%d/%d model=%s tier=%s messages=%d kwargs=%s",

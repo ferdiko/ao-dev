@@ -1,5 +1,7 @@
 """Internal server-only REST endpoints."""
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -40,19 +42,28 @@ class InternalPrefixCacheStoreRequest(BaseModel):
     injected_pairs: list[dict[str, str]] = Field(default_factory=list)
     prior_ids: list[str] = Field(default_factory=list)
 
+
+async def _get_run_scope_or_raise(run_id: str) -> tuple[str, str]:
+    run = await asyncio.to_thread(
+        DB.query_one,
+        "SELECT user_id, project_id FROM runs WHERE run_id=?",
+        (run_id,),
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    if not run["user_id"] or not run["project_id"]:
+        raise HTTPException(status_code=400, detail="Run is missing user/project scope for priors access")
+    return str(run["user_id"]), str(run["project_id"])
+
 @router.post("/priors/retrieve")
 async def internal_priors_retrieve(req: InternalPriorsRetrieveRequest):
     base_path_label = req.base_path if req.base_path is not None else "<root>"
-    run = DB.query_one("SELECT user_id, project_id FROM runs WHERE run_id=?", (req.run_id,))
-    if run is None:
-        raise HTTPException(status_code=404, detail=f"Run not found: {req.run_id}")
-    if not run["user_id"] or not run["project_id"]:
-        raise HTTPException(status_code=400, detail="Run is missing user/project scope for priors retrieval")
+    user_id, project_id = await _get_run_scope_or_raise(req.run_id)
 
     try:
         response = await retrieve_priors_for_scope(
-            user_id=run["user_id"],
-            project_id=run["project_id"],
+            user_id=user_id,
+            project_id=project_id,
             context=req.context,
             base_path=req.base_path or "",
             ignore_prior_ids=req.ignore_prior_ids,
@@ -92,31 +103,23 @@ def internal_priors_query(req: InternalPriorsQueryRequest):
 
 
 @router.post("/priors/prefix-cache/lookup")
-def internal_priors_prefix_cache_lookup(req: InternalPrefixCacheLookupRequest):
-    run = DB.query_one("SELECT user_id, project_id FROM runs WHERE run_id=?", (req.run_id,))
-    if run is None:
-        raise HTTPException(status_code=404, detail=f"Run not found: {req.run_id}")
-    if not run["user_id"] or not run["project_id"]:
-        raise HTTPException(status_code=400, detail="Run is missing user/project scope for priors prefix lookup")
-
-    return lookup_prefix_cache_for_scope(
-        user_id=run["user_id"],
-        project_id=run["project_id"],
+async def internal_priors_prefix_cache_lookup(req: InternalPrefixCacheLookupRequest):
+    user_id, project_id = await _get_run_scope_or_raise(req.run_id)
+    return await asyncio.to_thread(
+        lookup_prefix_cache_for_scope,
+        user_id=user_id,
+        project_id=project_id,
         clean_pairs=req.clean_pairs,
     )
 
 
 @router.post("/priors/prefix-cache/store")
-def internal_priors_prefix_cache_store(req: InternalPrefixCacheStoreRequest):
-    run = DB.query_one("SELECT user_id, project_id FROM runs WHERE run_id=?", (req.run_id,))
-    if run is None:
-        raise HTTPException(status_code=404, detail=f"Run not found: {req.run_id}")
-    if not run["user_id"] or not run["project_id"]:
-        raise HTTPException(status_code=400, detail="Run is missing user/project scope for priors prefix store")
-
-    return store_prefix_cache_for_scope(
-        user_id=run["user_id"],
-        project_id=run["project_id"],
+async def internal_priors_prefix_cache_store(req: InternalPrefixCacheStoreRequest):
+    user_id, project_id = await _get_run_scope_or_raise(req.run_id)
+    return await asyncio.to_thread(
+        store_prefix_cache_for_scope,
+        user_id=user_id,
+        project_id=project_id,
         clean_pairs=req.clean_pairs,
         injected_pairs=req.injected_pairs,
         prior_ids=req.prior_ids,

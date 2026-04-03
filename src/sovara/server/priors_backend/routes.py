@@ -17,7 +17,7 @@ from sovara.server.llm_backend import resolve_model
 from sovara.server.priors_scope import resolve_priors_scope_from_request
 from sovara.server.priors_backend.llm.lesson_retriever import (
     build_folder_tree_summary,
-    retrieve_relevant_priors,
+    retrieve_relevant_priors_for_scope,
 )
 from sovara.server.priors_backend.llm.lesson_summarizer import (
     fallback_prior_summary,
@@ -25,15 +25,7 @@ from sovara.server.priors_backend.llm.lesson_summarizer import (
 )
 from sovara.server.priors_backend.llm.lesson_validator import validate_prior
 from sovara.server.priors_backend.logger import logger
-from sovara.server.priors_backend.retrieval_cache import (
-    get_cached_retrieval,
-    store_cached_retrieval,
-)
-from sovara.server.priors_backend.prefix_cache import (
-    clear_scope_prefix_cache,
-    lookup_longest_prefix,
-    store_prefix,
-)
+from sovara.server.database_manager import DB
 
 router = APIRouter(prefix="/api/v1")
 _RETRIEVAL_LOG_CONTEXT_LIMIT = 4000
@@ -299,7 +291,7 @@ def _resolve_store(
 
 
 def _clear_scope_prefix_cache(user_id: str, project_id: str) -> None:
-    clear_scope_prefix_cache(user_id=user_id, project_id=project_id)
+    DB.clear_scope_prefix_cache(user_id=user_id, project_id=project_id)
 
 
 def _schedule_ui_priors_refresh(request: Request) -> None:
@@ -322,7 +314,7 @@ def lookup_prefix_cache_for_scope(
 ) -> dict:
     normalized_base_path = _normalize_path(base_path)
     model_used = resolve_model(None, "cheap")
-    match = lookup_longest_prefix(
+    match = DB.lookup_prefix_cache(
         user_id=user_id,
         project_id=project_id,
         base_path=normalized_base_path,
@@ -345,7 +337,7 @@ def store_prefix_cache_for_scope(
 ) -> dict:
     normalized_base_path = _normalize_path(base_path)
     model_used = resolve_model(None, "cheap")
-    store_prefix(
+    DB.store_prefix_cache(
         user_id=user_id,
         project_id=project_id,
         base_path=normalized_base_path,
@@ -386,9 +378,9 @@ async def retrieve_priors_for_scope(
 ) -> dict:
     store = _get_prior_store_for_scope(user_id, project_id)
     normalized_base_path = _normalize_path(base_path)
-    if base_path and not store.folder_exists(normalized_base_path):
+    if base_path and not await asyncio.to_thread(store.folder_exists, normalized_base_path):
         raise HTTPException(status_code=404, detail="Folder not found")
-    scope = store.read_scope_metadata()
+    scope = await asyncio.to_thread(store.read_scope_metadata)
     priors_revision = int(scope["revision"])
     model_used = resolve_model(None, "cheap")
     ignore_ids = sorted({prior_id for prior_id in (ignore_prior_ids or []) if prior_id})
@@ -406,7 +398,8 @@ async def retrieve_priors_for_scope(
         _preview_log_context(context or ""),
     )
 
-    cached = get_cached_retrieval(
+    cached = await asyncio.to_thread(
+        DB.get_cached_retrieval,
         user_id=str(scope["user_id"]),
         project_id=str(scope["project_id"]),
         priors_revision=priors_revision,
@@ -434,8 +427,9 @@ async def retrieve_priors_for_scope(
     )
 
     retrieve_task = asyncio.create_task(
-        retrieve_relevant_priors(
-            store=store,
+        retrieve_relevant_priors_for_scope(
+            user_id=str(scope["user_id"]),
+            project_id=str(scope["project_id"]),
             context=context,
             base_path=normalized_base_path,
             ignore_prior_ids=ignore_prior_ids or [],
@@ -478,7 +472,8 @@ async def retrieve_priors_for_scope(
         [prior.id for prior in response.priors],
         len(response.rendered_priors_block),
     )
-    store_cached_retrieval(
+    await asyncio.to_thread(
+        DB.store_cached_retrieval,
         user_id=str(scope["user_id"]),
         project_id=str(scope["project_id"]),
         priors_revision=priors_revision,

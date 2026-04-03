@@ -43,11 +43,10 @@ def _clear_server_logs() -> None:
 
 
 def _clear_priors_caches() -> None:
-    from sovara.server.priors_backend.prefix_cache import clear_all_prefix_cache
-    from sovara.server.priors_backend.retrieval_cache import clear_all_retrieval_cache
+    from sovara.server.database_manager import DB
 
-    clear_all_prefix_cache()
-    clear_all_retrieval_cache()
+    DB.clear_all_prefix_cache()
+    DB.clear_all_retrieval_cache()
 
 
 def _stop_child_servers() -> None:

@@ -1,11 +1,15 @@
+import json
+import os
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from sovara.server.llm_backend import resolve_model
 from sovara.server.priors_backend.llm import lesson_retriever
-from sovara.server.priors_backend import prefix_cache
+from sovara.server.priors_backend.constants import PRIORS_BACKEND_HOME, SCOPE_METADATA_FILENAME
 from sovara.server.priors_backend.routes import router as priors_router
 from sovara.server.priors_backend.storage import PriorStore
+from sovara.server.database_manager import DB
 
 
 def _make_priors_test_client() -> TestClient:
@@ -50,6 +54,30 @@ def test_priors_scope_endpoint_uses_header_scope():
     assert response.json()["user_id"] == "scope-user"
     assert response.json()["project_id"] == "scope-project"
     assert response.json()["revision"] == 1
+
+
+def test_prior_store_migrates_legacy_scope_metadata_into_db():
+    user_id = "legacy-scope-user"
+    project_id = "legacy-scope-project"
+    base = os.path.join(PRIORS_BACKEND_HOME, user_id, project_id)
+    os.makedirs(base, exist_ok=True)
+    with open(os.path.join(base, SCOPE_METADATA_FILENAME), "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "user_id": user_id,
+                "project_id": project_id,
+                "revision": 7,
+                "updated_at": "2026-04-03T12:00:00+00:00",
+            },
+            handle,
+        )
+
+    store = PriorStore(user_id, project_id)
+    scope = store.read_scope_metadata()
+
+    assert scope["revision"] == 7
+    assert scope["updated_at"] == "2026-04-03T12:00:00+00:00"
+    assert DB.get_priors_scope(user_id=user_id, project_id=project_id)["revision"] == 7
 
 
 def test_priors_retrieve_endpoint_returns_selected_priors_and_scope_revision(monkeypatch):
@@ -195,7 +223,7 @@ def test_prefix_cache_is_scoped_by_model():
     clean_pairs = [{"key": "body.messages.0.content", "value": "Question"}]
     injected_pairs = [{"key": "body.messages.0.content", "value": "<sovara-priors>...</sovara-priors>\n\nQuestion"}]
 
-    prefix_cache.store_prefix(
+    DB.store_prefix_cache(
         user_id=user_id,
         project_id=project_id,
         base_path=base_path,
@@ -205,7 +233,7 @@ def test_prefix_cache_is_scoped_by_model():
         prior_ids=["p1"],
     )
 
-    assert prefix_cache.lookup_longest_prefix(
+    assert DB.lookup_prefix_cache(
         user_id=user_id,
         project_id=project_id,
         base_path=base_path,
@@ -217,7 +245,7 @@ def test_prefix_cache_is_scoped_by_model():
         "prior_ids": ["p1"],
     }
 
-    assert prefix_cache.lookup_longest_prefix(
+    assert DB.lookup_prefix_cache(
         user_id=user_id,
         project_id=project_id,
         base_path=base_path,
@@ -225,4 +253,4 @@ def test_prefix_cache_is_scoped_by_model():
         clean_pairs=clean_pairs,
     ) is None
 
-    prefix_cache.clear_scope_prefix_cache(user_id=user_id, project_id=project_id)
+    DB.clear_scope_prefix_cache(user_id=user_id, project_id=project_id)

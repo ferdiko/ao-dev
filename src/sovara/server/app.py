@@ -13,6 +13,7 @@ from sovara.common.logger import create_file_logger
 from sovara.common.constants import MAIN_SERVER_LOG, MAIN_SERVER_STARTUP_LOCK
 from sovara.server.state import ServerState
 from sovara.server.graph_analysis import inference_server
+from sovara.server.priors_backend.llm.lesson_retriever import shutdown_retrieval_process_pool
 
 logger = create_file_logger(MAIN_SERVER_LOG)
 
@@ -95,6 +96,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
+    shutdown_retrieval_process_pool()
     inference_server.stop()
 
 

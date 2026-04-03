@@ -306,6 +306,21 @@ def test_with_json_instruction_merges_into_existing_first_system_message():
     assert merged[1] == {"role": "user", "content": "hello"}
 
 
+def test_payload_issue_paths_detects_non_json_friendly_values():
+    issues = llm_backend._payload_issue_paths(
+        {
+            "messages": [
+                {"role": "user", "content": "ok"},
+                {"role": "user", "content": "bad\u0001text"},
+            ],
+            "temperature": float("nan"),
+        }
+    )
+
+    assert "$.messages[1].content=contains_1_control_chars" in issues
+    assert "$.temperature=non_finite_float(nan)" in issues
+
+
 def _make_internal_test_client() -> TestClient:
     app = FastAPI()
     app.include_router(internal_router)

@@ -1,11 +1,12 @@
 """
 SQLite database backend for workflow runs.
 
-Uses per-thread connections via threading.local() so readers can run concurrently
-under WAL mode. Writers still serialize at the SQLite level (WAL allows only one
-writer at a time), but that's SQLite's own locking — not a Python bottleneck.
+DB work is funneled through a small fixed read pool plus a single write lane.
+That keeps the number of long-lived SQLite connections bounded, which matters
+because each worker thread owns its own SQLite connection.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 import os
 import sqlite3
 import threading
@@ -14,13 +15,51 @@ from sovara.common.logger import logger
 from sovara.common.constants import SOVARA_DB_PATH
 
 
-# Per-thread connection storage. Each thread gets its own sqlite3.Connection,
-# avoiding the need for a global lock that serializes all DB operations.
+# Per-thread connection storage. Each worker thread owns one sqlite3.Connection.
 _local = threading.local()
 
 # One-time schema initialization
 _schema_initialized = False
 _init_lock = threading.Lock()
+
+# Dedicated DB executors. Using fixed worker pools bounds the number of threads
+# that can ever own SQLite connections in a process.
+_DB_READ_WORKERS = 8
+_executor_lock = threading.Lock()
+_read_executor: ThreadPoolExecutor | None = None
+_write_executor: ThreadPoolExecutor | None = None
+
+
+def _get_read_executor() -> ThreadPoolExecutor:
+    global _read_executor
+    if _read_executor is None:
+        with _executor_lock:
+            if _read_executor is None:
+                _read_executor = ThreadPoolExecutor(
+                    max_workers=_DB_READ_WORKERS,
+                    thread_name_prefix="sovara-db-read",
+                )
+    return _read_executor
+
+
+def _get_write_executor() -> ThreadPoolExecutor:
+    global _write_executor
+    if _write_executor is None:
+        with _executor_lock:
+            if _write_executor is None:
+                _write_executor = ThreadPoolExecutor(
+                    max_workers=1,
+                    thread_name_prefix="sovara-db-write",
+                )
+    return _write_executor
+
+
+def _run_read(fn, *args):
+    return _get_read_executor().submit(fn, *args).result()
+
+
+def _run_write(fn, *args):
+    return _get_write_executor().submit(fn, *args).result()
 
 
 def get_conn():
@@ -350,6 +389,17 @@ def _ensure_prior_schema(conn):
     conn.execute("DROP TABLE IF EXISTS lessons_applied")
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS priors_scopes (
+            user_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, project_id)
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS prior_retrievals (
             run_id TEXT NOT NULL,
             node_uuid TEXT NOT NULL,
@@ -375,36 +425,114 @@ def _ensure_prior_schema(conn):
         CREATE INDEX IF NOT EXISTS prior_retrievals_run_idx ON prior_retrievals(run_id)
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prefix_cache (
+            user_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            base_path TEXT NOT NULL,
+            model TEXT NOT NULL,
+            first_key TEXT NOT NULL,
+            pair_count INTEGER NOT NULL,
+            clean_pairs_json TEXT NOT NULL,
+            injected_pairs_json TEXT NOT NULL,
+            prior_ids_json TEXT NOT NULL DEFAULT '[]',
+            created_at TIMESTAMP DEFAULT (datetime('now')),
+            updated_at TIMESTAMP DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, project_id, base_path, model, clean_pairs_json)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS prefix_cache_scope_idx
+        ON prefix_cache(user_id, project_id, base_path, model, first_key, pair_count DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS retrieval_cache (
+            user_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            priors_revision INTEGER NOT NULL,
+            base_path TEXT NOT NULL,
+            model TEXT NOT NULL,
+            context_hash TEXT NOT NULL,
+            ignore_prior_ids_json TEXT NOT NULL,
+            response_json TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT (datetime('now')),
+            updated_at TIMESTAMP DEFAULT (datetime('now')),
+            PRIMARY KEY (
+                user_id,
+                project_id,
+                priors_revision,
+                base_path,
+                model,
+                context_hash,
+                ignore_prior_ids_json
+            )
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS retrieval_cache_scope_idx
+        ON retrieval_cache(user_id, project_id, priors_revision)
+        """
+    )
     if dropped_legacy_lessons_applied:
         logger.info("Dropped legacy lessons_applied table")
     conn.commit()
 
 
 def query_one(sql, params=()):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(sql, params)
-    return c.fetchone()
+    def _query_one():
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute(sql, params)
+        return c.fetchone()
+
+    return _run_read(_query_one)
 
 
 def query_all(sql, params=()):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(sql, params)
-    return c.fetchall()
+    def _query_all():
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute(sql, params)
+        return c.fetchall()
+
+    return _run_read(_query_all)
 
 
 def execute(sql, params=()):
-    """Execute SQL (each thread uses its own connection)."""
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(sql, params)
-    conn.commit()
-    return c.lastrowid
+    """Execute SQL through the dedicated write lane."""
+
+    def _execute():
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute(sql, params)
+        conn.commit()
+        return c.lastrowid
+
+    return _run_write(_execute)
 
 
 def clear_connections():
-    """Close the calling thread's connection."""
+    """Tear down DB executors so worker-owned connections can be released."""
+    global _read_executor, _write_executor
+
+    with _executor_lock:
+        read_executor = _read_executor
+        write_executor = _write_executor
+        _read_executor = None
+        _write_executor = None
+
+    for executor in (read_executor, write_executor):
+        if executor is None:
+            continue
+        executor.shutdown(wait=True, cancel_futures=False)
+
     conn = getattr(_local, "conn", None)
     if conn:
         try:
@@ -413,7 +541,6 @@ def clear_connections():
             logger.warning(f"Error closing SQLite connection: {e}")
         finally:
             _local.conn = None
-        logger.debug("Closed thread-local SQLite connection")
 
 
 def upsert_user_query(user_id, full_name, email):
@@ -721,15 +848,18 @@ def get_tags_for_runs_query(run_ids):
 
 def replace_run_tags_query(run_id, tag_ids):
     """Replace the complete tag assignment set for a run."""
-    conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM run_tags WHERE run_id=?", (run_id,))
-    if tag_ids:
-        cursor.executemany(
-            "INSERT INTO run_tags (run_id, tag_id) VALUES (?, ?)",
-            [(run_id, tag_id) for tag_id in tag_ids],
-        )
-    conn.commit()
+    def _replace():
+        conn = get_conn()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM run_tags WHERE run_id=?", (run_id,))
+        if tag_ids:
+            cursor.executemany(
+                "INSERT INTO run_tags (run_id, tag_id) VALUES (?, ?)",
+                [(run_id, tag_id) for tag_id in tag_ids],
+            )
+        conn.commit()
+
+    _run_write(_replace)
 
 
 def get_project_metric_kinds_query(project_id):
@@ -1179,6 +1309,7 @@ def delete_project_query(project_id):
     """Delete a project and all associated runs, llm_calls, prior_retrievals, priors_applied, and locations."""
     runs = query_all("SELECT run_id FROM runs WHERE project_id=?", (project_id,))
     _delete_runs_data([run["run_id"] for run in runs])
+    execute("DELETE FROM priors_scopes WHERE project_id=?", (project_id,))
     execute("DELETE FROM project_tags WHERE project_id=?", (project_id,))
     execute("DELETE FROM user_project_locations WHERE project_id=?", (project_id,))
     execute("DELETE FROM projects WHERE project_id=?", (project_id,))
@@ -1206,6 +1337,7 @@ def delete_user_query(user_id):
             delete_project_query(pid)
     runs = query_all("SELECT run_id FROM runs WHERE user_id=?", (user_id,))
     _delete_runs_data([run["run_id"] for run in runs])
+    execute("DELETE FROM priors_scopes WHERE user_id=?", (user_id,))
     execute("DELETE FROM user_project_locations WHERE user_id=?", (user_id,))
     execute("DELETE FROM users WHERE user_id=?", (user_id,))
 
@@ -1397,6 +1529,226 @@ def upsert_prior_retrieval_query(
             error_message,
         ),
     )
+
+
+# ============================================================
+# Priors scope metadata
+# ============================================================
+
+
+def get_priors_scope_query(user_id, project_id):
+    return query_one(
+        """
+        SELECT user_id, project_id, revision, updated_at
+        FROM priors_scopes
+        WHERE user_id=? AND project_id=?
+        """,
+        (user_id, project_id),
+    )
+
+
+def ensure_priors_scope_query(user_id, project_id, revision, updated_at):
+    execute(
+        """
+        INSERT OR IGNORE INTO priors_scopes (user_id, project_id, revision, updated_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (user_id, project_id, revision, updated_at),
+    )
+    return get_priors_scope_query(user_id, project_id)
+
+
+def bump_priors_scope_revision_query(user_id, project_id, updated_at):
+    def _bump():
+        conn = get_conn()
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO priors_scopes (user_id, project_id, revision, updated_at)
+            VALUES (?, ?, 1, ?)
+            """,
+            (user_id, project_id, updated_at),
+        )
+        conn.execute(
+            """
+            UPDATE priors_scopes
+            SET revision=revision+1, updated_at=?
+            WHERE user_id=? AND project_id=?
+            """,
+            (updated_at, user_id, project_id),
+        )
+        row = conn.execute(
+            """
+            SELECT user_id, project_id, revision, updated_at
+            FROM priors_scopes
+            WHERE user_id=? AND project_id=?
+            """,
+            (user_id, project_id),
+        ).fetchone()
+        conn.commit()
+        return row
+
+    return _run_write(_bump)
+
+
+# ============================================================
+# Priors cache queries
+# ============================================================
+
+
+def get_prefix_cache_candidates_query(user_id, project_id, base_path, model, first_key, pair_count_limit):
+    return query_all(
+        """
+        SELECT pair_count, clean_pairs_json, injected_pairs_json, prior_ids_json
+        FROM prefix_cache
+        WHERE user_id=?
+          AND project_id=?
+          AND base_path=?
+          AND model=?
+          AND first_key=?
+          AND pair_count<=?
+        ORDER BY pair_count DESC
+        """,
+        (user_id, project_id, base_path, model, first_key, pair_count_limit),
+    )
+
+
+def upsert_prefix_cache_query(
+    user_id,
+    project_id,
+    base_path,
+    model,
+    first_key,
+    pair_count,
+    clean_pairs_json,
+    injected_pairs_json,
+    prior_ids_json,
+):
+    execute(
+        """
+        INSERT INTO prefix_cache (
+            user_id,
+            project_id,
+            base_path,
+            model,
+            first_key,
+            pair_count,
+            clean_pairs_json,
+            injected_pairs_json,
+            prior_ids_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (user_id, project_id, base_path, model, clean_pairs_json)
+        DO UPDATE SET
+            injected_pairs_json=excluded.injected_pairs_json,
+            prior_ids_json=excluded.prior_ids_json,
+            updated_at=datetime('now')
+        """,
+        (
+            user_id,
+            project_id,
+            base_path,
+            model,
+            first_key,
+            pair_count,
+            clean_pairs_json,
+            injected_pairs_json,
+            prior_ids_json,
+        ),
+    )
+
+
+def clear_scope_prefix_cache_query(user_id, project_id):
+    execute("DELETE FROM prefix_cache WHERE user_id=? AND project_id=?", (user_id, project_id))
+
+
+def clear_all_prefix_cache_query():
+    execute("DELETE FROM prefix_cache")
+
+
+def get_cached_retrieval_query(
+    user_id,
+    project_id,
+    priors_revision,
+    base_path,
+    model,
+    context_hash,
+    ignore_prior_ids_json,
+):
+    return query_one(
+        """
+        SELECT response_json
+        FROM retrieval_cache
+        WHERE user_id=?
+          AND project_id=?
+          AND priors_revision=?
+          AND base_path=?
+          AND model=?
+          AND context_hash=?
+          AND ignore_prior_ids_json=?
+        """,
+        (
+            user_id,
+            project_id,
+            priors_revision,
+            base_path,
+            model,
+            context_hash,
+            ignore_prior_ids_json,
+        ),
+    )
+
+
+def upsert_retrieval_cache_query(
+    user_id,
+    project_id,
+    priors_revision,
+    base_path,
+    model,
+    context_hash,
+    ignore_prior_ids_json,
+    response_json,
+):
+    execute(
+        """
+        INSERT INTO retrieval_cache (
+            user_id,
+            project_id,
+            priors_revision,
+            base_path,
+            model,
+            context_hash,
+            ignore_prior_ids_json,
+            response_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (
+            user_id,
+            project_id,
+            priors_revision,
+            base_path,
+            model,
+            context_hash,
+            ignore_prior_ids_json
+        )
+        DO UPDATE SET
+            response_json=excluded.response_json,
+            updated_at=datetime('now')
+        """,
+        (
+            user_id,
+            project_id,
+            priors_revision,
+            base_path,
+            model,
+            context_hash,
+            ignore_prior_ids_json,
+            response_json,
+        ),
+    )
+
+
+def clear_all_retrieval_cache_query():
+    execute("DELETE FROM retrieval_cache")
 
 
 # ============================================================

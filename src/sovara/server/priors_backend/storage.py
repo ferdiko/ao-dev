@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sovara.server.priors_backend.constants import PRIORS_BACKEND_HOME, SCOPE_METADATA_FILENAME
+from sovara.server.database_manager import DB
 
 
 def _utc_now_iso() -> str:
@@ -49,42 +50,34 @@ class PriorStore:
     def scope_metadata_path(self) -> str:
         return os.path.join(self.base, SCOPE_METADATA_FILENAME)
 
-    def _ensure_scope_metadata(self) -> dict:
-        if os.path.exists(self.scope_metadata_path):
-            return self.read_scope_metadata()
-        data = {
-            "user_id": self.user_id,
-            "project_id": self.project_id,
-            "revision": 1,
-            "updated_at": _utc_now_iso(),
-        }
-        self._write_scope_metadata(data)
-        return data
-
-    def _write_scope_metadata(self, data: dict) -> None:
-        os.makedirs(self.base, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=self.base, suffix=".scope.tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(data, handle, ensure_ascii=False, indent=2)
-            os.replace(tmp, self.scope_metadata_path)
-        except BaseException:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
-
-    def read_scope_metadata(self) -> dict:
+    def _read_legacy_scope_metadata(self) -> dict | None:
+        if not os.path.exists(self.scope_metadata_path):
+            return None
         with open(self.scope_metadata_path, encoding="utf-8") as handle:
             return json.load(handle)
 
+    def _ensure_scope_metadata(self) -> dict:
+        scope = DB.get_priors_scope(user_id=self.user_id, project_id=self.project_id)
+        if scope is not None:
+            return scope
+
+        legacy = self._read_legacy_scope_metadata()
+        return DB.ensure_priors_scope(
+            user_id=self.user_id,
+            project_id=self.project_id,
+            revision=int((legacy or {}).get("revision", 1) or 1),
+            updated_at=str((legacy or {}).get("updated_at") or _utc_now_iso()),
+        )
+
+    def read_scope_metadata(self) -> dict:
+        return self._ensure_scope_metadata()
+
     def bump_scope_revision(self) -> dict:
-        data = self.read_scope_metadata()
-        data["revision"] = int(data.get("revision", 0)) + 1
-        data["updated_at"] = _utc_now_iso()
-        self._write_scope_metadata(data)
-        return data
+        return DB.bump_priors_scope_revision(
+            user_id=self.user_id,
+            project_id=self.project_id,
+            updated_at=_utc_now_iso(),
+        )
 
     def _prior_path(self, path: str, prior_id: str) -> str:
         return os.path.join(self.base, _normalize_path(path), f"{prior_id}.json")
