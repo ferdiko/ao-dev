@@ -72,7 +72,7 @@ def ensure_user_configured() -> dict:
     Checks SOVARA_HOME/.user_id for UUID, then fetches from DB. If either is missing,
     prompts the user and writes both the .user_id file and DB record.
     """
-    from sovara.server.database_manager import DB
+    from sovara.server.database import DB
 
     user_id = read_user_id()
     if user_id:

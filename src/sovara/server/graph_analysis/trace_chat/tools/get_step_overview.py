@@ -2,7 +2,7 @@
 
 import re
 
-from sovara.common.constants import INFERENCE_SERVER_LOG, TRACE_CHAT_SCATTER_BUDGET_SECONDS
+from sovara.common.constants import INFERENCE_SERVER_LOG, SCATTER_BUDGET
 from sovara.common.logger import create_file_logger
 
 from ....llm_backend import infer_text, scatter_execute
@@ -187,7 +187,7 @@ def _summarize_content_items(
             "get_step_overview segment summaries timed out run_id=%s step=%d after %.1fs fallback=%d items=%s",
             run_id,
             step_id,
-            TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+            SCATTER_BUDGET,
             len(fallback_items),
             fallback_items,
         )
@@ -196,7 +196,7 @@ def _summarize_content_items(
         indexed_items,
         _run_one,
         max_workers=max_workers,
-        budget_seconds=TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+        budget_seconds=SCATTER_BUDGET,
         cancel_event=cancel_event,
         on_exception=_on_summary_exception,
         on_timeout=_on_summary_timeout,

@@ -10,7 +10,7 @@ from typing import Optional
 
 from sovara.server.app import get_state
 from sovara.server.state import ServerState, logger
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 from sovara.common.custom_metrics import MetricsPayload
 from sovara.server.handlers.runner_handlers import (
     handle_add_node,

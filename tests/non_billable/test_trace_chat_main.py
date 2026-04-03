@@ -58,9 +58,10 @@ def test_start_prefetch_logs_requested_start(monkeypatch):
             assert max_workers == 1
             self.future = DummyFuture()
 
-        def submit(self, fn, trace):
+        def submit(self, fn, trace, step_budget_seconds):
             assert fn is trace_chat_main._generate_summary
             assert trace.run_id == "run-1"
+            assert step_budget_seconds == trace_chat_main.SCATTER_SUMMARY_BUDGET
             return self.future
 
     class FakeLogger:

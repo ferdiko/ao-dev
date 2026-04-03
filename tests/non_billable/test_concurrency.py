@@ -4,7 +4,7 @@ import threading
 import time
 from sovara.runner import context_manager
 from sovara.runner import string_matching
-from sovara.server.database_backends import sqlite
+from sovara.server.database import sqlite
 
 
 class SlowSet(set):
@@ -133,7 +133,7 @@ class TestOccurrenceCounter:
         Without the occurrence counter, all threads hit offset 0 and get
         the same node_uuid. With it, each gets a unique offset (0-4).
         """
-        from sovara.server.database_manager import DB
+        from sovara.server.database import DB
 
         run_id = "test-occurrence"
         input_hash = "deadbeef"
@@ -146,7 +146,7 @@ class TestOccurrenceCounter:
                 (run_id, input_hash, f"node-{i}", "test"),
             )
 
-        DB._occurrence_counters.clear()
+        DB.reset_occurrence_counters()
 
         node_uuids = []
         lock = threading.Lock()
@@ -154,7 +154,7 @@ class TestOccurrenceCounter:
 
         def lookup():
             barrier.wait()
-            occurrence = DB._next_occurrence(run_id, input_hash)
+            occurrence = DB.next_cache_occurrence(run_id, input_hash)
             row = sqlite.get_llm_call_by_run_and_hash_query(
                 run_id, input_hash, offset=occurrence,
             )
@@ -169,7 +169,7 @@ class TestOccurrenceCounter:
 
         # Clean up
         sqlite.execute("DELETE FROM llm_calls WHERE run_id=?", (run_id,))
-        DB._occurrence_counters.clear()
+        DB.reset_occurrence_counters()
 
         assert len(node_uuids) == 5
         assert None not in node_uuids, f"Some lookups got no row: {node_uuids}"

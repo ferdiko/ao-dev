@@ -23,7 +23,7 @@ from sovara.common.constants import (
 )
 from sovara.cli.so_server import launch_daemon_server
 from sovara.common.project import ensure_project_configured
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 from sovara.runner.context_manager import (
     clear_run_timer,
     reset_current_run_timer,
@@ -379,7 +379,7 @@ class AgentRunner:
             if self.restart_event.is_set():
                 logger.info("[AgentRunner] Restart requested, rerunning script...")
                 self.restart_event.clear()
-                DB._occurrence_counters.clear()
+                DB.reset_occurrence_counters()
                 reset_current_run_timer()
 
         return exit_code

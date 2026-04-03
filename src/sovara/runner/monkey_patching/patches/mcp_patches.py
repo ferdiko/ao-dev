@@ -2,7 +2,7 @@ from functools import wraps
 from sovara.runner.monkey_patching.patching_utils import get_input_dict, send_graph_node_and_edges
 from sovara.runner.string_matching import find_source_nodes, store_output_strings
 from sovara.runner.context_manager import get_run_id
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 from sovara.common.logger import logger
 
 

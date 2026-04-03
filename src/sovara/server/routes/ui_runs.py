@@ -6,7 +6,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from sovara.common.custom_metrics import MetricFilter
 from sovara.server.app import get_state
-from sovara.server.database_manager import DB, BadRequestError, ResourceNotFoundError
+from sovara.server.database import DB, BadRequestError, ResourceNotFoundError
 from sovara.server.graph_models import RunGraph
 from sovara.server.handlers.cli_handlers import build_probe_response, prepare_edit_rerun
 from sovara.server.handlers.ui_handlers import (
@@ -277,10 +277,10 @@ def get_run_detail(run_id: str, state: ServerState = Depends(get_state)):
         "run_id": run_id,
         "name": row["name"] or "",
         "timestamp": row["timestamp"] or "",
-        "runtime_seconds": DB._normalize_runtime_seconds(row["runtime_seconds"]),
-        "active_runtime_seconds": DB._normalize_runtime_seconds(row["active_runtime_seconds"]),
-        "custom_metrics": DB._parse_custom_metrics(row["custom_metrics"]),
-        "thumb_label": DB._normalize_thumb_label(row["thumb_label"]),
+        "runtime_seconds": row["runtime_seconds"],
+        "active_runtime_seconds": row["active_runtime_seconds"],
+        "custom_metrics": row["custom_metrics"],
+        "thumb_label": row["thumb_label"],
         "tags": row.get("tags", []),
         "notes": row["notes"] or "",
         "log": row["log"] or "",

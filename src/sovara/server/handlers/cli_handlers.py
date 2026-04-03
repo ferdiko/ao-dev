@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from flatten_json import flatten as flatten_complete, unflatten_list
 
 from sovara.runner.monkey_patching.api_parser import json_str_to_api_obj, merge_filtered_into_raw
-from sovara.server.database_manager import DB, BadRequestError, ResourceNotFoundError
+from sovara.server.database import DB, BadRequestError, ResourceNotFoundError
 from sovara.server.graph_models import RunGraph
 from sovara.server.handlers.ui_handlers import handle_edit_input, handle_edit_output
 
@@ -265,8 +265,8 @@ def build_probe_response(
         "name": run["name"],
         "status": _run_status(state, resolved_run_id),
         "timestamp": format_timestamp(run["timestamp"]),
-        "custom_metrics": DB._parse_custom_metrics(run["custom_metrics"]),
-        "thumb_label": DB._normalize_thumb_label(run["thumb_label"]),
+        "custom_metrics": run["custom_metrics"],
+        "thumb_label": run["thumb_label"],
         "version_date": run["version_date"],
         "node_count": len(graph.nodes),
         "nodes": [

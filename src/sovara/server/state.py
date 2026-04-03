@@ -23,7 +23,7 @@ from sovara.common.constants import (
     RUN_ORPHAN_TIMEOUT,
     SOVARA_GIT_DIR,
 )
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 from sovara.server.graph_models import RunGraph
 
 logger = create_file_logger(MAIN_SERVER_LOG)
@@ -208,13 +208,13 @@ class ServerState:
             "run_id": run_id,
             "status": status,
             "timestamp": timestamp,
-            "runtime_seconds": DB._normalize_runtime_seconds(row_dict["runtime_seconds"]),
-            "active_runtime_seconds": DB._normalize_runtime_seconds(row_dict["active_runtime_seconds"]),
+            "runtime_seconds": row_dict["runtime_seconds"],
+            "active_runtime_seconds": row_dict["active_runtime_seconds"],
             "color_preview": color_preview,
             "version_date": row_dict["version_date"],
             "name": row_dict["name"],
-            "custom_metrics": DB._parse_custom_metrics(row_dict["custom_metrics"]),
-            "thumb_label": DB._normalize_thumb_label(row_dict["thumb_label"]),
+            "custom_metrics": row_dict["custom_metrics"],
+            "thumb_label": row_dict["thumb_label"],
             "tags": row_dict.get("tags", []),
             "project_id": row_dict.get("project_id") or (run.project_id if run else None),
         }
@@ -315,7 +315,7 @@ class ServerState:
         row = DB.get_run_detail(run_id)
         if row is None:
             return None
-        return DB._normalize_runtime_seconds(row["active_runtime_seconds"])
+        return row["active_runtime_seconds"]
 
     def checkpoint_run_runtime(self, run_id: str) -> float | None:
         """Persist the current runtime checkpoint for a live run."""
@@ -423,7 +423,7 @@ class ServerState:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
 
-        return DB._serialize_timestamp(dt.astimezone(timezone.utc))
+        return DB.serialize_timestamp(dt.astimezone(timezone.utc))
 
     def _get_head_commit_timestamp(self, project_id: str, project_root: str) -> Optional[str]:
         result = self._run_git(project_id, project_root, "log", "-1", "--format=%cI", "HEAD")

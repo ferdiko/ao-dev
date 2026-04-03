@@ -6,7 +6,7 @@ import time
 import subprocess
 import re
 from dataclasses import dataclass
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 
 
 @dataclass

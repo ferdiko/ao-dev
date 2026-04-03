@@ -12,7 +12,7 @@ from sovara.common.constants import PRIORS_SERVER_URL, SOVARA_CONFIG
 from sovara.common.project import delete_project_configs
 from sovara.common.user import read_user_id, write_user_id
 from sovara.server.app import get_state
-from sovara.server.database_manager import DB, BadRequestError
+from sovara.server.database import DB, BadRequestError
 from sovara.server.llm_settings import normalize_user_llm_settings_row
 from sovara.server.state import ServerState
 

@@ -30,7 +30,7 @@ os.environ.setdefault("PYTHON_PORT", str(_default_test_port()))
 os.environ["_SOVARA_TESTING"] = "1"
 
 from sovara.common.constants import TEST_USER_ID, TEST_PROJECT_ID
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 
 
 @pytest.fixture(autouse=True, scope="session")

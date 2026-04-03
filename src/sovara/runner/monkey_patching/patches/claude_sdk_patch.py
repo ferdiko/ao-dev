@@ -13,7 +13,7 @@ from typing import List, Dict, Any
 from sovara.runner.monkey_patching.patching_utils import send_graph_node_and_edges, capture_stack_trace
 from sovara.runner.string_matching import tokenize, split_html_content, is_content_match
 from sovara.runner.context_manager import get_run_id
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 from sovara.common.logger import logger
 
 

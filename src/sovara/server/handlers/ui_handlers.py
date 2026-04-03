@@ -4,7 +4,7 @@ These operate on ServerState and have no socket dependencies.
 Broadcasting is handled by the route/events layer after calling these handlers.
 """
 
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 from sovara.server.graph_models import RunGraph
 from sovara.server.handlers.handler_utils import logger
 

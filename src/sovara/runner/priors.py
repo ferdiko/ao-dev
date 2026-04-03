@@ -61,7 +61,7 @@ def _track_priors(prior_ids: List[str]) -> None:
 
         run_id = get_run_id()
         if run_id:
-            from sovara.server.database_manager import DB
+            from sovara.server.database import DB
 
             for prior_id in prior_ids:
                 DB.add_prior_applied(prior_id, run_id)

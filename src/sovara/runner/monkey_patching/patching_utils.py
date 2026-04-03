@@ -9,7 +9,6 @@ from typing import Optional, Dict, Any
 from sovara.runner.context_manager import get_run_id
 from sovara.common.constants import (
     CERTAINTY_UNKNOWN,
-    COMPILED_ENDPOINT_PATTERNS,
     COMPILED_URL_PATTERN_TO_NODE_NAME,
     NO_LABEL,
     COMPILED_MODEL_NAME_PATTERNS,
@@ -18,6 +17,7 @@ from sovara.common.constants import (
 )
 from sovara.common.utils import http_post
 from sovara.common.logger import logger
+from sovara.runner.monkey_patching.endpoint_whitelist import COMPILED_ENDPOINT_PATTERNS
 
 
 # ===========================================================
@@ -218,7 +218,7 @@ def capture_stack_trace() -> str:
 
     Removes sovara infrastructure frames:
     - Beginning: everything up to and including sovara/runner/agent_runner.py
-    - End: everything from and including sovara/server/database_manager.py
+    - End: everything from and including sovara/server/database/
     - Middle: any frames inside sovara/ (unless cwd is sovara itself)
     """
     stack_lines = traceback.format_stack()
@@ -229,10 +229,10 @@ def capture_stack_trace() -> str:
         if "sovara/runner/agent_runner.py" in line or "sovara\\runner\\agent_runner.py" in line:
             start_idx = i + 1  # Start after this frame
 
-    # Find the end index: stop before database_manager.py
+    # Find the end index: stop before the database package
     end_idx = len(stack_lines)
     for i, line in enumerate(stack_lines):
-        if "sovara/server/database_manager.py" in line or "sovara\\server\\database_manager.py" in line:
+        if "sovara/server/database/" in line or "sovara\\server\\database\\" in line:
             end_idx = i
             break
 

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 
 
 def _create_project() -> str:

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sovara.common.constants import RUN_ORPHAN_TIMEOUT
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 from sovara.server.routes.ui import (
     RestartRequest,
     get_run_detail,

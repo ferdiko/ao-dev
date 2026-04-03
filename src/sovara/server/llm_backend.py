@@ -3,10 +3,10 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Callable, Sequence, TypeVar
 
 import litellm
-from sovara.common.constants import INFERENCE_SERVER_LOG, TRACE_CHAT_SCATTER_BUDGET_SECONDS
+from sovara.common.constants import INFERENCE_SERVER_LOG, SCATTER_BUDGET
 from sovara.common.logger import create_file_logger
 from sovara.common.user import read_user_id
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 from sovara.server.llm_settings import build_litellm_request_config
 from sovara.server.graph_analysis.trace_chat.cancel import TraceChatCancelled, raise_if_cancelled
 
@@ -55,6 +55,7 @@ def infer(messages, tier="expensive", **kwargs):
     request_config, provider = _resolve_request_config(tier)
     kwargs = _sanitize_provider_kwargs(kwargs, provider)
     kwargs.setdefault("temperature", 0)
+    kwargs["max_retries"] = 0
     kwargs.setdefault("model", request_config["model"])
     if "api_base" in request_config:
         kwargs.setdefault("api_base", request_config["api_base"])
@@ -131,7 +132,7 @@ def scatter_execute(
     run_one: Callable[[T], R],
     *,
     max_workers: int | None = None,
-    budget_seconds: float = TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+    budget_seconds: float = SCATTER_BUDGET,
     on_result: Callable[[T, R], None] | None = None,
     on_exception: Callable[[T, Exception], None] | None = None,
     on_timeout: Callable[[list[T]], None] | None = None,

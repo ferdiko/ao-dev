@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timezone
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 
 
 def cleanup_test_db():

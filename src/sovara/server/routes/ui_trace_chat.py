@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from sovara.server.app import get_state
-from sovara.server.database_manager import DB, BadRequestError, ResourceNotFoundError
+from sovara.server.database import DB, BadRequestError, ResourceNotFoundError
 from sovara.server.state import ServerState, logger
 
 from .ui_common import request_error_response

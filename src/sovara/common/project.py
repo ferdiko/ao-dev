@@ -127,7 +127,7 @@ def ensure_project_configured(user_id: str, script_dir: str) -> dict:
     Returns dict with project_id, name, description, project_root.
     """
     from sovara.common.logger import logger
-    from sovara.server.database_manager import DB
+    from sovara.server.database import DB
 
     project_root = find_project_root(script_dir)
 

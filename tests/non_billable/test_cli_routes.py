@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi.responses import JSONResponse
 
 from sovara.common.constants import TEST_PROJECT_ID, TEST_USER_ID
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 from sovara.server.graph_models import RunGraph
 from sovara.server.handlers.ui_handlers import handle_edit_input
 from sovara.server.routes.ui import PrepareEditRerunRequest, prepare_run_edit_rerun, probe_run
@@ -44,7 +44,7 @@ def _seed_run(
 
     graph_nodes = []
     for index, node_uuid in enumerate(node_uuids, start=1):
-        DB.backend.insert_llm_call_with_output_query(
+        DB.insert_llm_call_with_output(
             run_id,
             json.dumps({"raw": input_to_show, "to_show": input_to_show}),
             f"seeded-hash-{index}",
@@ -97,7 +97,7 @@ def test_handle_edit_input_updates_persisted_graph_when_run_is_not_loaded():
         assert node is not None
         assert json.loads(node.input)["body"]["messages"][0]["content"] == "new prompt"
     finally:
-        DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
+        DB.delete_runs_by_ids([run_id], user_id=None)
 
 
 def test_probe_run_prefers_input_overwrite():
@@ -131,7 +131,7 @@ def test_probe_run_prefers_input_overwrite():
         assert response["has_input_overwrite"] is True
         assert response["input"]["body.messages.0.content"] == "edited prompt"
     finally:
-        DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
+        DB.delete_runs_by_ids([run_id], user_id=None)
 
 
 def test_set_input_overwrite_detects_empty_container_shape_changes():
@@ -163,7 +163,7 @@ def test_set_input_overwrite_detects_empty_container_shape_changes():
             }
         }
     finally:
-        DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
+        DB.delete_runs_by_ids([run_id], user_id=None)
 
 
 def test_prepare_edit_rerun_preserves_run_scope_and_exec_context():
@@ -209,7 +209,7 @@ def test_prepare_edit_rerun_preserves_run_scope_and_exec_context():
         cleanup_ids = [run_id]
         if "new_run_id" in locals():
             cleanup_ids.append(new_run_id)
-        DB.backend.delete_runs_by_ids_query(cleanup_ids, user_id=None)
+        DB.delete_runs_by_ids(cleanup_ids, user_id=None)
 
 
 def test_probe_run_adds_hint_when_key_regex_matches_nothing():
@@ -232,7 +232,7 @@ def test_probe_run_adds_hint_when_key_regex_matches_nothing():
         assert response["output"] == {}
         assert "Re-run probe with --preview on this node" in response["hint"]
     finally:
-        DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
+        DB.delete_runs_by_ids([run_id], user_id=None)
 
 
 def test_probe_run_resolves_unambiguous_run_and_node_prefixes():
@@ -257,7 +257,7 @@ def test_probe_run_resolves_unambiguous_run_and_node_prefixes():
         assert response["run_id"] == run_id
         assert response["node_uuid"] == node_uuids[0]
     finally:
-        DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
+        DB.delete_runs_by_ids([run_id], user_id=None)
 
 
 def test_probe_run_rejects_ambiguous_run_prefix():
@@ -284,7 +284,7 @@ def test_probe_run_rejects_ambiguous_run_prefix():
         assert response.status_code == 400
         assert "Ambiguous Run ID prefix 'deadbeef'" in response.body.decode()
     finally:
-        DB.backend.delete_runs_by_ids_query(cleanup_ids, user_id=None)
+        DB.delete_runs_by_ids(cleanup_ids, user_id=None)
 
 
 def test_prepare_edit_rerun_rejects_ambiguous_node_prefix():
@@ -314,4 +314,4 @@ def test_prepare_edit_rerun_rejects_ambiguous_node_prefix():
         assert response.status_code == 400
         assert "Ambiguous Node UUID prefix 'feedface'" in response.body.decode()
     finally:
-        DB.backend.delete_runs_by_ids_query([run_id], user_id=None)
+        DB.delete_runs_by_ids([run_id], user_id=None)

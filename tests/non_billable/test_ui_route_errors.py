@@ -9,7 +9,7 @@ import sovara.server.routes.ui as ui_module
 from fastapi import HTTPException
 
 from sovara.common.constants import PRIORS_SERVER_URL, SOVARA_CONFIG
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 from sovara.server.routes.ui import (
     CreateProjectTagRequest,
     EditInputRequest,

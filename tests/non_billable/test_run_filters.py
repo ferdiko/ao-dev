@@ -2,7 +2,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 
 
 def _create_project() -> str:

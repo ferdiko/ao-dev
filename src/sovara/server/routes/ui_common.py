@@ -2,7 +2,7 @@
 
 from fastapi.responses import JSONResponse
 
-from sovara.server.database_manager import ResourceNotFoundError
+from sovara.server.database import ResourceNotFoundError
 
 
 def request_error_response(exc: Exception) -> JSONResponse:

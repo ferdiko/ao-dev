@@ -2,7 +2,7 @@ import argparse
 import os
 from sovara.common.user import read_user_id, setup_user_interactive
 from sovara.common.project import find_project_root, read_project_id, setup_project_interactive
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 
 
 from sovara.common.constants import WELCOME_ART

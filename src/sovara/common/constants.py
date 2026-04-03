@@ -46,7 +46,11 @@ MESSAGE_POLL_INTERVAL = 0.1
 SERVER_INACTIVITY_TIMEOUT = 1200  # Shutdown server after 20 min of inactivity
 RUN_ORPHAN_TIMEOUT = 5  # Seconds before a run without SSE is considered dead
 SHUTDOWN_WAIT = 2
-TRACE_CHAT_SCATTER_BUDGET_SECONDS = 5.0
+
+# Trace chat
+SCATTER_BUDGET = 20.0
+SCATTER_SUMMARY_BUDGET = 3 * SCATTER_BUDGET
+# seconds
 
 # Run meta data.
 DEFAULT_NOTE = "Take notes."
@@ -138,102 +142,6 @@ os.makedirs(ATTACHMENT_CACHE, exist_ok=True)
 # Computed from this file's location: sovara/common/constants.py -> sovara/
 # Works for both editable installs (src/sovara/) and pip installs (site-packages/sovara/)
 SOVARA_INSTALL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# Whitelist patterns as (url_regex, path_regex) tuples.
-# A request matches if BOTH regexes match (use ".*" for "any").
-# Note: path may include query params (e.g., /search?q=...), so don't use $ anchor.
-WHITELIST_ENDPOINT_PATTERNS = [
-    # LLM APIs (any URL, match by path)
-    (r".*", r"/v1/messages"),  # Anthropic
-    (r".*", r"/v1/responses"),  # OpenAI
-    (r".*", r"/v1/chat/completions"),  # OpenAI
-    (r".*", r"models/[^/]+:generateContent"),  # Google GenAI
-    (r".*", r"models/[^/]+:streamGenerateContent"),  # Google GenAI
-    (r".*", r"/api/chat"),  # Ollama
-    (r".*", r"/api/generate"),  # Ollama
-    (r".*", r"/api/embed"),  # Ollama embeddings (single)
-    (r".*", r"/api/embeddings"),  # Ollama embeddings (batch)
-    # CrewAI Tool APIs
-    (r"serper\.dev", r".*"),  # All Serper tools (search, scrape, etc.)
-    (r".*api\.search\.brave\.com", r"/res/v1/web/search"),  # BraveSearchTool
-    (r".*r\.jina\.ai", r".*"),  # JinaScrapeWebsiteTool (any path, URL contains target)
-    (r".*api\.brightdata\.com", r"/request"),  # BrightDataSerpTool, BrightDataUnlockerTool
-    (r".*api\.patronus\.ai", r"/v1/evaluate"),  # PatronusEvalTool
-    (r".*api\.contextual\.ai", r"/v1/datastores/"),  # ContextualAI query
-    (r".*api\.contextual\.ai", r"/v1/parse"),  # ContextualAI parse
-    (r".*api\.contextual\.ai", r"/v1/rerank"),  # ContextualAI rerank
-    (r".*api\.parallel\.ai", r"/v1beta/search"),  # ParallelSearchTool
-]
-COMPILED_ENDPOINT_PATTERNS = [
-    (re.compile(url_pat), re.compile(path_pat)) for url_pat, path_pat in WHITELIST_ENDPOINT_PATTERNS
-]
-
-# List of regexes that exclude patterns from being displayed in edit IO
-EDIT_IO_EXCLUDE_PATTERNS = [
-    r"^_.*",
-    # Top-level fields
-    r"^max_tokens$",
-    r"^stream$",
-    r"^temperature$",
-    # content.* fields (metadata, usage, system info)
-    r"^content\.id$",
-    r"^content\.type$",
-    r"^content\.object$",
-    r"^content\.created(_at)?$",
-    r"^content\.completed_at$",
-    r"^content\.model$",
-    r"^content\.status$",
-    r"^content\.background$",
-    r"^content\.metadata",
-    r"^content\.usage",
-    r"^content\.service_tier$",
-    r"^content\.system_fingerprint$",
-    r"^content\.stop_sequence$",
-    r"^content\.billing",
-    r"^content\.error$",
-    r"^content\.incomplete_details$",
-    r"^content\.max_output_tokens$",
-    r"^content\.max_tool_calls$",
-    r"^content\.parallel_tool_calls$",
-    r"^content\.previous_response_id$",
-    r"^content\.prompt_cache",
-    r"^content\.reasoning\.(effort|summary)$",
-    r"^content\.safety_identifier$",
-    r"^content\.signature$",
-    r"^content\.store$",
-    r"^content\.temperature$",
-    r"^content\.text\.(format\.type|verbosity)$",
-    r"^content\.tool_choice$",
-    r"^content\.top_(logprobs|p)$",
-    r"^content\.truncation$",
-    r"^content\.user$",
-    r"^content\.responseId$",
-    # content.content.* fields (array elements)
-    r"^content\.content\.\d+\.(type|id|signature)$",
-    r"^content\.content\.\d+\.content\.\d+\.type$",
-    # content.choices.* fields
-    r"^content\.choices\.\d+\.index$",
-    r"^content\.choices\.\d+\.message\.(refusal|annotations|reasoning)$",
-    r"^content\.choices\.\d+\.(logprobs|seed)$",
-    # content.output.* fields
-    r"^content\.output\.\d+\.(id|type|status)$",
-    r"^content\.output\.\d+\.content\.\d+\.(type|annotations|logprobs)$",
-    # content.candidates.* fields (Google Gemini)
-    r"^content\.candidates\.\d+\.(finishReason|index)$",
-    r"^content\.usageMetadata",
-    # tools.* fields
-    r"^tools\.\d+\.parameters\.(additionalProperties|properties|required|type)$",
-    r"^tools\.\d+\.strict$",
-    # Ollama response fields (timing/stats)
-    r"^content\.done$",
-    r"^content\.done_reason$",
-    r"^content\.eval_count$",
-    r"^content\.eval_duration$",
-    r"^content\.load_duration$",
-    r"^content\.prompt_eval_count$",
-    r"^content\.prompt_eval_duration$",
-    r"^content\.total_duration$",
-]
 
 STRING_MATCH_EXCLUDE_PATTERNS = [
     # Identifiers & timestamps

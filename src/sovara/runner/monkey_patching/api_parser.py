@@ -1,5 +1,4 @@
 import json
-import re
 from typing import Any, Dict, List, Tuple
 from flatten_json import flatten, unflatten_list
 from flatten_dict import unflatten, flatten as flatten_keep_list
@@ -33,7 +32,7 @@ from sovara.runner.monkey_patching.api_parsers.claude_sdk_api_parser import (
     json_str_to_api_obj_claude_sdk,
     json_str_to_original_inp_dict_claude_sdk,
 )
-from sovara.common.constants import EDIT_IO_EXCLUDE_PATTERNS
+from sovara.runner.monkey_patching.edit_io_filters import COMPILED_EDIT_IO_EXCLUDE_PATTERNS
 
 
 def flatten_to_show(inp):
@@ -76,8 +75,8 @@ def unflatten_to_show(inp):
 
 def should_exclude_key(key: str) -> bool:
     """Check if a flattened key should be excluded based on regex patterns."""
-    for pattern in EDIT_IO_EXCLUDE_PATTERNS:
-        if re.match(pattern, key):
+    for pattern in COMPILED_EDIT_IO_EXCLUDE_PATTERNS:
+        if pattern.match(key):
             return True
     return False
 

@@ -1,5 +1,5 @@
 import sovara.common.user as user_module
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 
 
 def test_ensure_user_configured_notifies_running_server_after_new_user_setup(monkeypatch):

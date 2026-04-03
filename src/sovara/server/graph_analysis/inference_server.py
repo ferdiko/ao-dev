@@ -114,7 +114,7 @@ def _build_trace_from_graph(graph_data: dict):
 
 def _get_trace_for_run(run_id: str):
     """Return (trace, is_new) — is_new=True when the trace was rebuilt."""
-    from sovara.server.database_manager import DB
+    from sovara.server.database import DB
 
     graph_row = DB.get_graph(run_id)
     if not graph_row or not graph_row["graph_topology"]:

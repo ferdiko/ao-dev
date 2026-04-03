@@ -15,7 +15,7 @@ from sovara.common.project import (
 )
 from sovara.common.user import read_user_id
 from sovara.server.app import get_state
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 from sovara.server.state import ServerState
 
 router = APIRouter()

@@ -3,7 +3,7 @@ import threading
 import time
 from contextlib import contextmanager
 import json
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 from sovara.common.logger import logger
 from sovara.common.utils import http_post
 from sovara.common.custom_metrics import MetricsPayload

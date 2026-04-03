@@ -2,7 +2,7 @@
 
 import time
 
-from sovara.common.constants import INFERENCE_SERVER_LOG, TRACE_CHAT_SCATTER_BUDGET_SECONDS
+from sovara.common.constants import INFERENCE_SERVER_LOG, SCATTER_BUDGET
 from sovara.common.logger import create_file_logger
 
 from ....llm_backend import NO_THINKING_EXTRA_BODY, infer, scatter_execute
@@ -193,7 +193,7 @@ def verify(trace: Trace, step_id=None, cancel_event=None) -> str:
             timeout_steps = sorted(idx + 1 for idx in timeout_indices)
             logger.warning(
                 "VERIFY all deadline reached after %.1fs fallback=%d steps=%s",
-                TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+                SCATTER_BUDGET,
                 len(timeout_steps),
                 timeout_steps,
             )
@@ -201,7 +201,7 @@ def verify(trace: Trace, step_id=None, cancel_event=None) -> str:
         verified = scatter_execute(
             to_verify,
             _run_one,
-            budget_seconds=TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+            budget_seconds=SCATTER_BUDGET,
             cancel_event=cancel_event,
             on_result=_on_verify_result,
             on_exception=_on_verify_exception,

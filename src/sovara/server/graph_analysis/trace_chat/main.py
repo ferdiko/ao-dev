@@ -29,7 +29,7 @@ else:
     from .utils.trace import Trace
     from ...llm_backend import infer
 
-from sovara.common.constants import INFERENCE_SERVER_LOG
+from sovara.common.constants import INFERENCE_SERVER_LOG, SCATTER_SUMMARY_BUDGET
 from sovara.common.logger import create_file_logger
 
 logger = create_file_logger(INFERENCE_SERVER_LOG)
@@ -369,7 +369,7 @@ def _start_prefetch(trace: Trace, enabled: bool) -> tuple[ThreadPoolExecutor | N
         return None, None
 
     pool = ThreadPoolExecutor(max_workers=1)
-    prefetch_future = pool.submit(_generate_summary, trace)
+    prefetch_future = pool.submit(_generate_summary, trace, SCATTER_SUMMARY_BUDGET)
     prefetch_future._sovara_started_at = time.monotonic()
     logger.info(
         "Trace chat prefetch requested from main run_id=%s steps=%d",
@@ -454,7 +454,7 @@ if __name__ == "__main__":
     # print(execute_tool("get_trace_overview", trace, {}))
     # print(execute_tool("get_step_snapshot", trace, {"step_id": 1, "scope": "full"}))
     # print(execute_tool("get_step_snapshot", trace, {"step_id": 1, "scope": "new_input"}))
-    # print(execute_tool("get_step_overview", trace, {"step_id": 1}))
+    print(execute_tool("get_step_overview", trace, {"step_id": 4}))
     # print(execute_tool("search", trace, {"query": "weather"}))
     # print(execute_tool("ask_step", trace, {
     #     "step_id": 1,

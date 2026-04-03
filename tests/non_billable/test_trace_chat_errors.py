@@ -15,7 +15,7 @@ import pytest
 from fastapi import HTTPException
 
 from sovara.common.logger import create_file_logger
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 from sovara.server.graph_analysis.inference_server import (
     _ensure_prefetch_future,
     _graph_fingerprint,

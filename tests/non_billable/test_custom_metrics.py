@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from sovara.common.custom_metrics import MetricsPayload
-from sovara.server.database_manager import DB
+from sovara.server.database import DB
 from sovara.server.handlers.runner_handlers import handle_add_node
 from sovara.server.state import ServerState
 

@@ -20,7 +20,7 @@ class PersistOutcome:
 
 def _read_to_show(run_id: str, node_uuid: str) -> dict | None:
     """Return the current to_show dict for a node, or None if unavailable."""
-    from sovara.server.database_manager import DB
+    from sovara.server.database import DB
     row = DB.query_one_llm_call_input(run_id, node_uuid)
     if not row:
         return None
@@ -30,7 +30,7 @@ def _read_to_show(run_id: str, node_uuid: str) -> dict | None:
 
 def _read_output_to_show(run_id: str, node_uuid: str) -> dict | None:
     """Return the current output to_show dict for a node, or None if unavailable."""
-    from sovara.server.database_manager import DB
+    from sovara.server.database import DB
     row = DB.query_one_llm_call_output(run_id, node_uuid)
     if not row:
         return None
@@ -40,7 +40,7 @@ def _read_output_to_show(run_id: str, node_uuid: str) -> dict | None:
 
 def _read_graph_to_show(run_id: str, node_uuid: str, branch: str) -> Any | None:
     """Return the current graph-backed to_show payload for a node branch, or None if unavailable."""
-    from sovara.server.database_manager import DB
+    from sovara.server.database import DB
     from sovara.server.graph_models import RunGraph
 
     row = DB.get_graph(run_id)

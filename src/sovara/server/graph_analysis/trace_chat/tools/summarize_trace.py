@@ -2,7 +2,7 @@
 
 import time
 
-from sovara.common.constants import INFERENCE_SERVER_LOG, TRACE_CHAT_SCATTER_BUDGET_SECONDS
+from sovara.common.constants import INFERENCE_SERVER_LOG, SCATTER_BUDGET
 from sovara.common.logger import create_file_logger
 
 from ....llm_backend import NO_THINKING_EXTRA_BODY, infer_text, scatter_execute
@@ -96,7 +96,10 @@ def _prefix_structural_header(summary: str, overview: str) -> str:
     return f"{header}\n{summary}"
 
 
-def _generate_summary(trace: Trace) -> str:
+def _generate_summary(
+    trace: Trace,
+    step_budget_seconds: float = SCATTER_BUDGET,
+) -> str:
     """Do the actual work: overview + per-step summaries + synthesis."""
     t0 = time.monotonic()
     run_id = trace.run_id or "-"
@@ -123,7 +126,7 @@ def _generate_summary(trace: Trace) -> str:
         logger.info(
             "summarize_trace step budget run_id=%s budget=%.1fs cached=%d pending=%d",
             run_id,
-            TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+            step_budget_seconds,
             len(summaries_by_step),
             len(pending_steps),
         )
@@ -153,7 +156,7 @@ def _generate_summary(trace: Trace) -> str:
                 logger.warning(
                     "summarize_trace step budget timed out run_id=%s after %.1fs fallback=%d steps=%s",
                     run_id,
-                    TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+                    step_budget_seconds,
                     len(fallback_steps),
                     sorted(fallback_steps),
                 )
@@ -162,7 +165,7 @@ def _generate_summary(trace: Trace) -> str:
                 pending_steps,
                 lambda step_id: _summarize_step_semantically(trace, step_id),
                 max_workers=min(len(pending_steps), _STEP_SUMMARY_MAX_WORKERS),
-                budget_seconds=TRACE_CHAT_SCATTER_BUDGET_SECONDS,
+                budget_seconds=step_budget_seconds,
                 on_result=_on_summary_result,
                 on_exception=_on_summary_exception,
                 on_timeout=_on_summary_timeout,
