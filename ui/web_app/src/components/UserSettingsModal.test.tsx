@@ -2,15 +2,15 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { UserSettingsPanel } from "./UserSettingsPanel";
-import { deleteUser, updateUser, updateUserLlmSettings } from "../api";
+import { deleteUser, updateUser, updateUserLlmSettings, type User } from "../userApi";
 
-vi.mock("../api", () => ({
+vi.mock("../userApi", () => ({
   updateUser: vi.fn(),
   deleteUser: vi.fn(),
   updateUserLlmSettings: vi.fn(),
 }));
 
-const baseUser = {
+const baseUser: User = {
   user_id: "user-1",
   full_name: "User One",
   email: "user@example.com",
@@ -26,7 +26,7 @@ const baseUser = {
       api_base: null,
     },
   },
-} as const;
+};
 
 afterEach(() => {
   cleanup();
@@ -35,12 +35,12 @@ afterEach(() => {
 
 describe("UserSettingsPanel", () => {
   it("shows hosted vLLM guidance and saves nested model settings", async () => {
-    vi.mocked(updateUserLlmSettings).mockResolvedValue(baseUser as any);
+    vi.mocked(updateUserLlmSettings).mockResolvedValue(baseUser);
     const onUpdated = vi.fn();
 
     render(
       <UserSettingsPanel
-        user={baseUser as any}
+        user={baseUser}
         onUpdated={onUpdated}
         onDeleted={vi.fn()}
       />,
@@ -82,7 +82,7 @@ describe("UserSettingsPanel", () => {
   it("blocks hosted vLLM saves without an API base", async () => {
     render(
       <UserSettingsPanel
-        user={baseUser as any}
+        user={baseUser}
         onUpdated={vi.fn()}
         onDeleted={vi.fn()}
       />,

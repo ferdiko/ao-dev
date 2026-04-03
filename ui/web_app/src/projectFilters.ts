@@ -1,4 +1,4 @@
-import type { MetricFilter } from "./api";
+import type { MetricFilter } from "./runsApi";
 
 export interface TextFilter {
   value: string;

@@ -3,20 +3,23 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TraceChat } from "./TraceChat";
+import { restartRun } from "../runsApi";
 import {
   abortTraceChat,
   chatWithTrace,
   clearTraceChatHistory,
   fetchTraceChatHistory,
-  restartRun,
-} from "../api";
+} from "../traceChatApi";
 
-vi.mock("../api", () => ({
+vi.mock("../runsApi", () => ({
+  restartRun: vi.fn(),
+}));
+
+vi.mock("../traceChatApi", () => ({
   abortTraceChat: vi.fn(),
   chatWithTrace: vi.fn(),
   clearTraceChatHistory: vi.fn(),
   fetchTraceChatHistory: vi.fn(),
-  restartRun: vi.fn(),
 }));
 
 afterEach(() => {

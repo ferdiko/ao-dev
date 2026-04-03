@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Run } from "./api";
+import type { Run } from "./runsApi";
 import type { ProjectRun } from "./projectRuns";
 import {
   runToProjectRun,

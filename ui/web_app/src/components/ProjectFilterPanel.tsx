@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { ChevronDown as ChevronDownIcon, Search, X } from "lucide-react";
 
-import type { CustomMetricColumn } from "../api";
+import type { CustomMetricColumn } from "../runsApi";
 import {
   emptyFilters,
   isMetricFilterActive,

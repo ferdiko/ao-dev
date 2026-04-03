@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { X } from "lucide-react";
-import { updateProject, deleteProject } from "../api";
+import { deleteProject, updateProject } from "../projectsApi";
 import { EditableField } from "./EditableField";
 
 export function ProjectSettingsModal({

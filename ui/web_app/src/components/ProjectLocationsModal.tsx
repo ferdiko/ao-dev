@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { X, Check, AlertTriangle, Trash2, FolderOpen } from "lucide-react";
 import {
+  deleteProject,
+  deleteProjectLocation,
   pickDirectory,
   updateProjectLocation,
-  deleteProjectLocation,
-  deleteProject,
   type Project,
   type ProjectLocation,
-} from "../api";
+} from "../projectsApi";
 
 export function ProjectLocationsModal({
   project,

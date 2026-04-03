@@ -1,13 +1,13 @@
 import { useState } from "react";
 import {
   deleteUser,
-  updateUser,
-  updateUserLlmSettings,
   type LlmProvider,
   type User,
   type UserLlmSettings,
   type UserLlmTierSettings,
-} from "../api";
+  updateUser,
+  updateUserLlmSettings,
+} from "../userApi";
 import { EditableField } from "./EditableField";
 
 const PROVIDER_LABELS: Record<LlmProvider, string> = {

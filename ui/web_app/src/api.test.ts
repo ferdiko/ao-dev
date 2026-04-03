@@ -1,16 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  post,
+} from "./api";
+import { fetchProjectRuns, updateRunTags } from "./runsApi";
+import {
   abortTraceChat,
   chatWithTrace,
   clearTraceChatHistory,
-  fetchProjectRuns,
   fetchTraceChatHistory,
-  post,
   saveTraceChatHistory,
-  updateUserLlmSettings,
-  updateRunTags,
-} from "./api";
+} from "./traceChatApi";
+import { updateUserLlmSettings } from "./userApi";
 
 describe("api", () => {
   const fetchMock = vi.fn();

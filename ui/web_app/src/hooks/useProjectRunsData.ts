@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchProject, fetchProjectRuns, fetchProjectTags } from "../api";
-import type { CustomMetricColumn, Run, MetricFilter } from "../api";
+import { fetchProject, fetchProjectTags } from "../projectsApi";
+import { fetchProjectRuns, type CustomMetricColumn, type MetricFilter, type Run } from "../runsApi";
 import { subscribe } from "../serverEvents";
 import { buildMetricFilterPayload, toUtcFilterTimestamp, type Filters } from "../projectFilters";
 import type { Tag } from "../tags";
@@ -45,8 +45,7 @@ export function useProjectRunsData({
   useEffect(() => {
     if (!projectId) return;
     return subscribe("run_list", (message) => {
-      const running = (message.runs as Run[])
-        .filter((run) => run.status === "running" && run.project_id === projectId);
+      const running = message.runs.filter((run) => run.status === "running" && run.project_id === projectId);
       setRunningRuns(running);
       setCompletedRefreshKey((value) => value + 1);
     });
@@ -55,13 +54,10 @@ export function useProjectRunsData({
   useEffect(() => {
     if (!projectId) return;
     return subscribe("graph_update", (message) => {
-      const runId = typeof message.run_id === "string" ? message.run_id : "";
-      if (!runId || !Object.prototype.hasOwnProperty.call(message, "active_runtime_seconds")) return;
-      const activeRuntimeSeconds = typeof message.active_runtime_seconds === "number"
-        ? message.active_runtime_seconds
-        : null;
+      if (!message.run_id || !Object.prototype.hasOwnProperty.call(message, "active_runtime_seconds")) return;
+      const activeRuntimeSeconds = message.active_runtime_seconds ?? null;
       setRunningRuns((previous) => previous.map((run) => (
-        run.run_id === runId
+        run.run_id === message.run_id
           ? { ...run, active_runtime_seconds: activeRuntimeSeconds }
           : run
       )));

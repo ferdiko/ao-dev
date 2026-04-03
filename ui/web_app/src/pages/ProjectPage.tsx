@@ -1,8 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { X } from "lucide-react";
-import { deleteRuns } from "../api";
-import type { CustomMetricColumn } from "../api";
+import { deleteRuns, type CustomMetricColumn } from "../runsApi";
 import { Breadcrumb } from "../components/Breadcrumb";
 import { CompletedRunsTable } from "../components/CompletedRunsTable";
 import { CompletedRunsToolbar, RunActionsMenu } from "../components/CompletedRunsToolbar";
@@ -117,19 +116,20 @@ export function ProjectPage() {
   const runningRuns = useMemo(() => runningRunsData.map(runToProjectRun), [runningRunsData]);
   const completedRuns = useMemo(() => completedRunsData.map(runToProjectRun), [completedRunsData]);
   const observedBounds = useMemo(() => computeDataBounds([...runningRuns, ...completedRuns]), [runningRuns, completedRuns]);
+  const observedLatencyBounds = observedBounds.latency;
   const [latencyBounds, setLatencyBounds] = useState(observedBounds.latency);
   const previousProjectIdRef = useRef(projectId);
   useEffect(() => {
     const projectChanged = previousProjectIdRef.current !== projectId;
     if (projectChanged || !filters.latency.enabled) {
       setLatencyBounds((previous) => (
-        previous.min === observedBounds.latency.min && previous.max === observedBounds.latency.max
+        previous.min === observedLatencyBounds.min && previous.max === observedLatencyBounds.max
           ? previous
-          : observedBounds.latency
+          : observedLatencyBounds
       ));
     }
     previousProjectIdRef.current = projectId;
-  }, [filters.latency.enabled, observedBounds.latency.max, observedBounds.latency.min, projectId]);
+  }, [filters.latency.enabled, observedLatencyBounds, projectId]);
   const bounds = useMemo(() => ({ latency: latencyBounds }), [latencyBounds]);
   const columnStorageKey = useMemo(
     () => `web_app:project_columns:${projectId ?? "unknown"}`,

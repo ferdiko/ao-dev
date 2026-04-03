@@ -16,10 +16,13 @@ const {
   subscribeMock: vi.fn(),
 }));
 
-vi.mock("../api", () => ({
+vi.mock("../projectsApi", () => ({
   fetchProject: fetchProjectMock,
-  fetchProjectRuns: fetchProjectRunsMock,
   fetchProjectTags: fetchProjectTagsMock,
+}));
+
+vi.mock("../runsApi", () => ({
+  fetchProjectRuns: fetchProjectRunsMock,
 }));
 
 vi.mock("../serverEvents", () => ({

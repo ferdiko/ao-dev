@@ -1,4 +1,4 @@
-import type { Run } from "./api";
+import type { Run } from "./runsApi";
 import type { SortState } from "./hooks/useStoredSortState";
 import type { Tag } from "./tags";
 

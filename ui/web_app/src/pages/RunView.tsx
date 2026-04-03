@@ -17,25 +17,16 @@ import "@xyflow/react/dist/style.css";
 import { Breadcrumb } from "../components/Breadcrumb";
 import { RunTraceFlow } from "../components/RunTraceFlow";
 import { RunTabsHeader } from "../components/RunTabsHeader";
-import {
-  fetchProject,
-  fetchRunDetail,
-  fetchProjectTags,
-  createProjectTag,
-  deleteProjectTag,
-  updateRunTags,
-  prefetchTrace,
-} from "../api";
+import { fetchProject } from "../projectsApi";
+import { fetchRunDetail } from "../runsApi";
 import { layoutGraph, type Point } from "../graphLayout";
 import { Sparkles, RotateCcw, Loader2, Undo2, ThumbsUp, ThumbsDown, ChevronRight, PanelRight, X } from "lucide-react";
 import { TraceChat } from "../components/TraceChat";
 import { useRunGraphFocus, type GraphFocusApiHandle } from "../hooks/useRunGraphFocus";
 import { useResize } from "../hooks/useResize";
-import { useRunState } from "../hooks/useRunState";
+import { useRunWorkspace } from "../hooks/useRunWorkspace";
 import { useRunViewLayout, type RunViewLayoutState } from "../hooks/useRunViewLayout";
 import { TagDropdown } from "../components/TagDropdown";
-import type { Tag } from "../tags";
-import { sortTagsByName } from "../tags";
 
 // ── Custom LLM Node ────────────────────────────────────
 
@@ -232,10 +223,16 @@ function RunViewContent({
   // UI state
   const [viewMode, setViewMode] = useState<ViewMode>("pretty");
   const {
+    closeDeleteTagModal,
+    confirmDeleteTag,
+    deleteTagError,
+    deletingTag,
     editedFields,
     editLock,
     graphEdges,
     graphNodes,
+    handleCreateTag,
+    handleToggleTag,
     handleCancelEdit,
     handleErase,
     handleRerun,
@@ -244,16 +241,13 @@ function RunViewContent({
     handleSaveEdit,
     handleStartEdit,
     loading,
-    refreshRunDetail,
+    openDeleteTagModal,
+    projectTags,
     rerunning,
     selectedTags,
-    setSelectedTags,
+    tagPendingDelete,
     thumbLabel,
-  } = useRunState(runId);
-  const [projectTags, setProjectTags] = useState<Tag[]>([]);
-  const [tagPendingDelete, setTagPendingDelete] = useState<Tag | null>(null);
-  const [deletingTag, setDeletingTag] = useState(false);
-  const [deleteTagError, setDeleteTagError] = useState<string | null>(null);
+  } = useRunWorkspace({ projectId, runId });
 
   const GRAPH_MIN = 180; const GRAPH_MAX = 600;
   const CHAT_MIN = 200; const CHAT_MAX = 700;
@@ -261,100 +255,18 @@ function RunViewContent({
   const graphPanelRef = useRef<HTMLDivElement>(null);
   const chatPanelRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    prefetchTrace(runId);
-  }, [runId]);
-
-  useEffect(() => {
-    if (!projectId) return;
-    let cancelled = false;
-    fetchProjectTags(projectId)
-      .then((tags) => {
-        if (!cancelled) setProjectTags(sortTagsByName(tags));
-      })
-      .catch((error) => {
-        if (!cancelled) console.error("Failed to load project tags:", error);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
-
-  const reloadTags = useCallback(async () => {
-    if (!projectId) return;
-    const [tags] = await Promise.all([
-      fetchProjectTags(projectId).then(sortTagsByName),
-      refreshRunDetail(),
-    ]);
-    setProjectTags(tags);
-  }, [projectId, refreshRunDetail]);
-
-  const handleToggleTag = useCallback((tag: Tag) => {
-    const alreadySelected = selectedTags.some((item) => item.tag_id === tag.tag_id);
-    const nextTags = sortTagsByName(
-      alreadySelected
-        ? selectedTags.filter((item) => item.tag_id !== tag.tag_id)
-        : [...selectedTags, tag],
-    );
-    setSelectedTags(nextTags);
-    updateRunTags(runId, nextTags.map((item) => item.tag_id))
-      .catch(async (error) => {
-        console.error("Failed to update run tags:", error);
-        await reloadTags().catch(console.error);
-      });
-  }, [reloadTags, selectedTags, runId, setSelectedTags]);
-
-  const handleCreateTag = useCallback((name: string, color: string) => {
-    if (!projectId) return;
-    createProjectTag(projectId, name, color)
-      .then(async (tag) => {
-        const nextProjectTags = sortTagsByName([...projectTags, tag]);
-        const nextSelectedTags = sortTagsByName([...selectedTags, tag]);
-        setProjectTags(nextProjectTags);
-        setSelectedTags(nextSelectedTags);
-        await updateRunTags(runId, nextSelectedTags.map((item) => item.tag_id));
-      })
-      .catch(async (error) => {
-        console.error("Failed to create tag:", error);
-        await reloadTags().catch(console.error);
-      });
-  }, [projectId, projectTags, reloadTags, selectedTags, runId, setSelectedTags]);
-
-  const handleDeleteTag = useCallback((tag: Tag) => {
-    setDeleteTagError(null);
-    setTagPendingDelete(tag);
-  }, []);
-
-  const closeDeleteTagModal = useCallback(() => {
-    if (deletingTag) return;
-    setTagPendingDelete(null);
-    setDeleteTagError(null);
-  }, [deletingTag]);
-
-  const confirmDeleteTag = useCallback(async () => {
-    if (!projectId || !tagPendingDelete) return;
-    setDeleteTagError(null);
-    setDeletingTag(true);
-    try {
-      await deleteProjectTag(projectId, tagPendingDelete.tag_id);
-      setProjectTags((previous) => previous.filter((item) => item.tag_id !== tagPendingDelete.tag_id));
-      setSelectedTags((previous) => previous.filter((item) => item.tag_id !== tagPendingDelete.tag_id));
-      setTagPendingDelete(null);
-    } catch (error) {
-      console.error("Failed to delete tag:", error);
-      setDeleteTagError(error instanceof Error ? error.message : "Failed to delete tag.");
-      await reloadTags().catch(console.error);
-    } finally {
-      setDeletingTag(false);
-    }
-  }, [projectId, reloadTags, setSelectedTags, tagPendingDelete]);
-
   // Resize via direct DOM mutation to avoid re-rendering the entire tree per frame.
   // React state is synced once on mouseUp.
   const graphWidthRef = useRef(graphWidth);
-  graphWidthRef.current = graphWidth;
   const chatWidthRef = useRef(chatWidth);
-  chatWidthRef.current = chatWidth;
+
+  useEffect(() => {
+    graphWidthRef.current = graphWidth;
+  }, [graphWidth]);
+
+  useEffect(() => {
+    chatWidthRef.current = chatWidth;
+  }, [chatWidth]);
 
   const onGraphResize = useCallback((delta: number) => {
     graphWidthRef.current = Math.min(GRAPH_MAX, Math.max(GRAPH_MIN, graphWidthRef.current + delta));
@@ -527,7 +439,7 @@ function RunViewContent({
           allTags={projectTags}
           onToggle={handleToggleTag}
           onCreate={handleCreateTag}
-          onDelete={handleDeleteTag}
+          onDelete={openDeleteTagModal}
         />
       </div>
 

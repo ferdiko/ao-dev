@@ -9,7 +9,8 @@ import {
   UserPlus,
   PanelLeft,
 } from "lucide-react";
-import { fetchProjects, type Project, type User } from "../api";
+import { fetchProjects, type Project } from "../projectsApi";
+import type { User } from "../userApi";
 import { subscribe } from "../serverEvents";
 import sovaraWordmark from "../assets/sovara_wordmark.png";
 

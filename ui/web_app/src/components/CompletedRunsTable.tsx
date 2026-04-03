@@ -1,7 +1,7 @@
 import type { KeyboardEvent, MouseEvent } from "react";
 import { ThumbsDown, ThumbsUp } from "lucide-react";
 
-import type { CustomMetricColumn } from "../api";
+import type { CustomMetricColumn } from "../runsApi";
 import type { SortState } from "../hooks/useStoredSortState";
 import type { ProjectRun } from "../projectRuns";
 import { SortableHeader } from "./SortableHeader";

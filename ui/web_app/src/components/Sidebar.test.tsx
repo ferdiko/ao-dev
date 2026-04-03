@@ -3,9 +3,9 @@ import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Sidebar } from "./Sidebar";
-import { fetchProjects } from "../api";
+import { fetchProjects } from "../projectsApi";
 
-vi.mock("../api", () => ({
+vi.mock("../projectsApi", () => ({
   fetchProjects: vi.fn(),
 }));
 

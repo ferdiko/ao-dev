@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { X } from "lucide-react";
-import { setupUser } from "../api";
+import { setupUser } from "../userApi";
 
 export function SetupProfileModal({
   onClose,

@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  fetchGraph,
-  fetchRunDetail,
   editInput,
   editOutput,
-  restartRun,
   eraseRun,
-  updateThumbLabel,
   type BackendGraphNode,
   type BackendGraphEdge,
+  fetchGraph,
+  fetchRunDetail,
   type GraphPayload,
-} from "../api";
+  restartRun,
+  type RunDetail,
+  updateThumbLabel,
+} from "../runsApi";
 import { subscribe } from "../serverEvents";
-import type { Tag } from "../tags";
 
 export interface GraphNode {
   id: string;
@@ -73,8 +73,7 @@ function parseGraphPayload(payload: GraphPayload): { nodes: GraphNode[]; edges: 
 }
 
 export function useRunState(runId: string) {
-  const [thumbLabel, setThumbLabel] = useState<boolean | null>(null);
-  const [selectedTags, setSelectedTags] = useState<Tag[]>([]);
+  const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
@@ -82,11 +81,12 @@ export function useRunState(runId: string) {
   const [editLock, setEditLock] = useState<EditKey | null>(null);
   const [editedFields, setEditedFields] = useState<Set<EditKey>>(new Set());
   const rerunning = rerunState !== "idle";
+  const thumbLabel = runDetail?.thumb_label ?? null;
+  const runTags = runDetail?.tags ?? [];
 
   const refreshRunDetail = useCallback(async () => {
     const detail = await fetchRunDetail(runId);
-    setThumbLabel(detail.thumb_label);
-    setSelectedTags(detail.tags);
+    setRunDetail(detail);
     return detail;
   }, [runId]);
 
@@ -121,7 +121,7 @@ export function useRunState(runId: string) {
     if (!runId) return;
     return subscribe("graph_update", (msg) => {
       if (msg.run_id !== runId) return;
-      const parsed = parseGraphPayload(msg.payload as GraphPayload);
+      const parsed = parseGraphPayload(msg.payload);
       setGraphNodes(parsed.nodes);
       setGraphEdges(parsed.edges);
     });
@@ -167,7 +167,7 @@ export function useRunState(runId: string) {
 
   const handleThumbLabelToggle = useCallback((nextValue: boolean) => {
     const resolvedValue = thumbLabel === nextValue ? null : nextValue;
-    setThumbLabel(resolvedValue);
+    setRunDetail((previous) => previous ? { ...previous, thumb_label: resolvedValue } : previous);
     updateThumbLabel(runId, resolvedValue).catch(console.error);
   }, [runId, thumbLabel]);
 
@@ -219,8 +219,7 @@ export function useRunState(runId: string) {
       loading,
       refreshRunDetail,
       rerunning,
-      selectedTags,
-      setSelectedTags,
+      runTags,
       thumbLabel,
     };
 }

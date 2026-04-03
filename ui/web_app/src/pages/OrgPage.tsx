@@ -3,11 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { Breadcrumb } from "../components/Breadcrumb";
 import { useUser } from "../userContext";
 import {
+  createProject,
   fetchProjects,
   pickDirectory,
-  createProject,
   type Project,
-} from "../api";
+} from "../projectsApi";
 import { Play, Users, Calendar, Clock, FolderOpen, AlertTriangle, X, Settings } from "lucide-react";
 import arrowLr from "../assets/arrow_lr.png";
 import { subscribe } from "../serverEvents";
