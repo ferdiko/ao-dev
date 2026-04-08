@@ -1,3 +1,5 @@
+import pytest
+
 from sovara.runner.monkey_patching.patching_utils import _sanitize_for_display
 
 
@@ -44,3 +46,26 @@ def test_open_weight_families_preserve_vendor_casing():
     assert _sanitize_for_display("tiny-aya-earth") == "Tiny Aya Earth"
     assert _sanitize_for_display("granite-4.0-h-1b") == "Granite 4.0 H 1B"
     assert _sanitize_for_display("devstral-small-2505") == "Devstral Small 2505"
+
+
+@pytest.mark.parametrize(
+    ("raw_name", "expected_display_name"),
+    [
+        ("mistral-small-2603", "Mistral Small 4"),
+        ("mistral-moderation-2603", "Mistral Moderation 2"),
+        ("voxtral-mini-tts-2603", "Voxtral Mini TTS"),
+        ("voxtral-mini-transcribe-realtime-2602", "Voxtral Mini Transcribe Realtime"),
+        ("labs-leanstral-2603", "Leanstral"),
+        ("mistral-large-2512", "Mistral Large 3"),
+        ("ministral-14b-2512", "Ministral 3 14B"),
+        ("devstral-2512", "Devstral 2"),
+        ("labs-devstral-small-2512", "Devstral Small 2"),
+        ("magistral-medium-2509", "Magistral Medium 1.2"),
+        ("mistral-medium-2508", "Mistral Medium 3.1"),
+        ("labs-mistral-small-creative", "Mistral Small Creative"),
+    ],
+)
+def test_recent_mistral_release_ids_use_clean_display_names(
+    raw_name: str, expected_display_name: str
+):
+    assert _sanitize_for_display(raw_name) == expected_display_name
